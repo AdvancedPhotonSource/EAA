@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Annotated
 
 import numpy as np
 import scipy.interpolate
@@ -7,6 +7,10 @@ from eaa.tools.base import BaseTool
 
 
 class AcquireImage(BaseTool):
+    
+    name: str = "acquire_image"
+    description: str = "Acquire an image of a given size from the whole image at a given location."
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -15,6 +19,10 @@ class AcquireImage(BaseTool):
 
 
 class SimulatedAcquireImage(AcquireImage):
+    
+    name: str = "simulated_acquire_image"
+    description: str = "Acquire an image of a given size from the whole image at a given location."
+    
     def __init__(self, whole_image: np.ndarray, *args, **kwargs):
         self.whole_image = whole_image
         self.interpolator = None
@@ -34,8 +42,7 @@ class SimulatedAcquireImage(AcquireImage):
         self, 
         loc: tuple[float, float], 
         size: tuple[int, int], 
-        *args, **kwargs
-    ) -> np.ndarray:
+    ) -> Annotated[np.ndarray, "The acquired image."]:
         """Acquire an image of a given size from the whole image at a given
         location.
 
