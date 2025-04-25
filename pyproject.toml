@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "EAA"
+description = "EAA is an Experiment Automation Agent."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE.txt"}
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "scikit-image",
+    "scipy",
+    "ag2[openai]",
+    "tqdm",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+movies = ["opencv-python"]
+
+[docs]
+dependencies = [
+    "sphinx",
+    "sphinx-rtd-theme",
+]
+
+[tool.setuptools_scm]
+
+[tool.setuptools.packages.find]
+where = ["src"]
