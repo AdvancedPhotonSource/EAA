@@ -16,7 +16,7 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
     def test_simulated_image_acquisition(self):
         whole_image = tifffile.imread(
             os.path.join(
-                tutils.BaseTester.get_ci_data_dir(),
+                self.get_ci_input_data_dir(),
                 'simulated_images',
                 'cameraman.tiff'
             )
