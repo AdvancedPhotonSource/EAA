@@ -43,12 +43,12 @@ class BaseTaskManager:
         caller: autogen.ConversableAgent, 
         executor: autogen.ConversableAgent
     ) -> None:
-        if isinstance(tools, BaseTool):
+        if not isinstance(tools, (list, tuple)):
             tools = [tools]
         for tool in tools:
             wrapped_tool = autogen.tools.Tool(
                 name=tool.name,
-                description=tool.description,
+                description=tool.__call__.__doc__,
                 func_or_tool=tool.__call__,
             )
             
