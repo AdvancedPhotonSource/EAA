@@ -44,10 +44,8 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         
         self.agents.user_proxy = autogen.ConversableAgent(
             name="user_proxy",
-            llm_config={
-                "model": self.model,
-                "api_key": self.get_api_key(),
-            }
+            llm_config=False,
+            human_input_mode="ALWAYS"
         )
 
     def build_tools(self, *args, **kwargs):
@@ -59,7 +57,7 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
             )
 
     def prerun_check(self, *args, **kwargs) -> bool:
-        if self.agents.main.tools is None:
+        if self.agents.assistant.tools is None:
             raise ValueError("No tools registered for the main agent.")
         return super().prerun_check(*args, **kwargs)
         
@@ -67,4 +65,8 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         """Run the task manager."""
         super().run(*args, **kwargs)
         
-        self.agents.main.run()
+        message = input("Enter a message to the assistant: ")
+        chat_result = self.agents.user_proxy.initiate_chat(
+            self.agents.assistant,
+            message=message
+        )
