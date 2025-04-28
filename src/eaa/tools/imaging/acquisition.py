@@ -1,4 +1,5 @@
 from typing import Any, Annotated
+import logging
 
 import numpy as np
 import scipy.interpolate
@@ -6,10 +7,11 @@ import scipy.interpolate
 from eaa.tools.base import BaseTool
 
 
+logger = logging.getLogger(__name__)
+
 class AcquireImage(BaseTool):
     
     name: str = "acquire_image"
-    description: str = "Acquire an image of a given size from the whole image at a given location."
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -21,7 +23,6 @@ class AcquireImage(BaseTool):
 class SimulatedAcquireImage(AcquireImage):
     
     name: str = "simulated_acquire_image"
-    description: str = "Acquire an image of a given size from the whole image at a given location."
     
     def __init__(self, whole_image: np.ndarray, *args, **kwargs):
         self.whole_image = whole_image
@@ -40,19 +41,21 @@ class SimulatedAcquireImage(AcquireImage):
 
     def __call__(
         self, 
-        loc: tuple[float, float], 
-        size: tuple[int, int], 
+        loc_y: float, 
+        loc_x: float, 
+        size_y: int, 
+        size_x: int, 
     ) -> Annotated[np.ndarray, "The acquired image."]:
         """Acquire an image of a given size from the whole image at a given
         location.
 
         Parameters
         ----------
-        loc : tuple[float, float]
+        loc_y, loc_x : float
             The top-left corner location of the image to acquire. The location
             can be floating point number, in which case the image will be
             interpolated.
-        size : tuple[int, int]
+        size_y, size_x : int
             The size of the image to acquire.
 
         Returns
@@ -60,7 +63,9 @@ class SimulatedAcquireImage(AcquireImage):
         np.ndarray
             The acquired image.
         """
+        loc = [loc_y, loc_x]
+        size = [size_y, size_x]
+        logger.info(f"Acquiring image of size {size} at location {loc}.")
         y = np.arange(loc[0], loc[0] + size[0])
         x = np.arange(loc[1], loc[1] + size[1])
         return self.interpolator(y, x).reshape(size)
-
