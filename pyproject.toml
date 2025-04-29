@@ -13,8 +13,7 @@ dependencies = [
     "numpy",
     "scikit-image",
     "scipy",
-    "autogen-agentchat",
-    "autogen-ext[openai]",
+    "autogen",
     "tqdm",
 ]
 dynamic = ["version"]
