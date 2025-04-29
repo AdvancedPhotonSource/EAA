@@ -13,13 +13,11 @@ dependencies = [
     "numpy",
     "scikit-image",
     "scipy",
-    "ag2[openai]",
+    "autogen-agentchat",
+    "autogen-ext[openai]",
     "tqdm",
 ]
 dynamic = ["version"]
-
-[project.optional-dependencies]
-movies = ["opencv-python"]
 
 [docs]
 dependencies = [
