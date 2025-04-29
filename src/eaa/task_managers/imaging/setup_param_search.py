@@ -1,3 +1,5 @@
+from textwrap import dedent
+
 import autogen
 from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalConversableAgent
 
@@ -30,15 +32,22 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
     def build_agents(self, *args, **kwargs) -> None:
         """Build the assistant(s)."""
 
-        self.agents.assistant = MultimodalConversableAgent(
+        self.agents.assistant = autogen.ConversableAgent(
             name="assistant",
-            system_message=
-                "You are helping scientists at a microscopy facility to "
-                "to find the best setup parameters for their imaging system. "
-                "These include the field of view of the microscope, the beam energy, "
-                "and the optics. You have tools that controls the sample stage position, "
-                "the beam energy, and the optics at your disposal. When using tools, only "
-                "make one call at a time. Do not make multiple calls simultaneously.",
+            system_message=dedent(
+                """\
+                You are helping scientists at a microscopy facility to
+                to find the best setup parameters for their imaging system.
+                These include the field of view of the microscope, the beam energy,
+                and the optics. You have the following tool(s) at your disposal:
+                - A tool that acquires an image of a sub-region of a sample at
+                  given location and with given size (the field of view, or FOV),
+                  analyzes that image internally, and reports back the features
+                  identified in the image in text.
+                When using tools, only make one call at a time. Do not make 
+                multiple calls simultaneously.\
+                """
+            ),
             llm_config={
                 "model": self.model,
                 "api_key": self.get_api_key(),
@@ -85,12 +94,15 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
     def run_fov_search(self, *args, **kwargs) -> None:
         """Run a search for the best field of view for the microscope.
         """
-        message = "You are given a tool named `simulated_acquire_image` that acquires an image of a sub-region " + \
+        message = dedent("""\
+            You are given a tool named `simulated_acquire_image` that acquires an image of a sub-region " + \
             "of a sample at given location and with given size (the field of view, or FOV). Use this tool to find a subregion that contains " + \
-            "a camera that is centered in the field of view. The field of view size should always be (200, 200). Start from position (0, 0), " + \
+            "a camera that is centered in the field of view. The field of view size should always be (100, 100). Start from position (0, 0), " + \
             "and gradually move the FOV with a step size of 100 and examine the image until you find the feature of interest. The maximum positions in y and x directions " + \
             "are 412 and 412, respectively. When you find the feature of interest, report the coordinates of the FOV. When you finish the search, " + \
-            "say 'TERMINATE'."
+            "say 'TERMINATE'.\
+            """
+        )
         
         self.agents.user_proxy.initiate_chat(
             self.agents.assistant,
