@@ -35,10 +35,10 @@ jobs:
           source $CONDA_ROOT/bin/activate ci_py311_base
 
       - name: Install Ruff
-        run: pip install ruff
+        run: $CONDA_ROOT/envs/ci_py311_base/bin/pip install ruff
 
       - name: Run Ruff
-        run: ruff check src/ --output-format=github
+        run: $CONDA_ROOT/envs/ci_py311_base/bin/ruff check src/ --output-format=github
 
   linux-x86-gpu:
 
