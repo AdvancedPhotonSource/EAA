@@ -74,7 +74,7 @@ jobs:
         $CONDA_ROOT/envs/$ENVNAME/bin/pip install --upgrade pip
         $CONDA_ROOT/envs/$ENVNAME/bin/pip install pytest
         $CONDA_ROOT/envs/$ENVNAME/bin/pip install uv
-        uv pip venv .venv --python 3.11
+        uv venv .venv --python 3.11
         source .venv/bin/activate
         if [ -f requirements.txt ]; then uv pip install -r requirements.txt; fi
         uv pip install -e .
