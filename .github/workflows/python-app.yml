@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  PTYCHO_CI_DATA_DIR: /local/eaa_ci_data/
+  EAA_CI_DATA_DIR: /local/eaa_ci_data/
   CONDA_EXE: /local/actions-env/miniconda3/condabin/conda
   CONDA_ROOT: /local/actions-env/miniconda3/
 
