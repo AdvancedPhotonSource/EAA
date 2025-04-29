@@ -1,4 +1,4 @@
-from typing import Any, Annotated
+from typing import Annotated
 import logging
 from textwrap import dedent
 

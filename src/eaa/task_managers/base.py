@@ -1,5 +1,3 @@
-import os
-
 import autogen
 
 import eaa.comms as comm_utils

@@ -1,7 +1,6 @@
 from textwrap import dedent
 
 import autogen
-from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalConversableAgent
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
