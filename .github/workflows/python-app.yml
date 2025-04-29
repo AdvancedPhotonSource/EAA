@@ -68,6 +68,7 @@ jobs:
       
     - name: Install dependencies
       run: |
+        echo "Current working directory: $PWD"
         $CONDA_EXE env list
         source $CONDA_ROOT/bin/activate $ENVNAME
         $CONDA_ROOT/envs/$ENVNAME/bin/pip install --upgrade pip
@@ -77,12 +78,11 @@ jobs:
         source .venv/bin/activate
         if [ -f requirements.txt ]; then uv pip install -r requirements.txt; fi
         uv pip install -e .
-
-    - name: List build environment
-      run: uv pip list
+        uv pip list
 
     - name: Test with pytest
       run: |
+        echo "Current working directory: $PWD"
         source .venv/bin/activate
         echo $(which python)
         cd tests
