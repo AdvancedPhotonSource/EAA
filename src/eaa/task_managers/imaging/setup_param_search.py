@@ -1,7 +1,9 @@
 import autogen
+from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalConversableAgent
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
+
 
 class SetupParameterSearchTaskManager(BaseTaskManager):
     
@@ -28,24 +30,29 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
     def build_agents(self, *args, **kwargs) -> None:
         """Build the assistant(s)."""
 
-        self.agents.assistant = autogen.ConversableAgent(
+        self.agents.assistant = MultimodalConversableAgent(
             name="assistant",
             system_message=
                 "You are helping scientists at a microscopy facility to "
                 "to find the best setup parameters for their imaging system. "
                 "These include the field of view of the microscope, the beam energy, "
                 "and the optics. You have tools that controls the sample stage position, "
-                "the beam energy, and the optics at your disposal.",
+                "the beam energy, and the optics at your disposal. When using tools, only "
+                "make one call at a time. Do not make multiple calls simultaneously.",
             llm_config={
                 "model": self.model,
                 "api_key": self.get_api_key(),
-            }
+            },
         )
         
-        self.agents.user_proxy = autogen.ConversableAgent(
+        self.agents.user_proxy = autogen.UserProxyAgent(
             name="user_proxy",
             llm_config=False,
-            human_input_mode="ALWAYS"
+            human_input_mode="TERMINATE",
+            is_termination_msg=lambda msg: "tool_calls" not in msg.keys() and "TERMINATE" in msg["content"],
+            code_execution_config={
+                "use_docker": False
+            },
         )
 
     def build_tools(self, *args, **kwargs):
@@ -65,8 +72,27 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         """Run the task manager."""
         super().run(*args, **kwargs)
         
-        message = input("Enter a message to the assistant: ")
-        chat_result = self.agents.user_proxy.initiate_chat(
+        self.run_fov_search()
+        
+    def run_conversation(self, *args, **kwargs) -> None:
+        """Run a conversation with the assistant."""
+        message = input("Enter a message: ")
+        self.agents.user_proxy.initiate_chat(
+            self.agents.assistant,
+            message=message
+        )
+        
+    def run_fov_search(self, *args, **kwargs) -> None:
+        """Run a search for the best field of view for the microscope.
+        """
+        message = "You are given a tool named `simulated_acquire_image` that acquires an image of a sub-region " + \
+            "of a sample at given location and with given size (the field of view, or FOV). Use this tool to find a subregion that contains " + \
+            "a camera that is centered in the field of view. The field of view size should always be (200, 200). Start from position (0, 0), " + \
+            "and gradually move the FOV with a step size of 100 and examine the image until you find the feature of interest. The maximum positions in y and x directions " + \
+            "are 412 and 412, respectively. When you find the feature of interest, report the coordinates of the FOV. When you finish the search, " + \
+            "say 'TERMINATE'."
+        
+        self.agents.user_proxy.initiate_chat(
             self.agents.assistant,
             message=message
         )

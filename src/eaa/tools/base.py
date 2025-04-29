@@ -1,5 +1,10 @@
-from typing import Any
+from typing import Any, Optional
+import base64
+import os
+import io
 
+import matplotlib.pyplot as plt
+import numpy as np
 
 class BaseTool:
     
@@ -13,3 +18,51 @@ class BaseTool:
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
         pass
+
+    def convert_image_to_base64(self, image: np.ndarray) -> str:
+        """Convert an image to a base64 string."""
+        plt.figure()
+        plt.imshow(image, cmap='gray')
+        plt.axis('off')
+        
+        # Save the plot to a bytes buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+        plt.close()
+        buf.seek(0)
+        
+        # Convert to base64
+        img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+        return img_base64
+    
+    def save_image_to_temp_dir(
+        self, 
+        image: np.ndarray, 
+        filename: Optional[str] = None
+    ) -> None:
+        if not os.path.exists(".tmp"):
+            os.makedirs(".tmp")
+        if filename is None:
+            filename = "image.png"
+        path = os.path.join(".tmp", filename)
+        plt.imsave(path, image, cmap='gray')
+    
+    def create_image_message(self, image: np.ndarray, text: str) -> str:
+        """Create a message with an image."""
+        img_base64 = self.convert_image_to_base64(image)
+        image_message = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": text
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{img_base64}"
+                    }
+                }
+            ],
+            "role": "user"
+        }
+        return image_message

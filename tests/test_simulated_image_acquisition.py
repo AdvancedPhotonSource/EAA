@@ -22,7 +22,7 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
             )
         )
         
-        tool = SimulatedAcquireImage(whole_image)
+        tool = SimulatedAcquireImage(whole_image, return_message=False)
         
         loc = (100, 100)
         size = (256, 256)

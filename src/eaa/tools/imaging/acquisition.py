@@ -24,9 +24,10 @@ class SimulatedAcquireImage(AcquireImage):
     
     name: str = "simulated_acquire_image"
     
-    def __init__(self, whole_image: np.ndarray, *args, **kwargs):
+    def __init__(self, whole_image: np.ndarray, return_message: bool = True, *args, **kwargs):
         self.whole_image = whole_image
         self.interpolator = None
+        self.return_message = return_message
         super().__init__(*args, **kwargs)
                 
     def build(self):
@@ -45,7 +46,7 @@ class SimulatedAcquireImage(AcquireImage):
         loc_x: float, 
         size_y: int, 
         size_x: int, 
-    ) -> Annotated[np.ndarray, "The acquired image."]:
+    ) -> Annotated[str, "The acquired image path."]:
         """Acquire an image of a given size from the whole image at a given
         location.
 
@@ -68,4 +69,10 @@ class SimulatedAcquireImage(AcquireImage):
         logger.info(f"Acquiring image of size {size} at location {loc}.")
         y = np.arange(loc[0], loc[0] + size[0])
         x = np.arange(loc[1], loc[1] + size[1])
-        return self.interpolator(y, x).reshape(size)
+        arr = self.interpolator(y, x).reshape(size)
+        if self.return_message:
+            filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}.png"
+            self.save_image_to_temp_dir(arr, filename)
+            return f"<img .tmp/{filename}>"
+        else:
+            return arr
