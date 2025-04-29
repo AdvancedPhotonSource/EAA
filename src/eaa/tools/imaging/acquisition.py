@@ -2,6 +2,7 @@ from typing import Any, Annotated
 import logging
 from textwrap import dedent
 
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.interpolate
 import autogen
@@ -16,8 +17,21 @@ class AcquireImage(BaseTool):
     
     name: str = "acquire_image"
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, show_image_in_real_time: bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
+        self.show_image_in_real_time = show_image_in_real_time
+        self.rt_fig = None
+        
+    def update_real_time_view(self, image: np.ndarray):
+        if self.rt_fig is None:
+            self.rt_fig, ax = plt.subplots(1, 1, squeeze=True)
+        else:
+            ax = self.rt_fig.get_axes()[0]
+        ax.clear()
+        ax.imshow(image)
+        plt.draw()
+        plt.pause(0.001)  # Small pause to allow GUI to update
 
     def __call__(self, *args, **kwargs):
         pass
@@ -73,6 +87,8 @@ class SimulatedAcquireImage(AcquireImage):
         y = np.arange(loc[0], loc[0] + size[0])
         x = np.arange(loc[1], loc[1] + size[1])
         arr = self.interpolator(y, x).reshape(size)
+        if self.show_image_in_real_time:
+            self.update_real_time_view(arr)
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}.png"
             self.save_image_to_temp_dir(arr, filename)
