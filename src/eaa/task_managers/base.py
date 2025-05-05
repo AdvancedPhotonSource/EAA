@@ -1,7 +1,5 @@
 import autogen
 
-import eaa.comms as comm_utils
-import eaa.maps as maps
 from eaa.tools.base import BaseTool
 
 
@@ -11,8 +9,15 @@ class BaseTaskManager:
         user_proxy: autogen.ConversableAgent = None
         assistant: autogen.ConversableAgent = None
             
-    def __init__(self, model_name: str = "gpt-4o", tools: list[BaseTool] = [], *args, **kwargs):
+    def __init__(
+        self, 
+        model_name: str = "gpt-4o", 
+        model_base_url: str = None, 
+        tools: list[BaseTool] = [], 
+        *args, **kwargs
+    ):
         self.model = model_name
+        self.model_base_url = model_base_url
         self.agents = self.AgentGroup()
         self.tools = tools
         self.build()
@@ -26,14 +31,6 @@ class BaseTaskManager:
     
     def build_tools(self, *args, **kwargs):
         pass
-
-    def get_api_key(self) -> str:
-        if maps.OpenAIModels.contains(self.model):
-            return comm_utils.get_openai_api_key()
-        elif maps.AnthropicModels.contains(self.model):
-            return comm_utils.get_anthropic_api_key()
-        else:
-            raise ValueError(f"Model {self.model} is not supported.")
 
     def register_tools(
         self, 
