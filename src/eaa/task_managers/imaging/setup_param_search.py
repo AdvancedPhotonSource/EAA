@@ -1,6 +1,7 @@
 from textwrap import dedent
 
 import autogen
+import numpy as np
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
@@ -8,6 +9,12 @@ from eaa.comms import get_api_key
 
 
 class SetupParameterSearchTaskManager(BaseTaskManager):
+    
+    class AgentGroup(dict):
+        user_proxy: autogen.ConversableAgent = None
+        tool_executor: autogen.ConversableAgent = None
+        assistant: autogen.ConversableAgent = None
+        group_chat_manager: autogen.GroupChatManager = None
     
     def __init__(
         self,
@@ -65,11 +72,29 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         self.agents.user_proxy = autogen.UserProxyAgent(
             name="user_proxy",
             llm_config=False,
-            human_input_mode="TERMINATE",
-            is_termination_msg=lambda msg: "tool_calls" not in msg.keys() and "TERMINATE" in msg["content"],
+            human_input_mode="ALWAYS",
             code_execution_config={
                 "use_docker": False
             },
+        )
+        
+        self.agents.tool_executor = autogen.ConversableAgent(
+            name="tool_executor",
+            human_input_mode="NEVER",
+            code_execution_config={
+                "use_docker": False
+            },
+        )
+        
+        group_chat =  autogen.GroupChat(
+            agents=[self.agents.user_proxy, self.agents.tool_executor, self.agents.assistant],
+            messages=[],
+            max_round=999,
+        )
+        
+        self.agents.group_chat_manager = autogen.GroupChatManager(
+            groupchat=group_chat,
+            llm_config=llm_config,
         )
 
     def build_tools(self, *args, **kwargs):
@@ -77,7 +102,7 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
             self.register_tools(
                 tool,
                 caller=self.agents.assistant,
-                executor=self.agents.user_proxy
+                executor=self.agents.tool_executor
             )
 
     def prerun_check(self, *args, **kwargs) -> bool:
@@ -105,7 +130,7 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         message = dedent("""\
             You are given a tool named `simulated_acquire_image` that acquires an image of a sub-region
             of a sample at given location and with given size (the field of view, or FOV). Use this tool to find a subregion that contains
-            a camera that is centered in the field of view. The field of view size should always be (100, 100). Start from position (0, 0),
+            a camera or measurement device that is centered in the field of view. The field of view size should always be (100, 100). Start from position (0, 0),
             and gradually move the FOV with a step size of 100 and examine the image until you find the feature of interest. The maximum positions in y and x directions
             are 412 and 412, respectively. When you find the feature of interest, report the coordinates of the FOV. When you finish the search,
             say 'TERMINATE'.\
@@ -113,6 +138,6 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         )
         
         self.agents.user_proxy.initiate_chat(
-            self.agents.assistant,
+            self.agents.group_chat_manager,
             message=message
         )
