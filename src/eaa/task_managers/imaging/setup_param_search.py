@@ -1,7 +1,6 @@
 from textwrap import dedent
 
 import autogen
-import numpy as np
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
