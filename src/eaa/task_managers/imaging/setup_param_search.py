@@ -44,7 +44,7 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         
         llm_config = {
             "model": self.model,
-            "api_key": get_api_key(self.model),
+            "api_key": get_api_key(self.model, self.model_base_url),
         }
         if self.model_base_url:
             llm_config["base_url"] = self.model_base_url
