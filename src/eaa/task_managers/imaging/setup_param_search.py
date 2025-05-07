@@ -87,6 +87,7 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
         
         group_chat =  autogen.GroupChat(
             agents=[self.agents.user_proxy, self.agents.tool_executor, self.agents.assistant],
+            allow_repeat_speaker=False,
             messages=[],
             max_round=999,
         )
