@@ -5,6 +5,7 @@ import autogen
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
+from eaa.hooks import register_hooks
 
 
 class SetupParameterSearchTaskManager(BaseTaskManager):
@@ -67,6 +68,7 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
             ),
             llm_config=llm_config,
         )
+        register_hooks(self.agents.assistant)
         
         self.agents.user_proxy = autogen.UserProxyAgent(
             name="user_proxy",
@@ -96,7 +98,8 @@ class SetupParameterSearchTaskManager(BaseTaskManager):
             groupchat=group_chat,
             llm_config=llm_config,
         )
-
+        register_hooks(self.agents.group_chat_manager)
+    
     def build_tools(self, *args, **kwargs):
         for tool in self.tools:
             self.register_tools(
