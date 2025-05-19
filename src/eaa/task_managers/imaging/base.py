@@ -21,12 +21,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
         """\
         You are helping scientists at a microscopy facility to
         to find the best setup parameters for their imaging system.
-        These include the field of view of the microscope, the beam energy,
-        and the optics. You have the following tool(s) at your disposal:
-        - A tool that acquires an image of a sub-region of a sample at
-            given location and with given size (the field of view, or FOV),
-            analyzes that image internally, and reports back the features
-            identified in the image in text.
+        You are given the tools that adjust the imaging system based
+        on given parameters, and acquire images with those parameters.
         When using tools, only make one call at a time. Do not make 
         multiple calls simultaneously.\
         """
