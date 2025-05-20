@@ -6,6 +6,9 @@ import io
 import matplotlib.pyplot as plt
 import numpy as np
 
+import eaa.util
+
+
 class BaseTool:
     
     name: str = "base_tool"
@@ -38,14 +41,22 @@ class BaseTool:
     def save_image_to_temp_dir(
         self, 
         image: np.ndarray, 
-        filename: Optional[str] = None
-    ) -> None:
+        filename: Optional[str] = None,
+        add_timestamp: bool = False
+    ) -> str:
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")
         if filename is None:
             filename = "image.png"
+        else:
+            if not filename.endswith(".png"):
+                filename = filename + ".png"
+        if add_timestamp:
+            parts = os.path.splitext(filename)
+            filename = parts[0] + "_" + eaa.util.get_timestamp() + parts[1]
         path = os.path.join(".tmp", filename)
         plt.imsave(path, image, cmap='gray')
+        return path
     
     def create_image_message(self, image: np.ndarray, text: str) -> str:
         """Create a message with an image."""

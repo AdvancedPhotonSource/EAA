@@ -108,12 +108,12 @@ class ImagingBaseTaskManager(BaseTaskManager):
             },
         )
         
-    def build_group_chat(self, *args, **kwargs):
+    def build_group_chat(self, max_round: int = 999, *args, **kwargs):
         group_chat =  autogen.GroupChat(
             agents=[self.agents.user_proxy, self.agents.tool_executor, self.agents.assistant],
             allow_repeat_speaker=False,
             messages=[],
-            max_round=999,
+            max_round=max_round,
             speaker_selection_method=self.speaker_selection_method,
         )
         
