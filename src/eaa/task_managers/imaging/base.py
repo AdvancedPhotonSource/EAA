@@ -66,14 +66,22 @@ class ImagingBaseTaskManager(BaseTaskManager):
 
     def build_agents(self, *args, **kwargs) -> None:
         """Build the assistant(s)."""
+        self.build_assistant(*args, **kwargs)
+        self.build_user_proxy(*args, **kwargs)
+        self.build_tool_executor(*args, **kwargs)
+        self.build_group_chat(*args, **kwargs)
         
+    def get_llm_config(self, *args, **kwargs):
         llm_config = {
             "model": self.model,
             "api_key": get_api_key(self.model, self.model_base_url),
         }
         if self.model_base_url:
             llm_config["base_url"] = self.model_base_url
-
+        return llm_config
+        
+    def build_assistant(self, *args, **kwargs) -> None:
+        llm_config = self.get_llm_config(*args, **kwargs)
         self.agents.assistant = autogen.ConversableAgent(
             name="assistant",
             system_message=self.assistant_system_message,
@@ -81,6 +89,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         )
         register_hooks(self.agents.assistant)
         
+    def build_user_proxy(self, *args, **kwargs):
         self.agents.user_proxy = autogen.UserProxyAgent(
             name="user_proxy",
             llm_config=False,
@@ -90,6 +99,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             },
         )
         
+    def build_tool_executor(self, *args, **kwargs):
         self.agents.tool_executor = autogen.ConversableAgent(
             name="tool_executor",
             human_input_mode="NEVER",
@@ -98,6 +108,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             },
         )
         
+    def build_group_chat(self, *args, **kwargs):
         group_chat =  autogen.GroupChat(
             agents=[self.agents.user_proxy, self.agents.tool_executor, self.agents.assistant],
             allow_repeat_speaker=False,
@@ -106,6 +117,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             speaker_selection_method=self.speaker_selection_method,
         )
         
+        llm_config = self.get_llm_config(*args, **kwargs)
         self.agents.group_chat_manager = autogen.GroupChatManager(
             groupchat=group_chat,
             llm_config=llm_config,

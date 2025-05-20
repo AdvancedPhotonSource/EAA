@@ -1,7 +1,7 @@
 import autogen
 
 from eaa.tools.base import BaseTool
-
+from eaa.comms import get_api_key
 
 class BaseTaskManager:
     
@@ -54,6 +54,15 @@ class BaseTaskManager:
                 name=tool.name,
                 description=tool.__call__.__doc__,
             )
+            
+    def get_llm_config(self, *args, **kwargs):
+        llm_config = {
+            "model": self.model,
+            "api_key": get_api_key(self.model, self.model_base_url),
+        }
+        if self.model_base_url:
+            llm_config["base_url"] = self.model_base_url
+        return llm_config
 
     def prerun_check(self, *args, **kwargs) -> bool:
         return True
