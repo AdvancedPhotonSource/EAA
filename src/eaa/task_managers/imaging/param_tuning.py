@@ -91,7 +91,11 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
         register_tool_executor_hook(self.agents.tool_executor)
         
     def build_group_chat(self, *args, **kwargs):
-        super().build_group_chat(max_round=3, *args, **kwargs)
+        super().build_group_chat(
+            max_round=3, 
+            order_of_agents=[self.agents.user_proxy, self.agents.assistant, self.agents.tool_executor],
+            *args, **kwargs
+        )
         
     def run(
         self, 

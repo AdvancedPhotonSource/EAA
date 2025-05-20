@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 from textwrap import dedent
 
 import autogen
@@ -108,9 +108,17 @@ class ImagingBaseTaskManager(BaseTaskManager):
             },
         )
         
-    def build_group_chat(self, max_round: int = 999, *args, **kwargs):
+    def build_group_chat(
+        self, 
+        max_round: int = 999, 
+        order_of_agents: Optional[list] = None, 
+        *args, **kwargs
+    ):
+        if order_of_agents is None:
+            order_of_agents = [self.agents.user_proxy, self.agents.tool_executor, self.agents.assistant]
+        
         group_chat =  autogen.GroupChat(
-            agents=[self.agents.user_proxy, self.agents.tool_executor, self.agents.assistant],
+            agents=order_of_agents,
             allow_repeat_speaker=False,
             messages=[],
             max_round=max_round,
