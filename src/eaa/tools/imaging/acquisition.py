@@ -96,13 +96,22 @@ class SimulatedAcquireImage(AcquireImage):
         else:
             return arr
         
-        
+
 class AcquireImageAndAnalyze(BaseTool):
     
     name: str = "acquire_image_and_analyze"
     
-    def __init__(self, acquisition_tool: AcquireImage, *args, **kwargs):
+    def __init__(
+        self, 
+        acquisition_tool: AcquireImage, 
+        model_name: str = "openai/gpt-4o-2024-11-20",
+        model_base_url: str = "https://openrouter.ai/api/v1",
+        *args, **kwargs
+    ):
         self.acquisition_tool = acquisition_tool
+        
+        self.model_name = model_name
+        self.model_base_url = model_base_url
         self.agent = None
         self.user_proxy = None
         super().__init__(*args, **kwargs)
@@ -113,8 +122,9 @@ class AcquireImageAndAnalyze(BaseTool):
     def build_agent(self, *args, **kwargs):
         self.agent = MultimodalConversableAgent(
             llm_config={
-                "model": "gpt-4o",
-                "api_key": eaa.comms.get_openai_api_key(),
+                "model": self.model_name,
+                "api_key": eaa.comms.get_api_key(self.model_name, self.model_base_url),
+                "base_url": self.model_base_url,
             },
             name="image_analysis_agent",
             system_message=dedent("""\
