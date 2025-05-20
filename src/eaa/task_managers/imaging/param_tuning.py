@@ -1,10 +1,7 @@
-from typing import Literal, Union
+from typing import Literal
 from textwrap import dedent
 import logging
-import copy
-import json
 
-import autogen
 from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalConversableAgent
 
 from eaa.tools.imaging.acquisition import AcquireImage
@@ -12,7 +9,6 @@ from eaa.tools.imaging.param_tuning import TuneOpticsParameters
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.hooks import register_hooks, register_tool_executor_hook
 import eaa.image_proc as ip
-import eaa.message_parsing as mp
 
 logger = logging.getLogger(__name__)
 
