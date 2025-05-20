@@ -35,6 +35,14 @@ class AcquireImage(BaseTool):
 
     def __call__(self, *args, **kwargs):
         pass
+    
+    
+class BlueSkyAcquireImage(AcquireImage):
+    
+    name: str = "bluesky_acquire_image"
+    
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("BlueSkyAcquireImage is not implemented.")
 
 
 class SimulatedAcquireImage(AcquireImage):
