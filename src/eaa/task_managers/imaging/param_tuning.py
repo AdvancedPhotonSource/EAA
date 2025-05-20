@@ -155,9 +155,9 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
                       Keep changing the parameter in that direction.
                     - If the new image is blurrier, you are going in the wrong direction.
                       Revert the parameter to the previous value and try the opposite direction.
-                    - If the new image is similar to the previous one and **both are sharp**, you have reached
-                      the optimal parameters. Report the parameters, and add "TERMINATE"
-                      to the end of your response.
+                    - If the new image is sharp (little blurriness at boundaries of features),
+                      you have reached the optimal parameters. Report the parameters, and add
+                      "TERMINATE" to the end of your response.
                     In the first 2 cases, use your tool to change the parameters to the new values.
                     """
                 )
