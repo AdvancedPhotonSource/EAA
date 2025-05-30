@@ -1,5 +1,7 @@
 *.pyc
 
+.logs/
+.re_md_dict.yml
 .vscode/
 **/*egg-info/
 workspace/
