@@ -1,5 +1,15 @@
+# Python temporary files
 *.pyc
 
+# Instrument control tool-related files
+.logs/
+.re_md_dict.yml
+
+# IDE
 .vscode/
+
+# Build files
 **/*egg-info/
+
+# Workspace
 workspace/

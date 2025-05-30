@@ -10,6 +10,7 @@ from eaa.tools.base import BaseTool, check, ToolReturnType
 import eaa.comms
 import eaa.util
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,14 +45,6 @@ class AcquireImage(BaseTool):
 
     def acquire_image(self, *args, **kwargs):
         raise NotImplementedError
-    
-    
-class BlueSkyAcquireImage(AcquireImage):
-    
-    name: str = "bluesky_acquire_image"
-    
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError("BlueSkyAcquireImage is not implemented.")
 
 
 class SimulatedAcquireImage(AcquireImage):
@@ -88,7 +81,7 @@ class SimulatedAcquireImage(AcquireImage):
         loc_x: float, 
         size_y: int, 
         size_x: int, 
-    ) -> Annotated[str, "The acquired image path."]:
+    ) -> Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given size from the whole image at a given
         location.
 
