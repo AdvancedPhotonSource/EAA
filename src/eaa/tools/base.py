@@ -13,8 +13,9 @@ class BaseTool:
     
     name: str = "base_tool"
         
-    def __init__(self, *args, **kwargs):
-        self.build()
+    def __init__(self, build: bool = True, *args, **kwargs):
+        if build:
+            self.build(*args, **kwargs)
 
     def build(self, *args, **kwargs):
         pass

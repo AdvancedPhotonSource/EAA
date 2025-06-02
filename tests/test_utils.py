@@ -6,7 +6,7 @@ from typing import Union
 
 import numpy as np
 import pytest
-
+import torch
 
 class BaseTester:
     def setup_method(
@@ -178,3 +178,10 @@ def plot_complex_image(img):
     ax[1].set_title('phase')
     plt.show()
 
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
