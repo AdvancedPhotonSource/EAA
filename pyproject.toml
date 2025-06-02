@@ -19,10 +19,14 @@ dependencies = [
 ]
 dynamic = ["version"]
 
-[docs]
-dependencies = [
-    "sphinx",
-    "sphinx-rtd-theme",
+[project.optional-dependencies]
+aps = [
+    "bluesky",
+    "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
+]
+docs = [
+    "sphinx", 
+    "sphinx-rtd-theme"
 ]
 
 [tool.setuptools_scm]
