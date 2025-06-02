@@ -20,7 +20,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-aps = [
+aps_mic = [
     "bluesky",
     "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
 ]
