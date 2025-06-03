@@ -52,12 +52,22 @@ class TestOpenAIAPI(tutils.BaseTester):
         response = agent.receive("Can you sum these numbers: 2, 4, 6, 6, 7?")
         tool_response = agent.handle_tool_call(response)
         if tool_response is not None:
-            response = agent.receive(tool_response)
+            response = agent.receive(tool_response, role="tool")
             print(response)
             
     @pytest.mark.local
     def test_openai_api_with_image(self):
         image_path = os.path.join(self.get_ci_input_data_dir(), "simulated_images", "cameraman.png")
+        
+        def get_image() -> str:
+            """Get the acquired image.
+
+            Returns
+            -------
+            str
+                The acquired image.
+            """
+            return image_path
         
         agent = OpenAIAgent(
             llm_config={
@@ -68,11 +78,23 @@ class TestOpenAIAPI(tutils.BaseTester):
             system_message="You are a helpful assistant."
         )
         
-        response = agent.receive(
-            "Can you tell me what is in this image?",
-            image_path=image_path
+        agent.register_tools(
+            {"get_image": get_image}
         )
-        print(response)
+        
+        response = agent.receive(
+            "Please use your tool to get the image, and tell me what you see.",
+        )
+        tool_response = agent.handle_tool_call(response)
+        if tool_response is not None:
+            agent.receive(tool_response, role="tool", request_response=False)
+            response = agent.receive(
+                "Here is the image the tool returned.",
+                image_path=tool_response["content"]
+            )
+            print(response)
+        else:
+            raise ValueError("Tool response is None.")
 
 
 if __name__ == '__main__':

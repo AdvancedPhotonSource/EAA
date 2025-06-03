@@ -113,12 +113,14 @@ class OpenAIAgent:
     def receive(
         self,
         message: str | Dict[str, Any], 
+        role: Literal["user", "system", "tool"] = "user",
         image: np.ndarray = None,
         image_path: str = None,
         encoded_image: str = None,
+        request_response: bool = True,
         return_full_response: bool = True,
         with_history: bool = True
-    ) -> str | Dict[str, Any]:
+    ) -> str | Dict[str, Any] | None:
         """Receive a message from the user and generate a response.
         
         Parameters
@@ -132,6 +134,10 @@ class OpenAIAgent:
             The path to the image to be sent to the AI. Exclusive with `image` and `encoded_image`.
         encoded_image : str, optional
             The base-64 encoded image to be sent to the AI. Exclusive with `image` and `image_path`.
+        request_response : bool, optional
+            If True, the message will be sent to the AI and a response will be
+            requested. Otherwise, the message will only be logged into the message history
+            and will not be sent to the AI. The function returns None in this case.
         return_full_response : bool, optional
             If True, this function returns a dictionary containing the full response
             from the agent. Otherwise, only the content of the response is returned
@@ -142,22 +148,35 @@ class OpenAIAgent:
         
         Returns
         -------
-        str | Dict[str, Any]
+        str | Dict[str, Any] | None
             The response from the agent. If `return_full_response` is True, the
             response is a dictionary containing the full response from the agent.
             Otherwise, the response is a string containing the content of the response.
+            If `request_response` is False, the function returns None.
         """
         if image is not None or image_path is not None or encoded_image is not None:
             if isinstance(message, dict):
                 raise ValueError("`message` cannot be a dictionary if an image is provided.")
+        if role == "tool" and not isinstance(message, Dict):
+            raise ValueError(
+                "When role is 'tool', `message` must be a dictionary of tool response that "
+                "contains the tool_call_id."
+            )
+            
         if isinstance(message, str):
             message = generate_openai_message(
-                message, image=image, image_path=image_path, encoded_image=encoded_image
+                message, role=role, image=image, image_path=image_path, encoded_image=encoded_image
             )
-        response = self.send_message_and_get_response(message, with_history=with_history)
+            
+        if request_response:
+            response = self.send_message_and_get_response(message, with_history=with_history)
         
-        # Add incoming message to history
+        # Add incoming message to history (this must be done after send_message_and_get_response)
+        # so that the message sent does not get duplicated.
         self.messages.append(message)
+        
+        if not request_response:
+            return None
         
         # Add response to history
         self.messages.append(response)
@@ -213,6 +232,7 @@ class OpenAIAgent:
         tool_name = tool_call_info["function"]["name"]
         tool_call_kwargs = json.loads(tool_call_info["function"]["arguments"])
         result = self.tool_manager.execute_tool(tool_name, tool_call_kwargs)
+        
         response = generate_openai_message(
             content=str(result),
             role="tool",
