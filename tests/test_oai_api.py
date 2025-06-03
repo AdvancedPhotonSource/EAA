@@ -54,6 +54,25 @@ class TestOpenAIAPI(tutils.BaseTester):
         if tool_response is not None:
             response = agent.receive(tool_response)
             print(response)
+            
+    @pytest.mark.local
+    def test_openai_api_with_image(self):
+        image_path = os.path.join(self.get_ci_input_data_dir(), "simulated_images", "cameraman.png")
+        
+        agent = OpenAIAgent(
+            llm_config={
+                "model": "openai/gpt-4o-2024-11-20",
+                "api_key": os.getenv("OPENROUTER_API_KEY"),
+                "base_url": "https://openrouter.ai/api/v1",
+            },
+            system_message="You are a helpful assistant."
+        )
+        
+        response = agent.receive(
+            "Can you tell me what is in this image?",
+            image_path=image_path
+        )
+        print(response)
 
 
 if __name__ == '__main__':
@@ -63,3 +82,4 @@ if __name__ == '__main__':
     tester = TestOpenAIAPI()
     tester.setup_method(name="", generate_data=False, generate_gold=False, debug=True)
     tester.test_openai_api()
+    tester.test_openai_api_with_image()

@@ -2,10 +2,13 @@ import inspect
 import typing
 import os
 import json
+import numpy as np
 from typing import get_type_hints, Callable, Dict, Any, Literal, List
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
+
+from eaa.util import encode_image_base64
 
 
 class ToolManager:
@@ -110,6 +113,9 @@ class OpenAIAgent:
     def receive(
         self,
         message: str | Dict[str, Any], 
+        image: np.ndarray = None,
+        image_path: str = None,
+        encoded_image: str = None,
         return_full_response: bool = True,
         with_history: bool = True
     ) -> str | Dict[str, Any]:
@@ -118,7 +124,14 @@ class OpenAIAgent:
         Parameters
         ----------
         message : str | Dict[str, Any]
-            The message to be sent to the AI. It should be 
+            The message to be sent to the AI. It should be a string or a dictionary
+            complying with OpenAI's message format.
+        image : np.ndarray, optional
+            The image to be sent to the AI. Exclusive with `encoded_image` and `image_path`.
+        image_path : str, optional
+            The path to the image to be sent to the AI. Exclusive with `image` and `encoded_image`.
+        encoded_image : str, optional
+            The base-64 encoded image to be sent to the AI. Exclusive with `image` and `image_path`.
         return_full_response : bool, optional
             If True, this function returns a dictionary containing the full response
             from the agent. Otherwise, only the content of the response is returned
@@ -134,8 +147,13 @@ class OpenAIAgent:
             response is a dictionary containing the full response from the agent.
             Otherwise, the response is a string containing the content of the response.
         """
+        if image is not None or image_path is not None or encoded_image is not None:
+            if isinstance(message, dict):
+                raise ValueError("`message` cannot be a dictionary if an image is provided.")
         if isinstance(message, str):
-            message = generate_openai_message(message)
+            message = generate_openai_message(
+                message, image=image, image_path=image_path, encoded_image=encoded_image
+            )
         response = self.send_message_and_get_response(message, with_history=with_history)
         
         # Add incoming message to history
@@ -214,7 +232,10 @@ def to_dict(message: ChatCompletionMessage | Dict[str, Any]) -> dict:
 def generate_openai_message(
     content: str,
     role: Literal["user", "system", "tool"] = "user",
-    tool_call_id: str = None
+    tool_call_id: str = None,
+    image: np.ndarray = None,
+    image_path: str = None,
+    encoded_image: str = None
 ) -> Dict[str, Any]:
     """Generate a dictionary containing the message to be sent
     to the agent.
@@ -225,7 +246,19 @@ def generate_openai_message(
         The content of the message.
     role : Literal["user", "system", "tool"], optional
         The role of the sender.
+    image : np.ndarray, optional
+        The image to be sent to the agent. Exclusive with `encoded_image` and `image_path`.
+    image_path : str, optional
+        The path to the image to be sent to the agent. Exclusive with `image` and `encoded_image`.
+    encoded_image : str, optional
+        The base-64 encoded image to be sent to the agent. Exclusive with `image` and `image_path`.
     """
+    if sum([image is not None, encoded_image is not None, image_path is not None]) > 1:
+        raise ValueError("Only one of `image`, `encoded_image`, or `image_path` should be provided.")
+    
+    if image is not None or image_path is not None:
+        encoded_image = encode_image_base64(image=image, image_path=image_path)
+        
     if role == "user":
         message = {
             "role": "user",
@@ -242,6 +275,20 @@ def generate_openai_message(
             "content": content,
             "tool_call_id": tool_call_id
         }
+        
+    if encoded_image is not None:
+        message["content"] = [
+            {
+                "type": "text",
+                "text": content
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{encoded_image}"
+                }
+            }
+        ]
     return message
 
 
