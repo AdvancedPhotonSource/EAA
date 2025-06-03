@@ -87,5 +87,6 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         
         self.agents.user_proxy.initiate_chat(
             self.agents.group_chat_manager,
-            message=message
+            message=message,
+            clear_history=False
         )

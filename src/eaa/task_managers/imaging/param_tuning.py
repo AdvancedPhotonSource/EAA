@@ -167,6 +167,7 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
                 self.agents.group_chat_manager,
                 message=message,
                 max_turns=2,
+                clear_history=False
             )
             
             # Acquire the image with the new parameters.
