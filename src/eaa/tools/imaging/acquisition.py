@@ -58,7 +58,7 @@ class BlueSkyAcquireImage(AcquireImage):
     scanplan: Callable = None
     savedata: SaveDataMic = None
     
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         try:
             from .bluesky_init import RE, step2d, get_control_components
             self.RE = RE
@@ -68,8 +68,9 @@ class BlueSkyAcquireImage(AcquireImage):
             raise ImportError("Bluesky control initialization failed. " +
                             "Please check that the bluesky-mic package is installed" + 
                             "and the motors can only be reached from private subnet computers.")
+        super().__init__(*args, **kwargs)
         
-    def __call__(
+    def acquire_image(
         self,
         samplename="smp1",
         width=0,
@@ -145,7 +146,6 @@ class BlueSkyAcquireImage(AcquireImage):
         except Exception as e:
             logger.error(f"Error acquiring image: {e}")
             raise e
-        
 
 
 class SimulatedAcquireImage(AcquireImage):
