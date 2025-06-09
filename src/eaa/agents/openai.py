@@ -119,7 +119,9 @@ class OpenAIAgent:
         encoded_image: str = None,
         request_response: bool = True,
         return_full_response: bool = True,
-        with_history: bool = True
+        with_history: bool = True,
+        store_message: bool = False,
+        store_response: bool = True,
     ) -> str | Dict[str, Any] | None:
         """Receive a message from the user and generate a response.
         
@@ -145,6 +147,13 @@ class OpenAIAgent:
         with_history : bool, optional
             If True, the history of the conversation is included in the message sent
             to the agent so that it has the memory of the conversation.
+        store_message : bool, optional
+            If True, the message will be stored in the message history. This is necessary
+            for maintaining the memory of the conversation, but it is strongly recommended
+            to turn it off for messages containing images or large amounts of text to control
+            the speed and cost.
+        store_response : bool, optional
+            If True, the response of AI will be stored in the message history.
         
         Returns
         -------
@@ -173,13 +182,15 @@ class OpenAIAgent:
         
         # Add incoming message to history (this must be done after send_message_and_get_response)
         # so that the message sent does not get duplicated.
-        self.messages.append(message)
+        if store_message:
+            self.messages.append(message)
         
         if not request_response:
             return None
         
         # Add response to history
-        self.messages.append(response)
+        if store_response:
+            self.messages.append(response)
         
         if return_full_response:
             return dict(response)
@@ -209,7 +220,7 @@ class OpenAIAgent:
         if with_history:
             messages = self.messages + [message]
         else:
-            messages = [message]
+            messages = self.messages[0:1] + [message]
             
         response = self.client.chat.completions.create(
             model=self.model,
