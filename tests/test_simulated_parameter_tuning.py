@@ -28,8 +28,8 @@ class TestSimulatedParameterTuning(tutils.BaseTester):
         loc = (100, 100)
         size = (256, 256)
         
-        tuning_tool(1.0, 2.0, 0.0)
-        img = acquisition_tool(*loc, *size)
+        tuning_tool.set_parameters(1.0, 2.0, 0.0)
+        img = acquisition_tool.acquire_image(*loc, *size)
         
         return img
         

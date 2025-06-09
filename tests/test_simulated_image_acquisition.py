@@ -26,7 +26,7 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         
         loc = (100, 100)
         size = (256, 256)
-        img = tool(*loc, *size)
+        img = tool.acquire_image(*loc, *size)
         return img
         
         
