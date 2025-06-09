@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Dict, Callable
 import logging
 
 import matplotlib.pyplot as plt
@@ -6,7 +6,7 @@ import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
 
-from eaa.tools.base import BaseTool
+from eaa.tools.base import BaseTool, check
 import eaa.comms
 import eaa.util
 
@@ -17,11 +17,16 @@ class AcquireImage(BaseTool):
     
     name: str = "acquire_image"
     
+    @check
     def __init__(self, show_image_in_real_time: bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
         self.show_image_in_real_time = show_image_in_real_time
         self.rt_fig = None
+        
+        self.exposed_tools: Dict[str, Callable] = {
+            "acquire_image": self.acquire_image
+        }
         
     def update_real_time_view(self, image: np.ndarray):
         if self.rt_fig is None:
@@ -33,8 +38,8 @@ class AcquireImage(BaseTool):
         plt.draw()
         plt.pause(0.001)  # Small pause to allow GUI to update
 
-    def __call__(self, *args, **kwargs):
-        pass
+    def acquire_image(self, *args, **kwargs):
+        raise NotImplementedError
     
     
 class BlueSkyAcquireImage(AcquireImage):
@@ -69,7 +74,7 @@ class SimulatedAcquireImage(AcquireImage):
     def set_blur(self, blur: float):
         self.blur = blur
 
-    def __call__(
+    def acquire_image(
         self, 
         loc_y: float, 
         loc_x: float, 

@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List, Callable
 import base64
 import os
 import io
@@ -16,6 +16,8 @@ class BaseTool:
     def __init__(self, build: bool = True, *args, **kwargs):
         if build:
             self.build(*args, **kwargs)
+        
+        self.exposed_tools: Dict[str, Callable] = {}
 
     def build(self, *args, **kwargs):
         pass
@@ -78,3 +80,17 @@ class BaseTool:
             "role": "user"
         }
         return image_message
+    
+
+def check(init_method: Callable):
+    def wrapper(self, *args, **kwargs):
+        return_value = init_method(self, *args, **kwargs)
+        if (not hasattr(self, "exposed_tools") 
+            or (hasattr(self, "exposed_tools") and len(self.exposed_tools) == 0)
+        ):
+            raise ValueError(
+                "A subclass of BaseTool must have a non-empty `exposed_tools` attribute "
+                "containing a dictionary of tool names and their corresponding callable functions."
+            )
+        return return_value
+    return wrapper

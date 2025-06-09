@@ -1,8 +1,8 @@
-from typing import Annotated
+from typing import Annotated, Dict, Callable
 
 import numpy as np
 
-from eaa.tools.base import BaseTool
+from eaa.tools.base import BaseTool, check
 from eaa.tools.imaging.acquisition import SimulatedAcquireImage
 
 
@@ -10,9 +10,17 @@ class TuneOpticsParameters(BaseTool):
     
     name: str = "tune_optics_parameters"
     
+    @check
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.parameter_history = []
+        
+        self.exposed_tools: Dict[str, Callable] = {
+            "set_parameters": self.set_parameters
+        }
+        
+    def set_parameters(*args, **kwargs):
+        raise NotImplementedError
         
         
 class BlueSkyTuneOpticsParameters(TuneOpticsParameters):
@@ -21,6 +29,9 @@ class BlueSkyTuneOpticsParameters(TuneOpticsParameters):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
+    def set_parameters(*args, **kwargs):
+        raise NotImplementedError
         
         
 class SimulatedTuneOpticsParameters(TuneOpticsParameters):
@@ -37,7 +48,7 @@ class SimulatedTuneOpticsParameters(TuneOpticsParameters):
         self.acquisition_tool = acquisition_tool
         self.true_parameters = true_parameters
         
-    def __call__(
+    def set_parameters(
         self, 
         param1: float, 
         param2: float, 

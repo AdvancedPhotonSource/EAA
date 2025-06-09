@@ -34,8 +34,36 @@ class BaseTaskManager:
         if not isinstance(tools, (list, tuple)):
             tools = [tools]
         self.agent.register_tools(
-            {tool.name: tool.__call__ for tool in tools}
+            self.create_tool_dict(tools)
         )
+        
+    def create_tool_dict(self, tools: list[BaseTool]) -> dict:
+        """Create a dictionary containing the callable tools of all BaseTool objects.
+        
+        Parameters
+        ----------
+        tools : list[BaseTool]
+            A list of BaseTool objects.
+        """
+        d = {}
+        for tool in tools:
+            if not isinstance(tool, BaseTool):
+                raise ValueError(f"Input should be a list of BaseTool objects.")
+            if (
+                not hasattr(tool, "exposed_tools")
+                or (hasattr(tool, "exposed_tools") and len(tool.exposed_tools) == 0)
+            ):
+                raise ValueError(
+                    "A subclass of BaseTool must have a non-empty `exposed_tools` attribute "
+                    "containing a dictionary of tool names and their corresponding callable functions."
+                )
+            for tool_name, tool_function in tool.exposed_tools.items():
+                if tool_name in d.keys():
+                    raise ValueError(
+                        f"Tool {tool_name} is already registered. Make sure no two callables have the same name."
+                    )
+                d[tool_name] = tool_function
+        return d
             
     def get_llm_config(self, *args, **kwargs):
         llm_config = {
