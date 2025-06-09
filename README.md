@@ -33,7 +33,7 @@ pip install uv
 Then clone the repostiroy, CD into the respository's root, and create a new
 environment there:
 ```
-uv venv .venv
+uv venv --python 3.11
 ```
 This creates a new virtual environment in `./.venv`.
 
