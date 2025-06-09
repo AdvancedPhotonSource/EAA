@@ -1,4 +1,4 @@
-from typing import Any, Optional, Dict, List, Callable
+from typing import Optional, Dict, Callable
 import base64
 import os
 import io
@@ -20,9 +20,6 @@ class BaseTool:
         self.exposed_tools: Dict[str, Callable] = {}
 
     def build(self, *args, **kwargs):
-        pass
-
-    def __call__(self, *args: Any, **kwds: Any) -> Any:
         pass
 
     def convert_image_to_base64(self, image: np.ndarray) -> str:

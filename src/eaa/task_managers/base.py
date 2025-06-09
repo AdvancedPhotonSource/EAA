@@ -48,7 +48,7 @@ class BaseTaskManager:
         d = {}
         for tool in tools:
             if not isinstance(tool, BaseTool):
-                raise ValueError(f"Input should be a list of BaseTool objects.")
+                raise ValueError("Input should be a list of BaseTool objects.")
             if (
                 not hasattr(tool, "exposed_tools")
                 or (hasattr(tool, "exposed_tools") and len(tool.exposed_tools) == 0)
