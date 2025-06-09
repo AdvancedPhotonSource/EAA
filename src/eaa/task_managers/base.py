@@ -1,13 +1,8 @@
-import autogen
-
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
 
+
 class BaseTaskManager:
-    
-    class AgentGroup(dict):
-        user_proxy: autogen.ConversableAgent = None
-        assistant: autogen.ConversableAgent = None
             
     def __init__(
         self, 
@@ -18,15 +13,15 @@ class BaseTaskManager:
     ):
         self.model = model_name
         self.model_base_url = model_base_url
-        self.agents = self.AgentGroup()
+        self.agent = None
         self.tools = tools
         self.build()
         
     def build(self, *args, **kwargs):
-        self.build_agents()
+        self.build_agent()
         self.build_tools()
     
-    def build_agents(self, *args, **kwargs):
+    def build_agent(self, *args, **kwargs):
         pass
     
     def build_tools(self, *args, **kwargs):
@@ -35,25 +30,12 @@ class BaseTaskManager:
     def register_tools(
         self, 
         tools: BaseTool | list[BaseTool], 
-        caller: autogen.ConversableAgent, 
-        executor: autogen.ConversableAgent
     ) -> None:
         if not isinstance(tools, (list, tuple)):
             tools = [tools]
-        for tool in tools:
-            wrapped_tool = autogen.tools.Tool(
-                name=tool.name,
-                description=tool.__call__.__doc__,
-                func_or_tool=tool.__call__,
-            )
-            
-            autogen.register_function(
-                wrapped_tool,
-                caller=caller,
-                executor=executor,
-                name=tool.name,
-                description=tool.__call__.__doc__,
-            )
+        self.agent.register_tools(
+            {tool.name: tool.__call__ for tool in tools}
+        )
             
     def get_llm_config(self, *args, **kwargs):
         llm_config = {

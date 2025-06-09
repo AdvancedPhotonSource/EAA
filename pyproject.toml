@@ -13,8 +13,8 @@ dependencies = [
     "numpy",
     "scikit-image",
     "scipy",
-    "autogen",
     "botorch",
+    "openai",
     "tqdm",
 ]
 dynamic = ["version"]
