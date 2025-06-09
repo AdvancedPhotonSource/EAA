@@ -121,7 +121,13 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             )
             
             if "TERMINATE" in response["content"]:
-                break
+                message = input(
+                    "Termination condition triggered. What to do next? Type \"exit\" to exit. "
+                )
+                if message.lower() == "exit":
+                    return
+                else:
+                    continue
             
             tool_response = self.agent.handle_tool_call(response)
             if tool_response:
