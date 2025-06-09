@@ -1,13 +1,9 @@
-from typing import Literal
 from textwrap import dedent
 import logging
-
-from autogen.agentchat.contrib.multimodal_conversable_agent import MultimodalConversableAgent
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import TuneOpticsParameters
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
-from eaa.hooks import register_hooks, register_tool_executor_hook
 import eaa.image_proc as ip
 
 logger = logging.getLogger(__name__)
@@ -22,7 +18,6 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
         param_setting_tool: TuneOpticsParameters = None,
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
-        speaker_selection_method: Literal["round_robin", "random", "auto"] = "auto",
         *args, **kwargs
     ) -> None:
         """An agent that searches for the best setup parameters
@@ -49,11 +44,16 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
               with suggesting the speaker in the right format when used as the group chat
               manager. In that case, use "round_robin" or "random" instead.
         """
+        if "tools" in kwargs.keys():
+            raise ValueError(
+                "`tools` should not be provided to `ParameterTuningTaskManager`. Instead, "
+                "provide the `param_setting_tool` and `acquisition_tool`."
+            )
+        
         super().__init__(
             model_name=model_name, 
             model_base_url=model_base_url,
-            tools=[param_setting_tool], 
-            speaker_selection_method=speaker_selection_method,
+            tools=[param_setting_tool],
             *args, **kwargs
         )
         self.param_setting_tool = param_setting_tool
@@ -72,30 +72,6 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
             )
             self.acquisition_tool.return_message = False
         return super().prerun_check(*args, **kwargs)
-        
-    def build_agents(self, *args, **kwargs) -> None:
-        super().build_agents(*args, **kwargs)
-        self.agents.user_proxy.human_input_mode = "NEVER"
-        
-    def build_assistant(self, *args, **kwargs) -> None:
-        llm_config = self.get_llm_config(*args, **kwargs)
-        self.agents.assistant = MultimodalConversableAgent(
-            name="assistant",
-            system_message=self.assistant_system_message,
-            llm_config=llm_config,
-        )
-        register_hooks(self.agents.assistant)
-        
-    def build_tool_executor(self, *args, **kwargs):
-        super().build_tool_executor(*args, **kwargs)
-        register_tool_executor_hook(self.agents.tool_executor)
-        
-    def build_group_chat(self, *args, **kwargs):
-        super().build_group_chat(
-            max_round=3, 
-            order_of_agents=[self.agents.user_proxy, self.agents.assistant, self.agents.tool_executor],
-            *args, **kwargs
-        )
         
     def run(
         self, 
@@ -147,7 +123,7 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
                     In the attached image, the left hand side is the image acquired
                     with the previous parameters, and the right hand side is the image
                     acquired with the new parameters.
-                    <img {self.image_path}>
+                    
                     Previous parameters: {self.param_setting_tool.parameter_history[-2]}
                     New parameters: {self.param_setting_tool.parameter_history[-1]}
                     Compare the new image with the previous one.
@@ -162,26 +138,38 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
                     """
                 )
             
-            # Ask the LLM to change the parameters.           
-            self.agents.user_proxy.initiate_chat(
-                self.agents.group_chat_manager,
+            # Ask the LLM to change the parameters.
+            # Message is stored in memory only when the message does not contain an image.
+            response = self.agent.receive(
                 message=message,
-                max_turns=2,
-                clear_history=False
+                image_path=self.image_path,
+                store_message=self.image_path is None,
+                store_response=True
             )
+            if "TERMINATE" in response["content"]:
+                break
             
-            # Acquire the image with the new parameters.
-            new_image = self.acquisition_tool(
-                loc_y=test_acquisition_location[0],
-                loc_x=test_acquisition_location[1],
-                size_y=test_acquisition_size[0],
-                size_x=test_acquisition_size[1],
-            )
+            tool_response = self.agent.handle_tool_call(response)
             
-            stitched_image = ip.stitch_images([self.last_img, new_image])
-            self.last_img = new_image
-            self.image_path = self.acquisition_tool.save_image_to_temp_dir(
-                stitched_image, "stitched_image.png".format(), add_timestamp=True
-            )
+            if tool_response is not None:
+                self.agent.receive(
+                    tool_response, 
+                    role="tool", 
+                    request_response=False,
+                    store_message=True, 
+                )
+                # Acquire the image with the new parameters.
+                new_image = self.acquisition_tool(
+                    loc_y=test_acquisition_location[0],
+                    loc_x=test_acquisition_location[1],
+                    size_y=test_acquisition_size[0],
+                    size_x=test_acquisition_size[1],
+                )
+                
+                stitched_image = ip.stitch_images([self.last_img, new_image])
+                self.last_img = new_image
+                self.image_path = self.acquisition_tool.save_image_to_temp_dir(
+                    stitched_image, "stitched_image.png".format(), add_timestamp=True
+                )
             
         logger.info(f"Final parameters: {self.param_setting_tool.parameter_history[-1]}")
