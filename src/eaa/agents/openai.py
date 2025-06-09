@@ -1,9 +1,84 @@
+"""All routines in this module assume OpenAI-compatible API is used.
+This docstring illustrates the JSON formats of messages of various roles:
+
+# Outgoing messages
+
+## User, system (pure text)
+
+```json
+{
+    "role": "user",
+    "content": "Text content of the message."
+}
+```
+
+## User (with image)
+
+```json
+{
+    "role": "user",
+    "content": [
+        {
+            "type": "text",
+            "text": "Text content of the message."
+        },
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,..."
+            }
+        }
+    ]
+}
+```
+
+## Tool
+
+```json
+{
+    "role": "tool",
+    "content": "Tool response.",
+    "tool_call_id": "tool_call_id"
+}
+```
+
+# Incoming messages (from AI)
+
+The direct output of the OpenAI API is a JSON object with a `choices` key, 
+which contains a list of `message` objects. We assume there is only one choice.
+
+## Text response
+
+```json
+{
+    "role": "assistant",
+    "content": "Text content of the response."
+}
+```
+
+## Tool call
+
+```json
+{
+    "role": "assistant",
+    "tool_calls": [
+        {
+            "id": "tool_call_id",
+            "type": "function",
+            "function": {
+                "name": "function_name",
+                "arguments": "{\"argument_name\": \"argument_value\", ...}"
+            }
+        }
+    ]
+}
+"""
+
 import inspect
 import typing
-import os
 import json
 import numpy as np
-from typing import get_type_hints, Callable, Dict, Any, Literal, List
+from typing import get_type_hints, Callable, Dict, Any, Literal, List, Optional
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
@@ -176,9 +251,11 @@ class OpenAIAgent:
             message = generate_openai_message(
                 message, role=role, image=image, image_path=image_path, encoded_image=encoded_image
             )
+        print_message(message, response_requested=request_response)
             
         if request_response:
             response = self.send_message_and_get_response(message, with_history=with_history)
+            print_message(response)
         
         # Add incoming message to history (this must be done after send_message_and_get_response)
         # so that the message sent does not get duplicated.
@@ -404,3 +481,45 @@ def generate_openai_tool_schema(func: Callable) -> Dict[str, Any]:
             }
         }
     }
+
+
+def print_message(message: Dict[str, Any], response_requested: Optional[bool] = None) -> None:
+    """Print the message.
+    
+    Parameters
+    ----------
+    message : Dict[str, Any]
+        The message to be printed.
+    response_requested : bool, optional
+        Whether a response is requested for the message.
+    """
+    color_dict = {
+        "user": "\033[94m",
+        "system": "\033[92m",
+        "tool": "\033[93m",
+        "assistant": "\033[91m"
+    }
+    color = color_dict[message["role"]]
+    
+    text = f"[Role] {message['role']}\n"
+    if response_requested is not None:
+        text += f"[Response requested] {response_requested}\n"
+    
+    if "content" in message.keys():
+        text += "[Content]\n"
+        if isinstance(message["content"], str):
+            text += message["content"]
+        elif isinstance(message["content"], list):
+            for item in message["content"]:
+                if item["type"] == "text":
+                    text += item["text"] + "\n"
+                elif item["type"] == "image_url":
+                    text += "<image>"
+    if "tool_calls" in message.keys():
+        text += "[Tool call]\n"
+        for tool_call in message["tool_calls"]:
+            text += f"{tool_call['id']}: {tool_call['function']['name']}\n"
+            text += f"Arguments: {tool_call['function']['arguments']}\n"
+    text += "\n ========================================= \n"
+    
+    print(f"{color}{text}\033[0m")
