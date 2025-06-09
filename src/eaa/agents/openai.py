@@ -94,7 +94,7 @@ class ToolManager:
     def get_all_schema(self) -> Dict[str, Any]:
         """Get the schema for the tool.
         """
-        return [generate_openai_tool_schema(tool["function"]) for tool in self.tools]
+        return [generate_openai_tool_schema(tool["name"], tool["function"]) for tool in self.tools]
     
     def add_tool(self, name: str, tool_function: Callable) -> None:
         """Add a tool to the tool manager.
@@ -111,7 +111,7 @@ class ToolManager:
             {
                 "name": name,
                 "function": tool_function,
-                "schema": generate_openai_tool_schema(tool_function)
+                "schema": generate_openai_tool_schema(name, tool_function)
             }
         )
         
@@ -417,13 +417,15 @@ def get_tool_call_info(message: dict | ChatCompletionMessage, index=0) -> str:
     return message["tool_calls"][index]
 
 
-def generate_openai_tool_schema(func: Callable) -> Dict[str, Any]:
+def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any]:
     """
     Generates an OpenAI-compatible tool schema from a Python function
     with type annotations and a docstring.
     
     Parameters
     ----------
+    tool_name : str
+        The name of the tool.
     func : Callable
         The function to generate the tool schema from.
         
@@ -472,7 +474,7 @@ def generate_openai_tool_schema(func: Callable) -> Dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": func.__name__,
+            "name": tool_name,
             "description": doc,
             "parameters": {
                 "type": "object",
@@ -508,13 +510,13 @@ def print_message(message: Dict[str, Any], response_requested: Optional[bool] = 
     if "content" in message.keys():
         text += "[Content]\n"
         if isinstance(message["content"], str):
-            text += message["content"]
+            text += message["content"] + "\n"
         elif isinstance(message["content"], list):
             for item in message["content"]:
                 if item["type"] == "text":
                     text += item["text"] + "\n"
                 elif item["type"] == "image_url":
-                    text += "<image>"
+                    text += "<image> \n"
     if "tool_calls" in message.keys():
         text += "[Tool call]\n"
         for tool_call in message["tool_calls"]:
