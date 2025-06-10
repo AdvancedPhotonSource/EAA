@@ -59,6 +59,7 @@ class SimulatedAcquireImage(AcquireImage):
         self.interpolator = None
         self.return_message = return_message
         self.blur = None
+        self.offset = np.array([0, 0])
         super().__init__(*args, **kwargs)
                 
     def build(self):
@@ -73,6 +74,9 @@ class SimulatedAcquireImage(AcquireImage):
         
     def set_blur(self, blur: float):
         self.blur = blur
+        
+    def set_offset(self, offset: np.ndarray):
+        self.offset = offset
 
     def acquire_image(
         self, 
@@ -101,8 +105,8 @@ class SimulatedAcquireImage(AcquireImage):
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
-        y = np.arange(loc[0], loc[0] + size[0])
-        x = np.arange(loc[1], loc[1] + size[1])
+        y = np.arange(loc[0] + self.offset[0], loc[0] + size[0] + self.offset[0])
+        x = np.arange(loc[1] + self.offset[1], loc[1] + size[1] + self.offset[1])
         arr = self.interpolator(y, x).reshape(size)
         
         if self.blur is not None and self.blur > 0:
