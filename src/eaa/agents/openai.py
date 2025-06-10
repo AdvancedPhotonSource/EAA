@@ -83,7 +83,7 @@ from typing import get_type_hints, Callable, Dict, Any, Literal, List, Optional
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
 
-from eaa.util import encode_image_base64
+from eaa.util import encode_image_base64, get_image_path_from_text
 
 
 class ToolManager:
@@ -204,7 +204,13 @@ class OpenAIAgent:
         ----------
         message : str | Dict[str, Any]
             The message to be sent to the AI. It should be a string or a dictionary
-            complying with OpenAI's message format.
+            complying with OpenAI's message format. To attach an image to the message,
+            either provide the image as a numpy array with `image`, or provide the path
+            to the image with `image_path`, or provide the base-64 encoded image with
+            `encoded_image`. Alternatively, the path to the image can also be embedded
+            in the message string with the following format as `<img path/to/image.png>`.
+            Paths embedded in this way is only used when `image_path` is None and `message`
+            is a string.
         image : np.ndarray, optional
             The image to be sent to the AI. Exclusive with `encoded_image` and `image_path`.
         image_path : str, optional
@@ -246,6 +252,11 @@ class OpenAIAgent:
                 "When role is 'tool', `message` must be a dictionary of tool response that "
                 "contains the tool_call_id."
             )
+            
+        if image_path is None and isinstance(message, str):
+            image_path, modified_message = get_image_path_from_text(message, return_text_without_image_tag=True)
+            if image_path is not None:
+                message = modified_message
             
         if isinstance(message, str):
             message = generate_openai_message(

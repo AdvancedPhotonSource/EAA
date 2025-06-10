@@ -1,6 +1,8 @@
 import datetime
 import base64
 import io
+import re
+from typing import Tuple
 
 from PIL import Image
 import numpy as np
@@ -92,4 +94,45 @@ def encode_image_base64(
         raise ValueError("Either `image` or `image_path` should be provided.")
 
     return base64_data
+
+
+def get_image_path_from_text(
+    text: str, 
+    return_text_without_image_tag: bool = False
+) -> str | None | Tuple[str, str]:
+    """Get the path of an image from a string. The image path
+    is assumed to be in the format of
+    
+    ```
+    <img path/to/image.png>
+    ```
+
+    The path must be without any additional spaces or newlines in it.
+    If no path is found, the function will return `None`.
+    
+    Parameters
+    ----------
+    text : str
+        The text to get the image path from.
+    return_text_without_image_tag : bool, optional
+        If True, the function will also return the original text with the
+        image tag of `<img path/to/image.png>` removed.
+        
+    Returns
+    -------
+    str | None
+        The path to the image.
+    """
+    res = re.search(r'<img (.*?)>', text)
+    if res:
+        image_tag = res.group(0)
+        path = res.group(1)
+        if return_text_without_image_tag:
+            text = text.replace(image_tag, "")
+    else:
+        path = None
+    if return_text_without_image_tag:
+        return path, text
+    else:
+        return path
     
