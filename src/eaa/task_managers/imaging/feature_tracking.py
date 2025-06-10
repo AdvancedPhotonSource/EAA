@@ -186,3 +186,114 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 )
             
             round += 1
+
+    def run_feature_tracking(
+        self,
+        reference_image_path: str,
+        initial_position: Optional[tuple[float, float]] = None,
+        initial_fov_size: Optional[tuple[float, float]] = None,
+        y_range: Optional[tuple[float, float]] = None,
+        x_range: Optional[tuple[float, float]] = None,
+        max_rounds: int = 99,
+        initial_prompt: Optional[str] = None,
+    ):
+        """Search for a feature that drifted out of the field of view
+        given a reference image of it, and bring the feature back into
+        the field of view.
+        
+        Parameters
+        ----------
+        reference_image_path : str
+            The path to the reference image containing the feature
+            to look for.
+        initial_position : tuple[float, float], optional
+            The initial position of the field of view.
+        initial_fov_size : tuple[float, float], optional
+            The size of the initial field of view.
+        y_range : tuple[float, float], optional
+            The range of y coordinates to search for the feature.
+        x_range : tuple[float, float], optional
+            The range of x coordinates to search for the feature.
+        max_rounds : int, optional
+            The maximum number of rounds to search for the feature.
+        initial_prompt : str, optional
+            If given, this prompt will override the default prompt to
+            be used as the initial message to the agent.
+            `initial_position`, `initial_fov_size`, `y_range`, and `x_range`
+            should not be provided if this is given.
+        """
+        
+        
+        if initial_prompt is None:
+            message = dedent(f"""\
+                You are given an image of a feature in the sample that
+                was previously captured by the microscope. The feature
+                drifted out of the field of view. Use the tool to acquire
+                images at different places to find that feature again,
+                and bring it back to the same location of the field of view
+                as the reference image. Try zooming out the field of view,
+                and move around to find the feature, then zoom back in.
+                The new image you acquire might be blurrier than the reference.
+                
+                For your first attempt, start from the initial position of
+                x = {initial_position[1]}, y = {initial_position[0]}, and
+                use an initial field of view size of 
+                {initial_fov_size[1]} in x and {initial_fov_size[0]} in y.
+                
+                After you find the feature, report the coordinates of the
+                field of view and include 'TERMINATE' in your response.
+                """
+            )
+        else:
+            if (
+                initial_position is not None or
+                initial_fov_size is not None or
+                y_range is not None or
+                x_range is not None
+            ):
+                raise ValueError(
+                    "`initial_position`, `initial_fov_size`, `y_range`, and `x_range` "
+                    "should not be provided if `initial_prompt` is given."
+                )
+            message = initial_prompt
+        
+        round = 0
+        image_path = reference_image_path
+        while round < max_rounds:
+            # Messages after the first one contain images so we don't store them.
+            # However, AI responses contain tool calls so we need to store them.
+            response = self.agent.receive(
+                message,
+                image_path=image_path,
+                store_message=round == 0, 
+                store_response=True
+            )
+            
+            if "TERMINATE" in response["content"]:
+                message = input(
+                    "Termination condition triggered. What to do next? Type \"exit\" to exit. "
+                )
+                if message.lower() == "exit":
+                    return
+                else:
+                    continue
+            
+            tool_response = self.agent.handle_tool_call(response)
+            if tool_response:
+                self.agent.receive(
+                    tool_response, 
+                    role="tool", 
+                    request_response=False,
+                    store_message=True, 
+                    store_response=True
+                )
+                message = dedent("""\
+                    Here is the image the tool returned.
+                    """
+                )
+                image_path = tool_response["content"]
+            else:
+                message = ""
+                image_path = None
+            
+            round += 1
