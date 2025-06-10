@@ -58,86 +58,111 @@ class BlueSkyAcquireImage(AcquireImage):
     scanplan: Callable = None
     savedata: SaveDataMic = None
     
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self, 
+        sample_name: str = "smp1",
+        dwell: float = 0,
+        xrf_on: bool = True,
+        ptycho_on: bool = False,
+        preamp_on: bool = False,
+        position_stream: bool = False,
+        *args, **kwargs
+    ):
+        """Image acquisition tool with Bluesky.
+
+        Parameters
+        ----------
+        sample_name : str, optional
+            The name of the sample.
+        dwell : float, optional
+            The dwell time.
+        xrf_on : bool, optional
+            Whether to collect XRF data.
+        ptycho_on : bool, optional
+            Whether to collect Ptychography data.
+        preamp_on : bool, optional
+            Whether to collect Preamp data.
+        position_stream : bool, optional
+            Whether to collect position stream data.
+
+        Raises
+        ------
+        ImportError
+            If Bluesky control initialization fails.
+        """
         try:
             from .bluesky_init import RE, step2d, get_control_components
             self.RE = RE
             self.scanplan = step2d
             self.savedata = get_control_components("savedata")
         except ImportError:
-            raise ImportError("Bluesky control initialization failed. " +
-                            "Please check that the bluesky-mic package is installed" + 
-                            "and the motors can only be reached from private subnet computers.")
+            raise ImportError(
+                "Bluesky control initialization failed. "
+                "Please check that the bluesky-mic package is installed "
+                "and the motors can only be reached from private subnet computers."
+            )
+        
+        self.sample_name = sample_name
+        self.dwell = dwell
+        self.xrf_on = xrf_on
+        self.ptycho_on = ptycho_on
+        self.preamp_on = preamp_on
+        self.position_stream = position_stream
+        
         super().__init__(*args, **kwargs)
         
     def acquire_image(
         self,
-        samplename="smp1",
-        width=0,
-        x_center=None,
-        stepsize_x=0,
-        height=0,
-        y_center=None,
-        stepsize_y=0,
-        dwell=0,
-        xrf_on=True,
-        ptycho_on=False,
-        preamp_on=False,
-        position_stream=False)->Annotated[str, "Acquire an image at the given location using Bluesky RunEngine"]:
-        
-        """Bluesky RunEngine that drives the x- and y- motors to the given location and yields a 2D image.
+        width: float = 0,
+        height: float = 0,
+        x_center: float = None,
+        y_center: float = None,
+        stepsize_x: float = 0,
+        stepsize_y: float = 0,
+    )->Annotated[str, "The path to the acquired image."]:
+        """Acquire an image of a given scan area with the scanning x-ray microscope.
         
         Parameters
         ----------
-        samplename: str
-            The name of the sample
         width: float
-            The width of the scan
-        x_center: float
-            The center of the scan in the x direction
-        stepsize_x: float
-            The step size in the x direction
+            The width of the scan area.
         height: float
-            The height of the scan
+            The height of the scan area.
+        x_center: float
+            The center of the scan area in the x direction.
         y_center: float
-            The center of the scan in the y direction
+            The center of the scan area in the y direction.
+        stepsize_x: float
+            The scan step size in the x direction, i.e., the distance between
+            two adjacent pixels in the x direction.
         stepsize_y: float
-            The step size in the y direction
-        dwell: float
-            The dwell time in the scan
-        xrf_on: bool
-            Whether to collect XRF data
-        ptycho_on: bool
-            Whether to collect Ptycho data
-        preamp_on: bool
-            Whether to collect Preamp data
-        position_stream: bool
-            Whether to collect position stream data
+            The scan step size in the y direction, i.e., the distance between
+            two adjacent pixels in the y direction.
 
         Returns
         -------
         str
             The path of the acquired image saved in hard drive.
         """
-        
         try:
             logger.info(f"Acquiring image of size {width}x{height} at location {x_center},{y_center}.")
             self.savedata.update_next_file_name()
             self.RE(self.scanplan(
-                samplename=samplename,
+                samplename=self.sample_name,
                 width=width,
                 x_center=x_center,
                 stepsize_x=stepsize_x,
                 height=height,
                 y_center=y_center,
                 stepsize_y=stepsize_y,
-                dwell=dwell,
-                xrf_on=xrf_on,
-                ptycho_on=ptycho_on,
-                preamp_on=preamp_on,
-                position_stream=position_stream,
+                dwell=self.dwell,
+                xrf_on=self.xrf_on,
+                ptycho_on=self.ptycho_on,
+                preamp_on=self.preamp_on,
+                position_stream=self.position_stream,
             ))
             
+            ##TODO: add units to lengths and positions in docstring
             ##TODO: process the .h5 files to get the image
             ##TODO: save the image to the temp directory
             ##TODO: return the path of the image
@@ -182,7 +207,7 @@ class SimulatedAcquireImage(AcquireImage):
         loc_x: float, 
         size_y: int, 
         size_x: int, 
-    ) -> Annotated[str, "The acquired image path."]:
+    ) -> Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given size from the whole image at a given
         location.
 
