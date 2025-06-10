@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 from textwrap import dedent
 
 from eaa.tools.base import BaseTool
@@ -50,7 +50,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         fov_size: tuple[float, float] = (100, 100),
         step_size: tuple[float, float] = (100, 100),
         max_rounds: int = 99,
-        initial_prompt: str = None,
+        initial_prompt: Optional[str] = None,
         *args, **kwargs
     ) -> None:
         """Run a search for the best field of view for the microscope.
