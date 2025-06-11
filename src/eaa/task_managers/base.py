@@ -1,8 +1,10 @@
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
-
+from eaa.agents.openai import OpenAIAgent
 
 class BaseTaskManager:
+
+    assistant_system_message = ""
             
     def __init__(
         self, 
@@ -24,7 +26,12 @@ class BaseTaskManager:
         self.build_tools()
     
     def build_agent(self, *args, **kwargs):
-        pass
+        """Build the assistant(s)."""
+        llm_config = self.get_llm_config(*args, **kwargs)
+        self.agent = OpenAIAgent(
+            llm_config=llm_config,
+            system_message=self.assistant_system_message,
+        )
     
     def build_tools(self, *args, **kwargs):
         pass
@@ -85,3 +92,12 @@ class BaseTaskManager:
 
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()
+
+    def run_conversation(self, *args, **kwargs) -> None:
+        """Run a conversation with the assistant."""
+        message = input("Enter a message: ")
+        while True:
+            if message.lower() == "exit":
+                break
+            _ = self.agent.receive(message, store_message=True, store_response=True)
+            message = input("Enter a message: ")

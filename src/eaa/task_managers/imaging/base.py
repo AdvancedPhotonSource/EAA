@@ -3,7 +3,6 @@ import logging
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
-from eaa.agents.openai import OpenAIAgent
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +45,6 @@ class ImagingBaseTaskManager(BaseTaskManager):
             tools=tools, 
             *args, **kwargs
         )
-
-    def build_agent(self, *args, **kwargs) -> None:
-        """Build the assistant(s)."""
-        llm_config = self.get_llm_config(*args, **kwargs)
-        self.agent = OpenAIAgent(
-            llm_config=llm_config,
-            system_message=self.assistant_system_message,
-        )
     
     def build_tools(self, *args, **kwargs):
         self.register_tools(self.tools)
@@ -68,12 +59,4 @@ class ImagingBaseTaskManager(BaseTaskManager):
         super().run(*args, **kwargs)
         
         self.run_fov_search(*args, **kwargs)
-        
-    def run_conversation(self, *args, **kwargs) -> None:
-        """Run a conversation with the assistant."""
-        message = input("Enter a message: ")
-        while True:
-            if message.lower() == "exit":
-                break
-            _ = self.agent.receive(message, store_message=True, store_response=True)
-            message = input("Enter a message: ")
+
