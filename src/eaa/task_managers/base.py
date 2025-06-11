@@ -8,11 +8,13 @@ class BaseTaskManager:
         self, 
         model_name: str = "gpt-4o", 
         model_base_url: str = None, 
+        access_token: str = None,
         tools: list[BaseTool] = [], 
         *args, **kwargs
     ):
         self.model = model_name
         self.model_base_url = model_base_url
+        self.access_token = access_token
         self.agent = None
         self.tools = tools
         self.build()
@@ -68,7 +70,11 @@ class BaseTaskManager:
     def get_llm_config(self, *args, **kwargs):
         llm_config = {
             "model": self.model,
-            "api_key": get_api_key(self.model, self.model_base_url),
+            "api_key": (
+                get_api_key(self.model, self.model_base_url) 
+                if self.access_token is None 
+                else self.access_token
+            ),
         }
         if self.model_base_url:
             llm_config["base_url"] = self.model_base_url
