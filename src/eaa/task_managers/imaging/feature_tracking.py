@@ -242,6 +242,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 
                 After you find the feature, report the coordinates of the
                 field of view and include 'TERMINATE' in your response.
+                
+                Make sure you only make one tool call at a time. Do not make
+                multiple calls simultaneously.
                 """
             )
         else:
