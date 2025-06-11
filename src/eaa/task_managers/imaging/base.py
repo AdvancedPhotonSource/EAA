@@ -3,7 +3,6 @@ import logging
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
-from eaa.comms import get_api_key
 from eaa.agents.openai import OpenAIAgent
 
 logger = logging.getLogger(__name__)
@@ -55,15 +54,6 @@ class ImagingBaseTaskManager(BaseTaskManager):
             llm_config=llm_config,
             system_message=self.assistant_system_message,
         )
-        
-    def get_llm_config(self, *args, **kwargs):
-        llm_config = {
-            "model": self.model,
-            "api_key": get_api_key(self.model, self.model_base_url),
-        }
-        if self.model_base_url:
-            llm_config["base_url"] = self.model_base_url
-        return llm_config
     
     def build_tools(self, *args, **kwargs):
         self.register_tools(self.tools)
