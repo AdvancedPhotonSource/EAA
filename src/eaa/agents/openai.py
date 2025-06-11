@@ -310,13 +310,49 @@ class OpenAIAgent:
         else:
             messages = self.messages[0:1] + [message]
             
+        tool_schema = self.tool_manager.get_all_schema()
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
-            tools=self.tool_manager.get_all_schema(),
-            tool_choice="auto",
+            tools=tool_schema if len(tool_schema) > 0 else None,
+            tool_choice="auto" if len(tool_schema) > 0 else "none",
         )
-        return response.choices[0].message.to_dict()
+        response_dict = response.choices[0].message.to_dict()
+        response_dict = self.process_response(
+            response_dict,
+            remove_empty_tool_calls_key=False,
+            remove_reasoning_content_key=False,
+        )
+        return response_dict
+    
+    def process_response(
+        self, 
+        response: Dict[str, Any],
+        remove_empty_tool_calls_key: bool = True,
+        remove_reasoning_content_key: bool = True,
+    ) -> Dict[str, Any]:
+        """Process the response from the agent.
+        
+        Parameters
+        ----------
+        response : Dict[str, Any]
+            The response from the agent as a dictionary.
+        remove_empty_tool_calls_key : bool, optional
+            If True, the "tool_calls" key will be removed if it is an empty list.
+        remove_reasoning_content_key : bool, optional
+            If True, the "reasoning_content" key will be removed if it exists.
+            
+        Returns
+        -------
+        Dict[str, Any]
+            The processed response from the agent.
+        """
+        if remove_empty_tool_calls_key and "tool_calls" in response:
+            if isinstance(response["tool_calls"], list) and len(response["tool_calls"]) == 0:
+                del response["tool_calls"]
+        if remove_reasoning_content_key and "reasoning_content" in response:
+            del response["reasoning_content"]
+        return response
     
     def handle_tool_call(self, message: Dict[str, Any]) -> Dict[str, Any] | None:
         """Handle the tool call in the response of the agent.
