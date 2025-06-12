@@ -159,6 +159,8 @@ class OpenAIAgent:
         self.api_key = llm_config.get("api_key", "")
         self.base_url = llm_config.get("base_url", "https://api.openai.com/v1")
         
+        self.message_hooks = []
+        
         self.messages = [
             {"role": "system", "content": system_message}
         ]
@@ -324,6 +326,8 @@ class OpenAIAgent:
             remove_empty_reasoning_content_key=True,
             move_reasoning_content_to_empty_content=True,
         )
+        for hook in self.message_hooks:
+            response_dict = hook(response_dict)
         return response_dict
     
     def process_response(
@@ -389,6 +393,21 @@ class OpenAIAgent:
             tool_call_id=tool_call_id
         )
         return response
+    
+    def register_message_hook(self, hook: Callable) -> None:
+        """Register a hook function that will be called to process the message
+        received from the agent.
+        
+        The hook function should take a dictionary of message and return a
+        dictionary of processed message.
+        
+        Parameters
+        ----------
+        hook : Callable
+            The hook function.
+        """
+        self.message_hooks.append(hook)
+        
     
 def to_dict(message: ChatCompletionMessage | Dict[str, Any]) -> dict:
     """Convert a ChatCompletionMessage to a dictionary.
