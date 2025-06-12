@@ -1,8 +1,8 @@
-from typing import Annotated, Dict, Callable
+from typing import Annotated, Dict, List, Any
 
 import numpy as np
 
-from eaa.tools.base import BaseTool, check
+from eaa.tools.base import BaseTool, check, ToolReturnType
 from eaa.tools.imaging.acquisition import SimulatedAcquireImage
 
 
@@ -15,9 +15,13 @@ class TuneOpticsParameters(BaseTool):
         super().__init__(*args, **kwargs)
         self.parameter_history = []
         
-        self.exposed_tools: Dict[str, Callable] = {
-            "set_parameters": self.set_parameters
-        }
+        self.exposed_tools: List[Dict[str, Any]] = [
+            {
+                "name": "set_parameters",
+                "function": self.set_parameters,
+                "return_type": ToolReturnType.TEXT
+            }
+        ]
         
     def set_parameters(*args, **kwargs):
         raise NotImplementedError

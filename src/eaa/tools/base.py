@@ -1,12 +1,22 @@
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict, Callable, List, Any
 import base64
 import os
 import io
+from enum import StrEnum, auto
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 import eaa.util
+
+
+class ToolReturnType(StrEnum):
+    TEXT = auto()
+    IMAGE_PATH = auto()
+    NUMBER = auto()
+    BOOL = auto()
+    LIST = auto()
+    DICT = auto()
 
 
 class BaseTool:
@@ -17,7 +27,7 @@ class BaseTool:
         if build:
             self.build(*args, **kwargs)
         
-        self.exposed_tools: Dict[str, Callable] = {}
+        self.exposed_tools: List[Dict[str, Any]] = []
 
     def build(self, *args, **kwargs):
         pass

@@ -1,4 +1,4 @@
-from typing import Annotated, Dict, Callable
+from typing import Annotated, Dict, List, Any
 import logging
 
 import matplotlib.pyplot as plt
@@ -6,7 +6,7 @@ import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
 
-from eaa.tools.base import BaseTool, check
+from eaa.tools.base import BaseTool, check, ToolReturnType
 import eaa.comms
 import eaa.util
 
@@ -24,9 +24,13 @@ class AcquireImage(BaseTool):
         self.show_image_in_real_time = show_image_in_real_time
         self.rt_fig = None
         
-        self.exposed_tools: Dict[str, Callable] = {
-            "acquire_image": self.acquire_image
-        }
+        self.exposed_tools: List[Dict[str, Any]] = [
+            {
+                "name": "acquire_image",
+                "function": self.acquire_image,
+                "return_type": ToolReturnType.IMAGE_PATH
+            }
+        ]
         
     def update_real_time_view(self, image: np.ndarray):
         if self.rt_fig is None:

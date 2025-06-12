@@ -77,17 +77,19 @@ which contains a list of `message` objects. We assume there is only one choice.
 import inspect
 import typing
 import json
+
 import numpy as np
 from typing import get_type_hints, Callable, Dict, Any, Literal, List, Optional
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
 
+from eaa.tools.base import ToolReturnType
 from eaa.util import encode_image_base64, get_image_path_from_text
 
 
 class ToolManager:
-    
+
     def __init__(self):
         self.tools: List[Dict[str, Any]] = []
     
@@ -96,7 +98,7 @@ class ToolManager:
         """
         return [generate_openai_tool_schema(tool["name"], tool["function"]) for tool in self.tools]
     
-    def add_tool(self, name: str, tool_function: Callable) -> None:
+    def add_tool(self, name: str, tool_function: Callable, return_type: ToolReturnType) -> None:
         """Add a tool to the tool manager.
         
         Parameters
@@ -106,11 +108,14 @@ class ToolManager:
         tool_function : Callable
             The function to be used as a tool. The function should be type-annotated,
             and have a docstring to be used as the description of the tool.
+        return_type : ToolReturnType
+            The type of the return value of the tool.
         """
         self.tools.append(
             {
                 "name": name,
                 "function": tool_function,
+                "return_type": return_type,
                 "schema": generate_openai_tool_schema(name, tool_function)
             }
         )
@@ -129,10 +134,30 @@ class ToolManager:
         tool_kwargs : Dict[str, Any]
             The arguments to be passed to the tool.
         """
+        return self.get_tool_callable(tool_name)(**tool_kwargs)
+    
+    def get_tool_dict(self, tool_name: str) -> Dict[str, Any]:
+        """Get the tool dictionary for a given tool name.
+        """
         for tool in self.tools:
             if tool["name"] == tool_name:
-                return tool["function"](**tool_kwargs)
+                return tool
         raise ValueError(f"Tool {tool_name} not found.")
+    
+    def get_tool_return_type(self, tool_name: str) -> ToolReturnType:
+        """Get the return type of a tool.
+        """
+        return self.get_tool_dict(tool_name)["return_type"]
+    
+    def get_tool_callable(self, tool_name: str) -> Callable:
+        """Get the callable function for a given tool name.
+        """
+        return self.get_tool_dict(tool_name)["function"]
+    
+    def get_tool_schema(self, tool_name: str) -> Dict[str, Any]:
+        """Get the schema for a given tool name.
+        """
+        return self.get_tool_dict(tool_name)["schema"]
 
 
 class OpenAIAgent:
@@ -171,21 +196,27 @@ class OpenAIAgent:
             base_url=self.base_url,
         )
         
-    def register_tools(self, tools: Dict[str, Callable]) -> None:
+    def register_tools(self, tools: List[Dict[str, Any]]) -> None:
         """Register tools with the OpenAI-compatible API.
         
         Parameters
         ----------
-        tools : Dict[str, Callable]
-            A dictionary of tool names and their corresponding callable functions.
+        tools : List[Dict[str, Any]]
+            A list of dictionaries, each containing the name of the tool, the
+            callable function, and the return type of the tool.
         """
-        if not isinstance(tools, Dict):
+        if not isinstance(tools, List):
             raise ValueError(
-                "tools must be a dictionary of tool names and their corresponding callable functions."
+                "tools must be a list of dictionaries, each containing the name of the tool, the "
+                "callable function, and the return type of the tool."
             )
         
-        for tool_name, tool_function in tools.items():
-            self.tool_manager.add_tool(tool_name, tool_function)
+        for tool_dict in tools:
+            self.tool_manager.add_tool(
+                name=tool_dict["name"],
+                tool_function=tool_dict["function"],
+                return_type=tool_dict["return_type"]
+            )
         
     def receive(
         self,

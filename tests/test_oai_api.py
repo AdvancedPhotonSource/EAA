@@ -7,6 +7,7 @@ import pytest
 import numpy as np
 
 from eaa.agents.openai import OpenAIAgent
+from eaa.tools.base import ToolReturnType
 
 import test_utils as tutils
 
@@ -46,7 +47,13 @@ class TestOpenAIAPI(tutils.BaseTester):
         )
         
         agent.register_tools(
-            {"list_sum": list_sum}
+            [
+                {
+                    "name": "list_sum",
+                    "function": list_sum,
+                    "return_type": ToolReturnType.NUMBER
+                }
+            ]
         )
         
         # `store_message=True` ensures the user message is saved in the message history.
@@ -81,7 +88,13 @@ class TestOpenAIAPI(tutils.BaseTester):
         )
         
         agent.register_tools(
-            {"get_image": get_image}
+            [
+                {
+                    "name": "get_image",
+                    "function": get_image,
+                    "return_type": ToolReturnType.IMAGE_PATH
+                }
+            ]
         )
         
         response = agent.receive(

@@ -2,6 +2,7 @@ from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
 from eaa.agents.openai import OpenAIAgent
 
+
 class BaseTaskManager:
 
     assistant_system_message = ""
@@ -43,18 +44,25 @@ class BaseTaskManager:
         if not isinstance(tools, (list, tuple)):
             tools = [tools]
         self.agent.register_tools(
-            self.create_tool_dict(tools)
+            self.create_tool_list(tools)
         )
         
-    def create_tool_dict(self, tools: list[BaseTool]) -> dict:
-        """Create a dictionary containing the callable tools of all BaseTool objects.
+    def create_tool_list(self, tools: list[BaseTool]) -> list[dict]:
+        """Create a list of tool dictionaries by concatenating the exposed_tools
+        of all BaseTool objects.
         
         Parameters
         ----------
         tools : list[BaseTool]
             A list of BaseTool objects.
+        
+        Returns
+        -------
+        list[dict]
+            A list of tool dictionaries.
         """
-        d = {}
+        tool_list = []
+        registered_tool_names = []
         for tool in tools:
             if not isinstance(tool, BaseTool):
                 raise ValueError("Input should be a list of BaseTool objects.")
@@ -66,14 +74,15 @@ class BaseTaskManager:
                     "A subclass of BaseTool must have a non-empty `exposed_tools` attribute "
                     "containing a dictionary of tool names and their corresponding callable functions."
                 )
-            for tool_name, tool_function in tool.exposed_tools.items():
-                if tool_name in d.keys():
+            for tool_dict in tool.exposed_tools:
+                if tool_dict["name"] in registered_tool_names:
                     raise ValueError(
-                        f"Tool {tool_name} is already registered. Make sure no two callables have the same name."
+                        f"Tool {tool_dict['name']} is already registered. Make sure no two callables have the same name."
                     )
-                d[tool_name] = tool_function
-        return d
-            
+                tool_list.append(tool_dict)
+                registered_tool_names.append(tool_dict["name"])
+        return tool_list
+
     def get_llm_config(self, *args, **kwargs):
         llm_config = {
             "model": self.model,
