@@ -79,7 +79,9 @@ import typing
 import json
 
 import numpy as np
-from typing import get_type_hints, Callable, Dict, Any, Literal, List, Optional
+from typing import (
+    get_type_hints, Callable, Dict, Any, Literal, List, Tuple, Optional
+)
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
@@ -220,7 +222,7 @@ class OpenAIAgent:
         
     def receive(
         self,
-        message: str | Dict[str, Any], 
+        message: Optional[str | Dict[str, Any]] = None, 
         role: Literal["user", "system", "tool"] = "user",
         image: Optional[np.ndarray] = None,
         image_path: Optional[str] = None,
@@ -235,7 +237,8 @@ class OpenAIAgent:
         
         Parameters
         ----------
-        message : str | Dict[str, Any]
+        message : Optional[str | Dict[str, Any]]
+        
             The message to be sent to the AI. It should be a string or a dictionary
             complying with OpenAI's message format. To attach an image to the message,
             either provide the image as a numpy array with `image`, or provide the path
@@ -244,6 +247,10 @@ class OpenAIAgent:
             in the message string with the following format as `<img path/to/image.png>`.
             Paths embedded in this way is only used when `image_path` is None and `message`
             is a string.
+            
+            If `message` is None, the function will send the chat history stored to AI
+            if `with_history` is True.
+        
         image : np.ndarray, optional
             The image to be sent to the AI. Exclusive with `encoded_image` and `image_path`.
         image_path : str, optional
@@ -285,6 +292,8 @@ class OpenAIAgent:
                 "When role is 'tool', `message` must be a dictionary of tool response that "
                 "contains the tool_call_id."
             )
+        if message is None and not with_history:
+            raise ValueError("`message` cannot be None if `with_history` is False.")
             
         if image_path is None and isinstance(message, str):
             image_path, modified_message = get_image_path_from_text(message, return_text_without_image_tag=True)
@@ -295,7 +304,8 @@ class OpenAIAgent:
             message = generate_openai_message(
                 message, role=role, image=image, image_path=image_path, encoded_image=encoded_image
             )
-        print_message(message, response_requested=request_response)
+        if message is not None:
+            print_message(message, response_requested=request_response)
             
         if request_response:
             response = self.send_message_and_get_response(message, with_history=with_history)
@@ -320,15 +330,16 @@ class OpenAIAgent:
     
     def send_message_and_get_response(
         self,
-        message: Dict[str, Any],
+        message: Optional[Dict[str, Any]] = None,
         with_history: bool = True
     ) -> Dict[str, Any]:
         """Send a message to the agent and get the response.
         
         Parameters
         ----------
-        message : Dict[str, Any]
-            The message to be sent to the agent.
+        message : Optional[Dict[str, Any]]
+            The message to be sent to the agent. If None, this function will send
+            the history of the conversation to the agent.
         with_history : bool, optional
             If True, the history of the conversation is included in the message sent
             to the agent so that it has the memory of the conversation.
@@ -338,10 +349,15 @@ class OpenAIAgent:
         Dict[str, Any]
             The response from the agent.
         """
+        if message is None and not with_history:
+            raise ValueError("`message` cannot be None if `with_history` is False.")
+        
+        message = [message] if message is not None else []
+        
         if with_history:
-            messages = self.messages + [message]
+            messages = self.messages + message
         else:
-            messages = self.messages[0:1] + [message]
+            messages = self.messages[0:1] + message
             
         tool_schema = self.tool_manager.get_all_schema()
         response = self.client.chat.completions.create(
@@ -404,26 +420,55 @@ class OpenAIAgent:
                 del response["reasoning_content"]
         return response
     
-    def handle_tool_call(self, message: Dict[str, Any]) -> Dict[str, Any] | None:
-        """Handle the tool call in the response of the agent.
-        If tool call exists, the tool will be executed and a tool
-        response will be returned. Otherwise, this function returns
-        None.
+    def handle_tool_call(
+        self, 
+        message: Dict[str, Any],
+        return_tool_return_types: bool = False
+    ) -> List[Dict[str, Any]] | Tuple[List[Dict[str, Any]], List[ToolReturnType]]:
+        """Handle the tool calls in the response of the agent.
+        If tool call exists, the tools will be executed and tool
+        responses will be returned. This function is able to handle 
+        multiple tool calls.
+        
+        Parameters
+        ----------
+        message : Dict[str, Any]
+            The message to handle the tool call.
+        return_tool_return_types : bool
+            If True, the return types of the tool calls will be also returned.
+        
+        Returns
+        -------
+        List[Dict[str, Any]] | Tuple[List[Dict[str, Any]], List[ToolReturnType]]
+            The tool responses. If `return_tool_return_types` is True, the
+            return types of the tool calls will also be returned.
         """
         if not has_tool_call(message):
-            return None
-        tool_call_info = get_tool_call_info(message)
-        tool_call_id = tool_call_info["id"]
-        tool_name = tool_call_info["function"]["name"]
-        tool_call_kwargs = json.loads(tool_call_info["function"]["arguments"])
-        result = self.tool_manager.execute_tool(tool_name, tool_call_kwargs)
+            if return_tool_return_types:
+                return [], []
+            else:
+                return []
         
-        response = generate_openai_message(
-            content=str(result),
-            role="tool",
-            tool_call_id=tool_call_id
-        )
-        return response
+        responses = []
+        response_types = []
+        tool_call_info_list = get_tool_call_info(message, index=None)
+        for tool_call_info in tool_call_info_list:
+            tool_call_id = tool_call_info["id"]
+            tool_name = tool_call_info["function"]["name"]
+            tool_call_kwargs = json.loads(tool_call_info["function"]["arguments"])
+            result = self.tool_manager.execute_tool(tool_name, tool_call_kwargs)
+            
+            response = generate_openai_message(
+                content=str(result),
+                role="tool",
+                tool_call_id=tool_call_id
+            )
+            responses.append(response)
+            response_types.append(self.tool_manager.get_tool_return_type(tool_name))
+            
+        if return_tool_return_types:
+            return responses, response_types
+        return responses
     
     def register_message_hook(self, hook: Callable) -> None:
         """Register a hook function that will be called to process the message
@@ -522,12 +567,30 @@ def has_tool_call(message: dict | ChatCompletionMessage) -> bool:
         return False
 
 
-def get_tool_call_info(message: dict | ChatCompletionMessage, index=0) -> str:
+def get_tool_call_info(
+    message: dict | ChatCompletionMessage, 
+    index: Optional[int] = 0
+) -> str | List[str]:
     """Get the tool call ID from the message.
+    
+    Parameters
+    ----------
+    message : dict | ChatCompletionMessage
+        The message to get the tool call ID from.
+    index : int, optional
+        The index of the tool call to get the ID from. If None,
+        all tool calls are returned as a list.
+        
+    Returns
+    -------
+    str | List[str]
+        The tool call(s).
     """
     message = to_dict(message)
-    return message["tool_calls"][index]
-
+    if index is None:
+        return message["tool_calls"]
+    else:
+        return message["tool_calls"][index]
 
 def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any]:
     """

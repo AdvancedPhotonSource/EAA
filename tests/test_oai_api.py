@@ -58,10 +58,10 @@ class TestOpenAIAPI(tutils.BaseTester):
         
         # `store_message=True` ensures the user message is saved in the message history.
         response = agent.receive("Can you sum these numbers: 2, 4, 6, 6, 7?", store_message=True)
-        tool_response = agent.handle_tool_call(response)
-        if tool_response is not None:
+        tool_responses = agent.handle_tool_call(response)
+        if len(tool_responses) > 0:
             # `store_message=True` ensures the tool response is saved in the message history.
-            response = agent.receive(tool_response, role="tool", store_message=True)
+            response = agent.receive(tool_responses[0], role="tool", store_message=True)
             print(response)
             
     @pytest.mark.local
@@ -100,16 +100,16 @@ class TestOpenAIAPI(tutils.BaseTester):
         response = agent.receive(
             "Please use your tool to get the image, and tell me what you see.",
         )
-        tool_response = agent.handle_tool_call(response)
-        if tool_response is not None:
-            agent.receive(tool_response, role="tool", request_response=False, store_message=True, store_response=True)
+        tool_responses = agent.handle_tool_call(response)
+        if len(tool_responses) > 0:
+            agent.receive(tool_responses[0], role="tool", request_response=False, store_message=True, store_response=True)
             # Tools are not allowed to return images; it only returns the path to the image.
             # So we follow up with a new message with the image.
             # `store_message=False` ensures the image message is not saved in the message history so it doesn't
             # get repeatedly sent in future conversations which would drive up the cost.
             response = agent.receive(
                 "Here is the image the tool returned.",
-                image_path=tool_response["content"],
+                image_path=tool_responses[0]["content"],
                 store_message=False,
                 store_response=True
             )
