@@ -320,8 +320,9 @@ class OpenAIAgent:
         response_dict = response.choices[0].message.to_dict()
         response_dict = self.process_response(
             response_dict,
-            remove_empty_tool_calls_key=False,
-            remove_reasoning_content_key=False,
+            remove_empty_tool_calls_key=True,
+            remove_empty_reasoning_content_key=True,
+            move_reasoning_content_to_empty_content=True,
         )
         return response_dict
     
@@ -329,9 +330,12 @@ class OpenAIAgent:
         self, 
         response: Dict[str, Any],
         remove_empty_tool_calls_key: bool = True,
-        remove_reasoning_content_key: bool = True,
+        remove_empty_reasoning_content_key: bool = True,
+        move_reasoning_content_to_empty_content: bool = True,
     ) -> Dict[str, Any]:
-        """Process the response from the agent.
+        """Process the response from the agent. Models on OpenAI or OpenRouter
+        should not need these processings, but some other model providers may
+        require them.
         
         Parameters
         ----------
@@ -339,19 +343,30 @@ class OpenAIAgent:
             The response from the agent as a dictionary.
         remove_empty_tool_calls_key : bool, optional
             If True, the "tool_calls" key will be removed if it is an empty list.
-        remove_reasoning_content_key : bool, optional
+        remove_empty_reasoning_content_key : bool, optional
             If True, the "reasoning_content" key will be removed if it exists.
-            
+        move_reasoning_content_to_empty_content : bool, optional
+            If True, the "reasoning_content" key will be moved to the "content" key
+            if the "content" key is None.
+        
         Returns
         -------
         Dict[str, Any]
             The processed response from the agent.
         """
-        if remove_empty_tool_calls_key and "tool_calls" in response:
-            if isinstance(response["tool_calls"], list) and len(response["tool_calls"]) == 0:
+        if remove_empty_tool_calls_key:
+            if "tool_calls" in response and isinstance(response["tool_calls"], list) and len(response["tool_calls"]) == 0:
                 del response["tool_calls"]
-        if remove_reasoning_content_key and "reasoning_content" in response:
-            del response["reasoning_content"]
+        if remove_empty_reasoning_content_key:
+            if "reasoning_content" in response and len(response["reasoning_content"]) == 0:
+                del response["reasoning_content"]
+        if move_reasoning_content_to_empty_content:
+            if (
+                "reasoning_content" in response
+                and response["content"] is None
+            ):
+                response["content"] = response["reasoning_content"]
+                del response["reasoning_content"]
         return response
     
     def handle_tool_call(self, message: Dict[str, Any]) -> Dict[str, Any] | None:
