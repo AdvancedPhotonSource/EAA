@@ -222,8 +222,6 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             `initial_position`, `initial_fov_size`, `y_range`, and `x_range`
             should not be provided if this is given.
         """
-        
-        
         if initial_prompt is None:
             message = dedent(f"""\
                 You are given an image of a feature in the sample that
@@ -261,17 +259,14 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             message = initial_prompt
         
         round = 0
-        image_path = reference_image_path
+        image_path = None
+        response = self.agent.receive(
+            message,
+            image_path=reference_image_path,
+            store_message=True, 
+            store_response=True
+        )
         while round < max_rounds:
-            # Messages after the first one contain images so we don't store them.
-            # However, AI responses contain tool calls so we need to store them.
-            response = self.agent.receive(
-                message,
-                image_path=image_path,
-                store_message=round == 0, 
-                store_response=True
-            )
-            
             if "TERMINATE" in response["content"]:
                 message = input(
                     "Termination condition triggered. What to do next? Type \"exit\" to exit. "
@@ -279,10 +274,21 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 if message.lower() == "exit":
                     return
                 else:
+                    response = self.agent.receive(
+                        message,
+                        image_path=None,
+                        store_message=True,
+                        store_response=True,
+                        request_response=True
+                    )
                     continue
             
-            tool_response = self.agent.handle_tool_call(response)
-            if tool_response:
+            tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
+            if len(tool_responses) == 1:
+                tool_response = tool_responses[0]
+                tool_response_type = tool_response_types[0]
+                # Just save the tool response, but don't send yet. We will send it
+                # together with the image later.
                 self.agent.receive(
                     tool_response, 
                     role="tool", 
@@ -290,13 +296,40 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                     store_message=True, 
                     store_response=True
                 )
+                if not tool_response_type == ToolReturnType.IMAGE_PATH:
+                    raise ValueError(
+                        "The tool returned a response that is not an image path. "
+                        "Make sure the tool returns an image path."
+                    )
                 message = dedent("""\
-                    Here is the image the tool returned.
+                    Here is the image the tool returned. 
                     """
                 )
                 image_path = tool_response["content"]
+                response = self.agent.receive(
+                    message,
+                    image_path=image_path,
+                    store_message=False,
+                    store_response=True,
+                    request_response=True
+                )
+            elif len(tool_responses) > 1:
+                response = self.agent.receive(
+                    "There are more than one tool calls in your response. "
+                    "Make sure you only make one call at a time. Please redo "
+                    "your tool calls.",
+                    image_path=None,
+                    store_message=True,
+                    store_response=True,
+                    request_response=True
+                )
             else:
-                message = ""
-                image_path = None
+                response = self.agent.receive(
+                    "There is no tool call in the response. Make sure you call the tool correctly.",
+                    image_path=None,
+                    store_message=True,
+                    store_response=True,
+                    request_response=True
+                )
             
             round += 1
