@@ -3,7 +3,6 @@ from textwrap import dedent
 
 from eaa.tools.base import BaseTool
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
-from eaa.tools.base import ToolReturnType
 
 
 class FeatureTrackingTaskManager(ImagingBaseTaskManager):
