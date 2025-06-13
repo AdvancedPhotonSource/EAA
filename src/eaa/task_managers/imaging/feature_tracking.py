@@ -117,7 +117,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             store_response=True
         )
         while round < max_rounds:
-            if "TERMINATE" in response["content"]:
+            if response["content"] is not None and "TERMINATE" in response["content"]:
                 message = input(
                     "Termination condition triggered. What to do next? Type \"exit\" to exit. "
                 )
