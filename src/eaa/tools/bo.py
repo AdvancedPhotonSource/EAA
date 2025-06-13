@@ -22,7 +22,6 @@ class BayesianOptimizationTool(BaseTool):
     def __init__(
         self,
         bounds: Tuple[List[float], List[float]],
-        objective_function: Callable,
         acquisition_function_class: Type[
             AcquisitionFunction
         ] = botorch.acquisition.ExpectedImprovement,
@@ -46,10 +45,6 @@ class BayesianOptimizationTool(BaseTool):
             second list contains the upper bounds. The length of each sublist
             should be equal to the number of dimensions of the search space,
             or the number of parameters to be tuned.
-        objective_function : Callable
-            The objective function to maximize. This function should take a
-            (n_samples, n_features) tensor and return a (n_samples, n_observations)
-            tensor.
         acquisition_function_class : Type[AcquisitionFunction]
             The class of the acquisition function.
         acquisition_function_kwargs : dict
@@ -84,7 +79,6 @@ class BayesianOptimizationTool(BaseTool):
             values.
         """
         self.bounds = to_tensor(bounds).float()
-        self.objective_function = objective_function
         self.acquisition_function = None
         self.acquisition_function_class = acquisition_function_class
         self.acquisition_function_kwargs = (
