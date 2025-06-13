@@ -6,7 +6,7 @@ import os
 import pytest
 import numpy as np
 
-from eaa.agents.openai import OpenAIAgent
+from eaa.agents.openai import OpenAIAgent, print_message
 from eaa.tools.base import ToolReturnType
 
 import test_utils as tutils
@@ -37,6 +37,8 @@ class TestOpenAIAPI(tutils.BaseTester):
             return np.sum(numbers)
         
         
+        context = []
+        
         agent = OpenAIAgent(
             llm_config={
                 "model": "openai/gpt-4o-2024-11-20",
@@ -57,11 +59,14 @@ class TestOpenAIAPI(tutils.BaseTester):
         )
         
         # `store_message=True` ensures the user message is saved in the message history.
-        response = agent.receive("Can you sum these numbers: 2, 4, 6, 6, 7?", store_message=True)
+        response, outgoing = agent.receive("Can you sum these numbers: 2, 4, 6, 6, 7?", context=context, return_outgoing_message=True)
+        context.append(outgoing)
+        context.append(response)
         tool_responses = agent.handle_tool_call(response)
         if len(tool_responses) > 0:
-            # `store_message=True` ensures the tool response is saved in the message history.
-            response = agent.receive(tool_responses[0], role="tool", store_message=True)
+            response, outgoing = agent.receive(tool_responses[0], role="tool", context=context, return_outgoing_message=True)
+            context.append(outgoing)
+            context.append(response)
             print(response)
             
     @pytest.mark.local
@@ -77,6 +82,8 @@ class TestOpenAIAPI(tutils.BaseTester):
                 The acquired image.
             """
             return image_path
+        
+        context = []
         
         agent = OpenAIAgent(
             llm_config={
@@ -97,22 +104,27 @@ class TestOpenAIAPI(tutils.BaseTester):
             ]
         )
         
-        response = agent.receive(
+        response, outgoing = agent.receive(
             "Please use your tool to get the image, and tell me what you see.",
+            context=context,
+            return_outgoing_message=True
         )
+        context.append(outgoing)
+        context.append(response)
         tool_responses = agent.handle_tool_call(response)
         if len(tool_responses) > 0:
-            agent.receive(tool_responses[0], role="tool", request_response=False, store_message=True, store_response=True)
+            print_message(tool_responses[0])
+            context.append(tool_responses[0])
             # Tools are not allowed to return images; it only returns the path to the image.
             # So we follow up with a new message with the image.
-            # `store_message=False` ensures the image message is not saved in the message history so it doesn't
-            # get repeatedly sent in future conversations which would drive up the cost.
-            response = agent.receive(
+            response, outgoing = agent.receive(
                 "Here is the image the tool returned.",
                 image_path=tool_responses[0]["content"],
-                store_message=False,
-                store_response=True
+                context=context,
+                return_outgoing_message=True
             )
+            context.append(outgoing)
+            context.append(response)
             print(response)
         else:
             raise ValueError("Tool response is None.")

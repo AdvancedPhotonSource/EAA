@@ -15,6 +15,7 @@ class BaseTaskManager:
         tools: list[BaseTool] = [], 
         *args, **kwargs
     ):
+        self.context = []
         self.model = model_name
         self.model_base_url = model_base_url
         self.access_token = access_token

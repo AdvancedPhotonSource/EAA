@@ -188,7 +188,7 @@ class OpenAIAgent:
         
         self.message_hooks = []
         
-        self.messages = [
+        self.system_messages = [
             {"role": "system", "content": system_message}
         ]
         self.tool_manager = ToolManager()
@@ -224,22 +224,22 @@ class OpenAIAgent:
         self,
         message: Optional[str | Dict[str, Any]] = None, 
         role: Literal["user", "system", "tool"] = "user",
+        context: Optional[List[Dict[str, Any]]] = None,
         image: Optional[np.ndarray] = None,
         image_path: Optional[str] = None,
         encoded_image: Optional[str] = None,
         request_response: bool = True,
         return_full_response: bool = True,
-        with_history: bool = True,
-        store_message: bool = False,
-        store_response: bool = True,
-    ) -> str | Dict[str, Any] | None:
+        return_outgoing_message: bool = False,
+        with_system_message: bool = True,
+    ) -> str | Dict[str, Any] | Tuple[Dict[str, Any], Dict[str, Any]] | None:
         """Receive a message from the user and generate a response.
         
         Parameters
         ----------
         message : Optional[str | Dict[str, Any]]
         
-            The message to be sent to the AI. It should be a string or a dictionary
+            The new message to be sent to the AI. It should be a string or a dictionary
             complying with OpenAI's message format. To attach an image to the message,
             either provide the image as a numpy array with `image`, or provide the path
             to the image with `image_path`, or provide the base-64 encoded image with
@@ -250,7 +250,11 @@ class OpenAIAgent:
             
             If `message` is None, the function will send the chat history stored to AI
             if `with_history` is True.
-        
+            
+        role : Literal["user", "system", "tool"], optional
+            The role of the sender.
+        context : Optional[List[Dict[str, Any]]], optional
+            The context to be sent to the AI. This is a list of message dictionaries.
         image : np.ndarray, optional
             The image to be sent to the AI. Exclusive with `encoded_image` and `image_path`.
         image_path : str, optional
@@ -265,23 +269,17 @@ class OpenAIAgent:
             If True, this function returns a dictionary containing the full response
             from the agent. Otherwise, only the content of the response is returned
             as a string.
-        with_history : bool, optional
-            If True, the history of the conversation is included in the message sent
-            to the agent so that it has the memory of the conversation.
-        store_message : bool, optional
-            If True, the message will be stored in the message history. This is necessary
-            for maintaining the memory of the conversation, but it is strongly recommended
-            to turn it off for messages containing images or large amounts of text to control
-            the speed and cost.
-        store_response : bool, optional
-            If True, the response of AI will be stored in the message history.
-        
+        return_outgoing_message : bool, optional
+            If True, the outgoing message will also be returned.
+        with_system_message : bool, optional
+            If True, the system message will be included in the message sent to the AI.
         Returns
         -------
-        str | Dict[str, Any] | None
+        str | Dict[str, Any] | Tuple[Dict[str, Any], Dict[str, Any]] | None
             The response from the agent. If `return_full_response` is True, the
             response is a dictionary containing the full response from the agent.
             Otherwise, the response is a string containing the content of the response.
+            If `return_outgoing_message` is True, the outgoing message will also be returned.
             If `request_response` is False, the function returns None.
         """
         if image is not None or image_path is not None or encoded_image is not None:
@@ -292,73 +290,65 @@ class OpenAIAgent:
                 "When role is 'tool', `message` must be a dictionary of tool response that "
                 "contains the tool_call_id."
             )
-        if message is None and not with_history:
-            raise ValueError("`message` cannot be None if `with_history` is False.")
+        if message is None and context is None:
+            raise ValueError("`message` and `context` cannot be None at the same time.")
             
+        # Extract image path from string message, if any.
         if image_path is None and isinstance(message, str):
             image_path, modified_message = get_image_path_from_text(message, return_text_without_image_tag=True)
             if image_path is not None:
                 message = modified_message
             
+        # Convert string message to JSON if it is not yet a dictionary.
         if isinstance(message, str):
             message = generate_openai_message(
                 message, role=role, image=image, image_path=image_path, encoded_image=encoded_image
             )
+            
+        # Print message.
         if message is not None:
             print_message(message, response_requested=request_response)
             
+        # Create the list of messages to send.
+        sys_message = self.system_messages if with_system_message else []
+        message = [message] if message is not None else []
+        if context is None:
+            context = []
+        combined_messages = sys_message + context + message
+            
+        # Send messages, get response and print it.
         if request_response:
-            response = self.send_message_and_get_response(message, with_history=with_history)
+            response = self.send_message_and_get_response(combined_messages)
             print_message(response)
-        
-        # Add incoming message to history (this must be done after send_message_and_get_response)
-        # so that the message sent does not get duplicated.
-        if store_message:
-            self.messages.append(message)
         
         if not request_response:
             return None
         
-        # Add response to history
-        if store_response:
-            self.messages.append(response)
-        
+        returns = []
         if return_full_response:
-            return dict(response)
+            returns.append(dict(response))
         else:
-            return response.choices[0].message.content
+            returns.append(response.choices[0].message.content)
+        if return_outgoing_message:
+            returns.append(message[0] if len(message) > 0 else None)
+        return returns
     
     def send_message_and_get_response(
         self,
-        message: Optional[Dict[str, Any]] = None,
-        with_history: bool = True
+        messages: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Send a message to the agent and get the response.
         
         Parameters
         ----------
-        message : Optional[Dict[str, Any]]
-            The message to be sent to the agent. If None, this function will send
-            the history of the conversation to the agent.
-        with_history : bool, optional
-            If True, the history of the conversation is included in the message sent
-            to the agent so that it has the memory of the conversation.
+        message : List[Dict[str, Any]]
+            The list of messages to be sent to the agent.
         
         Returns
         -------
         Dict[str, Any]
             The response from the agent.
         """
-        if message is None and not with_history:
-            raise ValueError("`message` cannot be None if `with_history` is False.")
-        
-        message = [message] if message is not None else []
-        
-        if with_history:
-            messages = self.messages + message
-        else:
-            messages = self.messages[0:1] + message
-            
         tool_schema = self.tool_manager.get_all_schema()
         response = self.client.chat.completions.create(
             model=self.model,

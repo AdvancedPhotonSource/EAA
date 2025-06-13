@@ -4,6 +4,7 @@ from typing import Optional
 
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool, ToolReturnType
+from eaa.agents.openai import print_message
 
 
 logger = logging.getLogger(__name__)
@@ -102,12 +103,14 @@ class ImagingBaseTaskManager(BaseTaskManager):
         """
         round = 0
         image_path = None
-        response = self.agent.receive(
+        response, outgoing = self.agent.receive(
             initial_prompt,
+            context=self.context,
             image_path=initial_image_path,
-            store_message=True, 
-            store_response=True
+            return_outgoing_message=True
         )
+        self.context.append(outgoing)
+        self.context.append(response)
         while round < max_rounds:
             if response["content"] is not None and "TERMINATE" in response["content"]:
                 message = input(
@@ -116,13 +119,14 @@ class ImagingBaseTaskManager(BaseTaskManager):
                 if message.lower() == "exit":
                     return
                 else:
-                    response = self.agent.receive(
+                    response, outgoing = self.agent.receive(
                         message,
+                        context=self.context,
                         image_path=None,
-                        store_message=True,
-                        store_response=True,
-                        request_response=True
+                        return_outgoing_message=True
                     )
+                    self.context.append(outgoing)
+                    self.context.append(response)
                     continue
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
@@ -131,43 +135,43 @@ class ImagingBaseTaskManager(BaseTaskManager):
                 tool_response_type = tool_response_types[0]
                 # Just save the tool response, but don't send yet. We will send it
                 # together with the image later.
-                self.agent.receive(
-                    tool_response, 
-                    role="tool", 
-                    request_response=False,
-                    store_message=True, 
-                    store_response=True
-                )
+                print_message(tool_response)
+                self.context.append(tool_response)
+                
                 if not tool_response_type == ToolReturnType.IMAGE_PATH:
                     raise ValueError(
                         "The tool returned a response that is not an image path. "
                         "Make sure the tool returns an image path."
                     )
                 image_path = tool_response["content"]
-                response = self.agent.receive(
+                response, outgoing = self.agent.receive(
                     message_with_acquired_image,
                     image_path=image_path,
-                    store_message=store_all_images_in_context,
-                    store_response=True,
-                    request_response=True
+                    context=self.context,
+                    return_outgoing_message=True
                 )
+                if store_all_images_in_context:
+                    self.context.append(outgoing)
+                self.context.append(response)
             elif len(tool_responses) > 1:
-                response = self.agent.receive(
+                response, outgoing = self.agent.receive(
                     "There are more than one tool calls in your response. "
                     "Make sure you only make one call at a time. Please redo "
                     "your tool calls.",
                     image_path=None,
-                    store_message=True,
-                    store_response=True,
-                    request_response=True
+                    context=self.context,
+                    return_outgoing_message=True
                 )
+                self.context.append(outgoing)
+                self.context.append(response)
             else:
-                response = self.agent.receive(
+                response, outgoing = self.agent.receive(
                     "There is no tool call in the response. Make sure you call the tool correctly.",
                     image_path=None,
-                    store_message=True,
-                    store_response=True,
-                    request_response=True
+                    context=self.context,
+                    return_outgoing_message=True
                 )
+                self.context.append(outgoing)
+                self.context.append(response)
             
             round += 1
