@@ -409,7 +409,10 @@ class OpenAIAgent:
             if "tool_calls" in response and isinstance(response["tool_calls"], list) and len(response["tool_calls"]) == 0:
                 del response["tool_calls"]
         if remove_empty_reasoning_content_key:
-            if "reasoning_content" in response and len(response["reasoning_content"]) == 0:
+            if ("reasoning_content" in response 
+                and response["reasoning_content"] is not None
+                and len(response["reasoning_content"]) == 0
+            ):
                 del response["reasoning_content"]
         if move_reasoning_content_to_empty_content:
             if (
