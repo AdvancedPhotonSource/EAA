@@ -54,7 +54,6 @@ class TestBayesianOptimization(tutils.BaseTester):
         
         tool = BayesianOptimizationTool(
             bounds=([-10, -10], [10, 10]),
-            objective_function=objective_function,
             acquisition_function_class=botorch.acquisition.LogExpectedImprovement,
             acquisition_function_kwargs={
                 "best_f": -100
