@@ -1,0 +1,95 @@
+import logging
+from typing import Optional
+
+import torch
+
+from eaa.task_managers.base import BaseTaskManager
+from eaa.tools.base import BaseTool
+from eaa.tools.bo import BayesianOptimizationTool
+
+
+class BayesianOptimizationTaskManager(BaseTaskManager):
+    
+    def __init__(
+        self,
+        model_name: str = "gpt-4o",
+        model_base_url: str = None,
+        tools: list[BaseTool] = [],
+        bayesian_optimization_tool: BayesianOptimizationTool = None,
+        initial_points: Optional[torch.Tensor] = None,
+        n_initial_points: int = 20,
+        *args, **kwargs
+    ) -> None:
+        """Bayesian optimization task manager.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            The model name of the agent.
+        model_base_url : str, optional
+            The LLM inference endpoint's base URL.
+        tools : list[BaseTool], optional
+            A list of tools for the agent. This should NOT include the
+            `BayesianOptimizationTool`.
+        bayesian_optimization_tool : BayesianOptimizationTool
+            The Bayesian optimization tool to use.
+        initial_points : torch.Tensor, optional
+            A (n_points, n_features) tensor giving the initial points where
+            the objective function should be evaluated to initialize the
+            Gaussian process model. If None, random initial points will be
+            generated.
+        n_initial_points : int, optional
+            The number of initial points to generate if `initial_points` is None.
+        """
+        if bayesian_optimization_tool is None:
+            raise ValueError("`bayesian_optimization_tool` is required.")
+        self.bayesian_optimization_tool = bayesian_optimization_tool
+        
+        for tool in tools:
+            if isinstance(tool, BayesianOptimizationTool):
+                raise ValueError("`BayesianOptimizationTool` should not be included in `tools`.")
+            
+        self.initial_points = initial_points
+        self.n_initial_points = n_initial_points
+        
+        super().__init__(
+            model_name=model_name,
+            model_base_url=model_base_url,
+            tools=tools,
+            *args, **kwargs
+        )
+        
+    def objective_function(self, *args, **kwargs) -> None:
+        raise NotImplementedError
+        
+    def run(
+        self, 
+        n_iterations: int = 50, 
+        *args, **kwargs
+    ) -> None:
+        """Run Bayesian optimization. Upon the second or later call,
+        this function continues from the last iteration.
+        
+        Parameters
+        ----------
+        n_iterations : int, optional
+            The number of iterations to run.
+        """
+        if len(self.bayesian_optimization_tool.xs_raw) == 0:
+            if self.initial_points is None:
+                xs_init = self.bayesian_optimization_tool.get_random_initial_points(n_points=self.n_initial_points)
+            else:
+                xs_init = self.initial_points
+                
+            for x in xs_init:
+                x = x[None, :]
+                y = self.objective_function(x)
+                self.bayesian_optimization_tool.update(x, y)
+            self.bayesian_optimization_tool.build()
+        
+        for i in range(n_iterations):
+            candidates = self.bayesian_optimization_tool.suggest(n_suggestions=1)
+            logging.info(f"Candidate suggested: {candidates[0]}")
+            y = self.objective_function(candidates)
+            self.bayesian_optimization_tool.update(candidates, y)
+        
