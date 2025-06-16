@@ -2,7 +2,7 @@
 
 # ruff: noqa: F403
 # from isn.startup import *
-from s2idd.startup import *
+from s2idd_uprobe.startup import *
 
 
 def get_control_components(device_name: str):
