@@ -354,7 +354,7 @@ class OpenAIAgent:
             model=self.model,
             messages=messages,
             tools=tool_schema if len(tool_schema) > 0 else None,
-            tool_choice="auto" if len(tool_schema) > 0 else "none",
+            tool_choice="auto" if len(tool_schema) > 0 else None,
         )
         response_dict = response.choices[0].message.to_dict()
         response_dict = self.process_response(
