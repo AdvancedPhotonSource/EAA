@@ -36,7 +36,7 @@ class ChatUI:
             
             # Create a function to update the chat
             def update_chat():
-                context = self.task_manager.context
+                context = self.task_manager.full_history
                 context_processed = []
                 for i in range(len(context)):
                     if isinstance(context[i]["content"], list) and "type" in context[i]["content"][0]:

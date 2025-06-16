@@ -1,3 +1,5 @@
+from typing import Any, Dict
+
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
 from eaa.agents.openai import OpenAIAgent
@@ -16,6 +18,7 @@ class BaseTaskManager:
         *args, **kwargs
     ):
         self.context = []
+        self.full_history = []
         self.model = model_name
         self.model_base_url = model_base_url
         self.access_token = access_token
@@ -99,6 +102,17 @@ class BaseTaskManager:
 
     def prerun_check(self, *args, **kwargs) -> bool:
         return True
+    
+    def update_message_history(
+        self,
+        message: Dict[str, Any],
+        update_context: bool = True,
+        update_full_history: bool = True
+    ) -> None:
+        if update_context:
+            self.context.append(message)
+        if update_full_history:
+            self.full_history.append(message)
 
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()
@@ -110,6 +124,6 @@ class BaseTaskManager:
             if message.lower() == "exit":
                 break
             response, outgoing_message = self.agent.receive(message, return_outgoing_message=True)
-            self.context.append(outgoing_message)
-            self.context.append(response)
+            self.update_message_history(outgoing_message, update_context=True, update_full_history=True)
+            self.update_message_history(response, update_context=True, update_full_history=True)
             message = input("Enter a message: ")
