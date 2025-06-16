@@ -1,8 +1,9 @@
+from typing import Tuple, Literal
 import datetime
 import base64
 import io
 import re
-from typing import Tuple
+from io import BytesIO
 
 from PIL import Image
 import numpy as np
@@ -94,6 +95,33 @@ def encode_image_base64(
         raise ValueError("Either `image` or `image_path` should be provided.")
 
     return base64_data
+
+
+def decode_image_base64(
+    base64_data: str, 
+    return_type: Literal["numpy", "pil"] = "numpy"
+) -> np.ndarray | Image.Image:
+    """Decode a base64-encoded image to a NumPy array or PIL image.
+    
+    Parameters
+    ----------
+    base64_data : str
+        The base64-encoded image data.
+    return_type : Literal["numpy", "pil"], optional
+        The type of the returned image.
+        
+    Returns
+    -------
+    np.ndarray | Image.Image
+        The decoded image.
+    """
+    pil_image = Image.open(BytesIO(base64.b64decode(base64_data)))
+    if return_type == "numpy":
+        return np.array(pil_image)
+    elif return_type == "pil":
+        return pil_image
+    else:
+        raise ValueError(f"Invalid return type: {return_type}")
 
 
 def get_image_path_from_text(

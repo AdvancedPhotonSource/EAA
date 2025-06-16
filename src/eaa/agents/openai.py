@@ -653,7 +653,11 @@ def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any
     }
 
 
-def print_message(message: Dict[str, Any], response_requested: Optional[bool] = None) -> None:
+def print_message(
+    message: Dict[str, Any], 
+    response_requested: Optional[bool] = None,
+    return_string: bool = False
+) -> None:
     """Print the message.
     
     Parameters
@@ -662,6 +666,8 @@ def print_message(message: Dict[str, Any], response_requested: Optional[bool] = 
         The message to be printed.
     response_requested : bool, optional
         Whether a response is requested for the message.
+    return_string : bool, optional
+        If True, the message is returned as a string instead of printed.
     """
     color_dict = {
         "user": "\033[94m",
@@ -692,4 +698,7 @@ def print_message(message: Dict[str, Any], response_requested: Optional[bool] = 
             text += f"Arguments: {tool_call['function']['arguments']}\n"
     text += "\n ========================================= \n"
     
-    print(f"{color}{text}\033[0m")
+    if return_string:
+        return text
+    else:
+        print(f"{color}{text}\033[0m")
