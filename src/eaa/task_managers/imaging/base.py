@@ -109,8 +109,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
             image_path=initial_image_path,
             return_outgoing_message=True
         )
-        self.context.append(outgoing)
-        self.context.append(response)
+        self.update_message_history(outgoing, update_context=True, update_full_history=True)
+        self.update_message_history(response, update_context=True, update_full_history=True)
         while round < max_rounds:
             if response["content"] is not None and "TERMINATE" in response["content"]:
                 message = input(
@@ -125,8 +125,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
                         image_path=None,
                         return_outgoing_message=True
                     )
-                    self.context.append(outgoing)
-                    self.context.append(response)
+                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                    self.update_message_history(response, update_context=True, update_full_history=True)
                     continue
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
@@ -136,7 +136,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
                 # Just save the tool response, but don't send yet. We will send it
                 # together with the image later.
                 print_message(tool_response)
-                self.context.append(tool_response)
+                self.update_message_history(tool_response, update_context=True, update_full_history=True)
                 
                 if not tool_response_type == ToolReturnType.IMAGE_PATH:
                     raise ValueError(
@@ -150,9 +150,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
                     context=self.context,
                     return_outgoing_message=True
                 )
-                if store_all_images_in_context:
-                    self.context.append(outgoing)
-                self.context.append(response)
+                self.update_message_history(outgoing, update_context=store_all_images_in_context, update_full_history=True)
+                self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:
                 response, outgoing = self.agent.receive(
                     "There are more than one tool calls in your response. "
@@ -162,8 +161,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
                     context=self.context,
                     return_outgoing_message=True
                 )
-                self.context.append(outgoing)
-                self.context.append(response)
+                self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                self.update_message_history(response, update_context=True, update_full_history=True)
             else:
                 response, outgoing = self.agent.receive(
                     "There is no tool call in the response. Make sure you call the tool correctly.",
@@ -171,7 +170,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
                     context=self.context,
                     return_outgoing_message=True
                 )
-                self.context.append(outgoing)
-                self.context.append(response)
+                self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                self.update_message_history(response, update_context=True, update_full_history=True)
             
             round += 1
