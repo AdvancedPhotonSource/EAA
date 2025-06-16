@@ -109,5 +109,7 @@ class BaseTaskManager:
         while True:
             if message.lower() == "exit":
                 break
-            _ = self.agent.receive(message, store_message=True, store_response=True)
+            response, outgoing_message = self.agent.receive(message, return_outgoing_message=True)
+            self.context.append(outgoing_message)
+            self.context.append(response)
             message = input("Enter a message: ")
