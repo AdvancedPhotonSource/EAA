@@ -16,6 +16,7 @@ dependencies = [
     "botorch",
     "openai",
     "tqdm",
+    "gradio",
 ]
 dynamic = ["version"]
 
