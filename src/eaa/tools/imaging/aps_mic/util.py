@@ -15,12 +15,15 @@ def run_xrfmaps_exe(exe_path, args=None):
 
     Parameters
     ----------
-        exe_path (str): The path to the executable file.
-        args (list, optional): A list of arguments to pass to the executable. Defaults to None.
+    exe_path : str
+        The path to the executable file.
+    args : list, optional
+        A list of arguments to pass to the executable. Defaults to None.
 
     Returns
     -------
-        subprocess.CompletedProcess: An object containing information about the completed process.
+    subprocess.CompletedProcess
+        An object containing information about the completed process.
     """
     command = [exe_path]
     if args:
@@ -47,17 +50,25 @@ def process_xrfdata(
 
     Parameters
     ----------
-        exe_path (str): The path to the executable file.
-        parent_dir (str): The path to the parent directory.
-        scan_num_mda (str): The name of the mda file.
-        det_range (str): The range of the detector.
-        quantify_with (str): The name of the quantify with.
-        fitting_type (str): The type of fitting.
-        num_iter (int): The number of iterations.
+    exe_path : str
+        The path to the executable file.
+    parent_dir : str
+        The path to the parent directory.
+    scan_num_mda : str
+        The name of the mda file.
+    det_range : str
+        The range of the detector.
+    quantify_with : str
+        The name of the quantify with.
+    fitting_type : str
+        The type of fitting.
+    num_iter : int
+        The number of iterations.
 
     Returns
     -------
-        subprocess.CompletedProcess: An object containing information about the completed process.
+    subprocess.CompletedProcess
+        An object containing information about the completed process.
     """
 
     mda_dir = os.path.join(parent_dir, "mda")
@@ -100,14 +111,18 @@ def load_h5(img_h5_path, fit_type=["NNLS", "ROI"], fsizelim=1e3) -> dict:
 
     Parameters
     ----------
-        img_h5_path (str): The path to the h5 file.
-        fit_type (list): The type of fitting.
-        fsizelim (float): The size limit of the h5 file, only load
-                          the h5 file larger than this size.
+    img_h5_path : str
+        The path to the h5 file.
+    fit_type : list
+        The type of fitting.
+    fsizelim : float
+        The size limit of the h5 file, only load
+        the h5 file larger than this size.
 
     Returns
     -------
-        dict: The data from the h5 file.
+    dict
+        The data from the h5 file.
     """
     data = {}
     fsize = os.path.getsize(img_h5_path)
@@ -139,18 +154,27 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
 
     Parameters
     ----------
-        plotarr (numpy.ndarray): The array to plot.
-        xaxis (numpy.ndarray): The x-axis data.
-        yaxis (numpy.ndarray): The y-axis data.
-        scan_name (str): The name of the scan.
-        elm_name (str): The name of the element.
-        cmap (str): The colormap to use.
-        vmax (float): The maximum value of the colorbar.
-        vmin (float): The minimum value of the colorbar.
+    plotarr : numpy.ndarray
+        The array to plot.
+    xaxis : numpy.ndarray
+        The x-axis data.
+    yaxis : numpy.ndarray
+        The y-axis data.
+    scan_name : str
+        The name of the scan.
+    elm_name : str
+        The name of the element.
+    cmap : str
+        The colormap to use.
+    vmax : float
+        The maximum value of the colorbar.
+    vmin : float
+        The minimum value of the colorbar.
 
     Returns
     -------
-        matplotlib.figure.Figure: The figure object.
+    matplotlib.figure.Figure
+        The figure object.
     """
     fig, ax = plt.subplots(figsize=(10, 5))
     img = ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
@@ -172,18 +196,29 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
 
 def save_xrfdata(
     img_h5_path, output_dir, cmap="inferno", elms=None, vmax_th=99, vmin=0
-):
+) -> str | None:
     """
     Save the XRF data in png format.
 
     Parameters
     ----------
-        img_h5_path (str): The path to the h5 file.
-        output_dir (str): The path to the output directory.
-        cmap (str): The colormap to use.
-        elms (list): The elements to plot.
-        vmax_th (float): The threshold for the maximum percentile of the colorbar.
-        vmin (float): The minimum value of the colorbar.
+    img_h5_path : str
+        The path to the h5 file.
+    output_dir : str
+        The path to the output directory.
+    cmap : str
+        The colormap to use.
+    elms : list
+        The elements to plot.
+    vmax_th : float
+        The threshold for the maximum percentile of the colorbar.
+    vmin : float
+        The minimum value of the colorbar.
+
+    Returns
+    -------
+    str | None
+        The path to the saved image.
     """
     data = load_h5(img_h5_path)
     if data:
@@ -200,7 +235,9 @@ def save_xrfdata(
             plotarr = data_arr[data_ch.index(e)]
             vmax = np.nanpercentile(plotarr, vmax_th)
             fig = plot_xrfdata(plotarr, xaxis, yaxis, data["scan"], e, cmap, vmax, vmin)
-            fig.savefig(f"{output_dir}/{data['scan']}_{e}.png")
+            fname = f"{output_dir}/{data['scan']}_{e}.png"
+            fig.savefig(fname)
+            return fname
     else:
         print(f"The XRF h5 file {img_h5_path} not found")
         return None
