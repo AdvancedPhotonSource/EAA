@@ -1,7 +1,8 @@
 #initiating and loading the bluesky environment for the ISN
 
 # ruff: noqa: F403
-from isn.startup import *
+# from isn.startup import *
+from s2idd.startup import *
 
 
 def get_control_components(device_name: str):
