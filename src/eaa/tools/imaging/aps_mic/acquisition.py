@@ -1,7 +1,10 @@
 from typing import Annotated
 import logging
+import os
+import time
 
 from eaa.tools.imaging.acquisition import AcquireImage
+from eaa.tools.imaging.aps_mic.util import process_xrfdata, save_xrfdata
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +25,7 @@ class BlueSkyAcquireImage(AcquireImage):
         sample_name: str = "smp1",
         dwell: float = 0,
         xrf_on: bool = True,
-        ptycho_on: bool = False,
-        preamp_on: bool = False,
-        position_stream: bool = False,
+        preamp1_on: bool = False,
         *args, **kwargs
     ):
         """Image acquisition tool with Bluesky.
@@ -37,12 +38,8 @@ class BlueSkyAcquireImage(AcquireImage):
             The dwell time.
         xrf_on : bool, optional
             Whether to collect XRF data.
-        ptycho_on : bool, optional
-            Whether to collect Ptychography data.
-        preamp_on : bool, optional
-            Whether to collect Preamp data.
-        position_stream : bool, optional
-            Whether to collect position stream data.
+        preamp1_on : bool, optional
+            Whether to collect Preamp1 data.
 
         Raises
         ------
@@ -50,9 +47,9 @@ class BlueSkyAcquireImage(AcquireImage):
             If Bluesky control initialization fails.
         """
         try:
-            from eaa.tools.imaging.aps_mic.bluesky_init import RE, step2d, get_control_components
+            from eaa.tools.imaging.aps_mic.bluesky_init import RE, fly2d, get_control_components
             self.RE = RE
-            self.scanplan = step2d
+            self.scanplan = fly2d
             self.savedata = get_control_components("savedata")
         except ImportError:
             raise ImportError(
@@ -64,9 +61,7 @@ class BlueSkyAcquireImage(AcquireImage):
         self.sample_name = sample_name
         self.dwell = dwell
         self.xrf_on = xrf_on
-        self.ptycho_on = ptycho_on
-        self.preamp_on = preamp_on
-        self.position_stream = position_stream
+        self.preamp1_on = preamp1_on
         
         super().__init__(*args, **kwargs)
         
@@ -78,25 +73,27 @@ class BlueSkyAcquireImage(AcquireImage):
         y_center: float = None,
         stepsize_x: float = 0,
         stepsize_y: float = 0,
+        xrf_elms: list = ["Cr"],    
+        using_xrf_maps: bool = False,
     )->Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given scan area with the scanning x-ray microscope.
         
         Parameters
         ----------
         width: float
-            The width of the scan area.
+            The width of the scan area in microns.
         height: float
-            The height of the scan area.
+            The height of the scan area in microns.
         x_center: float
-            The center of the scan area in the x direction.
+            The center of the scan area in the x direction in microns.
         y_center: float
-            The center of the scan area in the y direction.
+            The center of the scan area in the y direction in microns.
         stepsize_x: float
             The scan step size in the x direction, i.e., the distance between
-            two adjacent pixels in the x direction.
+            two adjacent pixels in the x direction in microns.
         stepsize_y: float
             The scan step size in the y direction, i.e., the distance between
-            two adjacent pixels in the y direction.
+            two adjacent pixels in the y direction in microns.
 
         Returns
         -------
@@ -104,7 +101,7 @@ class BlueSkyAcquireImage(AcquireImage):
             The path of the acquired image saved in hard drive.
         """
         try:
-            logger.info(f"Acquiring image of size {width}x{height} at location {x_center},{y_center}.")
+            logger.info(f"Acquiring image of size {width} um x {height} um at location {x_center} um, {y_center} um.")
             self.savedata.update_next_file_name()
             self.RE(self.scanplan(
                 samplename=self.sample_name,
@@ -116,9 +113,7 @@ class BlueSkyAcquireImage(AcquireImage):
                 stepsize_y=stepsize_y,
                 dwell=self.dwell,
                 xrf_on=self.xrf_on,
-                ptycho_on=self.ptycho_on,
-                preamp_on=self.preamp_on,
-                position_stream=self.position_stream,
+                preamp1_on=self.preamp1_on,
             ))
             
             ##TODO: add units to lengths and positions in docstring
@@ -126,7 +121,58 @@ class BlueSkyAcquireImage(AcquireImage):
             ##TODO: save the image to the temp directory
             ##TODO: return the path of the image
 
-            return self.savedata.next_file_name
+            mda_path = self.savedata.full_path_name.get()
+            mda_dir = mda_path.replace("data1", "mnt/micdata1")
+            parent_dir = os.path.dirname(os.path.dirname(mda_dir))
+            png_output_dir = os.path.join(parent_dir, "png_output")
+            current_mda_file = self.savedata.next_file_name
+
+            logger.info(f"About to process the data... {current_mda_file}")
+            if using_xrf_maps:
+                logger.info(f"Calling the XRF-Maps executable to process the data...")
+                process_code = process_xrfdata(parent_dir, current_mda_file)
+            else:
+                logger.info(f"Assuming the data is already processed, wait till the .h5 file exists...")
+                img_h5_path = os.path.join(
+                    os.path.join(parent_dir, "img.dat"),
+                    f"{current_mda_file}.h50")
+                logger.info(f"The expected .h5 file path is {img_h5_path}")
+                
+                time_diff = 0
+                timenow = time.time()
+                while any([time_diff < 30, not os.path.exists(img_h5_path)]):
+                    time.sleep(1)
+                    if os.path.exists(img_h5_path):
+                        time_diff = os.path.getmtime(img_h5_path) - timenow
+                        timenow = time.time()
+                        logger.info(f"The .h5 file {img_h5_path} exists")
+                        logger.info(f"watch file and wait until the file doesn't change for 30 seconds to process.")
+                    else:
+                        logger.info(f"The .h5 file {img_h5_path} does not exist")
+                        logger.info(f"wait for 30 seconds to process.")
+                        time.sleep(30)
+
+                process_code = 1
+
+
+            if process_code: 
+                logger.info(f"Fitting {current_mda_file} completed successfully.")
+                if not os.path.exists(png_output_dir):
+                    os.makedirs(png_output_dir)
+
+                img_h5_path = os.path.join(
+                    os.path.join(parent_dir, "img.dat"),
+                    f"{current_mda_file}.h50")
+
+                img_path = save_xrfdata(img_h5_path, png_output_dir, elms=xrf_elms)
+                if img_path:
+                    return img_path
+                else:
+                    logger.error(f"Failed to save images for {current_mda_file}")
+                    return None
+            logger.error(f"Failed to process {current_mda_file}")
+            return None
+        
         except Exception as e:
             logger.error(f"Error acquiring image: {e}")
             raise e

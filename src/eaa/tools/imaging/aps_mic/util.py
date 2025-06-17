@@ -7,7 +7,9 @@ import os
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
+import logging
 
+logger = logging.getLogger(__name__)
 
 def run_xrfmaps_exe(exe_path, args=None):
     """
@@ -37,13 +39,13 @@ def run_xrfmaps_exe(exe_path, args=None):
 
 
 def process_xrfdata(
-    exe_path,
     parent_dir,
     scan_num_mda,
     det_range="0:0",
     quantify_with="maps_standardinfo.txt",
     fitting_type="roi, nnls",
     num_iter=20000,
+    exe_path="/mnt/micdata1/XRF-Maps/bin/xrf_maps.exe"
 ):
     """
     Runs an executable file.
@@ -237,6 +239,8 @@ def save_xrfdata(
             fig = plot_xrfdata(plotarr, xaxis, yaxis, data["scan"], e, cmap, vmax, vmin)
             fname = f"{output_dir}/{data['scan']}_{e}.png"
             fig.savefig(fname)
+            plt.close(fig)
+            logger.info(f"Image saved to {fname}")
             return fname
     else:
         print(f"The XRF h5 file {img_h5_path} not found")
