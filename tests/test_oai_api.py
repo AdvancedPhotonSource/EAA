@@ -41,9 +41,9 @@ class TestOpenAIAPI(tutils.BaseTester):
         
         agent = OpenAIAgent(
             llm_config={
-                "model": "openai/gpt-4o-2024-11-20",
-                "api_key": os.getenv("OPENROUTER_API_KEY"),
-                "base_url": "https://openrouter.ai/api/v1",
+                "model": "gpt-4o-2024-11-20",
+                "api_key": os.getenv("OPENAI_API_KEY"),
+                "base_url": "https://api.openai.com/v1",
             },
             system_message="You are a helpful assistant."
         )
@@ -87,9 +87,9 @@ class TestOpenAIAPI(tutils.BaseTester):
         
         agent = OpenAIAgent(
             llm_config={
-                "model": "openai/gpt-4o-2024-11-20",
-                "api_key": os.getenv("OPENROUTER_API_KEY"),
-                "base_url": "https://openrouter.ai/api/v1",
+                "model": "gpt-4o-2024-11-20",
+                "api_key": os.getenv("OPENAI_API_KEY"),
+                "base_url": "https://api.openai.com/v1",
             },
             system_message="You are a helpful assistant."
         )
