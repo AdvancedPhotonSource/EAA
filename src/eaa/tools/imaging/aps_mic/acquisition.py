@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Tuple
 import logging
 import os
 import time
@@ -26,6 +26,7 @@ class BlueSkyAcquireImage(AcquireImage):
         dwell: float = 0,
         xrf_on: bool = True,
         preamp1_on: bool = False,
+        using_xrf_maps: bool = False,
         *args, **kwargs
     ):
         """Image acquisition tool with Bluesky.
@@ -40,6 +41,8 @@ class BlueSkyAcquireImage(AcquireImage):
             Whether to collect XRF data.
         preamp1_on : bool, optional
             Whether to collect Preamp1 data.
+        using_xrf_maps: bool, optional
+            Whether to use the XRF-Maps executable to process the data.
 
         Raises
         ------
@@ -62,7 +65,7 @@ class BlueSkyAcquireImage(AcquireImage):
         self.dwell = dwell
         self.xrf_on = xrf_on
         self.preamp1_on = preamp1_on
-        
+        self.using_xrf_maps = using_xrf_maps
         super().__init__(*args, **kwargs)
         
     def acquire_image(
@@ -73,8 +76,7 @@ class BlueSkyAcquireImage(AcquireImage):
         y_center: float = None,
         stepsize_x: float = 0,
         stepsize_y: float = 0,
-        xrf_elms: list = ["Cr"],    
-        using_xrf_maps: bool = False,
+        xrf_elms: Tuple[str, ...] = ("Cr",),
     )->Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given scan area with the scanning x-ray microscope.
         
@@ -94,6 +96,8 @@ class BlueSkyAcquireImage(AcquireImage):
         stepsize_y: float
             The scan step size in the y direction, i.e., the distance between
             two adjacent pixels in the y direction in microns.
+        xrf_elms: Tuple[str, ...]
+            The elements to be detected in the XRF data.
 
         Returns
         -------
@@ -115,11 +119,6 @@ class BlueSkyAcquireImage(AcquireImage):
                 xrf_on=self.xrf_on,
                 preamp1_on=self.preamp1_on,
             ))
-            
-            ##TODO: add units to lengths and positions in docstring
-            ##TODO: process the .h5 files to get the image
-            ##TODO: save the image to the temp directory
-            ##TODO: return the path of the image
 
             mda_path = self.savedata.full_path_name.get()
             mda_dir = mda_path.replace("data1", "mnt/micdata1")
@@ -128,11 +127,11 @@ class BlueSkyAcquireImage(AcquireImage):
             current_mda_file = self.savedata.next_file_name
 
             logger.info(f"About to process the data... {current_mda_file}")
-            if using_xrf_maps:
-                logger.info(f"Calling the XRF-Maps executable to process the data...")
+            if self.using_xrf_maps:
+                logger.info("Calling the XRF-Maps executable to process the data...")
                 process_code = process_xrfdata(parent_dir, current_mda_file)
             else:
-                logger.info(f"Assuming the data is already processed, wait till the .h5 file exists...")
+                logger.info("Assuming the data is already processed, wait till the .h5 file exists...")
                 img_h5_path = os.path.join(
                     os.path.join(parent_dir, "img.dat"),
                     f"{current_mda_file}.h50")
@@ -146,14 +145,13 @@ class BlueSkyAcquireImage(AcquireImage):
                         time_diff = os.path.getmtime(img_h5_path) - timenow
                         timenow = time.time()
                         logger.info(f"The .h5 file {img_h5_path} exists")
-                        logger.info(f"watch file and wait until the file doesn't change for 30 seconds to process.")
+                        logger.info("watch file and wait until the file doesn't change for 30 seconds to process.")
                     else:
                         logger.info(f"The .h5 file {img_h5_path} does not exist")
-                        logger.info(f"wait for 30 seconds to process.")
+                        logger.info("wait for 30 seconds to process.")
                         time.sleep(30)
 
                 process_code = 1
-
 
             if process_code: 
                 logger.info(f"Fitting {current_mda_file} completed successfully.")

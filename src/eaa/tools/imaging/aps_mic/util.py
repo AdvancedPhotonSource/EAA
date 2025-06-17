@@ -11,6 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def run_xrfmaps_exe(exe_path, args=None):
     """
     Runs an executable file.
@@ -131,13 +132,13 @@ def load_h5(img_h5_path, fit_type=["NNLS", "ROI"], fsizelim=1e3) -> dict:
     if fsize > fsizelim:
         with h5py.File(img_h5_path, "r") as f:
             data.update({"scan": os.path.basename(img_h5_path)})
-            data.update({"x_axis": f[f"MAPS/Scan/x_axis"][:]})
-            data.update({"y_axis": f[f"MAPS/Scan/y_axis"][:]})
+            data.update({"x_axis": f["MAPS/Scan/x_axis"][:]})
+            data.update({"y_axis": f["MAPS/Scan/y_axis"][:]})
             for t in fit_type:
                 d = f[f"MAPS/XRF_Analyzed/{t}/Counts_Per_Sec"][:]
                 d_ch = f[f"MAPS/XRF_Analyzed/{t}/Channel_Names"][:].astype(str).tolist()
-                scaler_names = f[f"MAPS/Scalers/Names"][:].astype(str).tolist()
-                scaler_values = f[f"MAPS/Scalers/Values"][:]
+                scaler_names = f["MAPS/Scalers/Names"][:].astype(str).tolist()
+                scaler_values = f["MAPS/Scalers/Values"][:]
 
                 data.update({f"{t}_arr": d})
                 data.update({f"{t}_ch": d_ch})
@@ -243,5 +244,5 @@ def save_xrfdata(
             logger.info(f"Image saved to {fname}")
             return fname
     else:
-        print(f"The XRF h5 file {img_h5_path} not found")
+        logger.error(f"The XRF h5 file {img_h5_path} not found")
         return None
