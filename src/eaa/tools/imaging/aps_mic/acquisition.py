@@ -27,6 +27,7 @@ class BlueSkyAcquireImage(AcquireImage):
         xrf_on: bool = True,
         preamp1_on: bool = False,
         using_xrf_maps: bool = False,
+        xrf_elms: Tuple[str, ...] = ("Cr",),
         allowable_x_range: Optional[Tuple[float, float]] = None,
         allowable_y_range: Optional[Tuple[float, float]] = None,
         *args, **kwargs
@@ -45,6 +46,8 @@ class BlueSkyAcquireImage(AcquireImage):
             Whether to collect Preamp1 data.
         using_xrf_maps: bool, optional
             Whether to use the XRF-Maps executable to process the data.
+        xrf_elms: Tuple[str, ...], optional
+            The elements to be detected in the XRF data.
         allowable_x_range: Optional[Tuple[float, float]], optional
             The allowable range of scan center position in the x direction.
         allowable_y_range: Optional[Tuple[float, float]], optional
@@ -72,6 +75,7 @@ class BlueSkyAcquireImage(AcquireImage):
         self.xrf_on = xrf_on
         self.preamp1_on = preamp1_on
         self.using_xrf_maps = using_xrf_maps
+        self.xrf_elms = xrf_elms
         self.allowable_x_range = allowable_x_range
         self.allowable_y_range = allowable_y_range
         super().__init__(*args, **kwargs)
@@ -84,7 +88,6 @@ class BlueSkyAcquireImage(AcquireImage):
         y_center: float = None,
         stepsize_x: float = 0,
         stepsize_y: float = 0,
-        xrf_elms: Tuple[str, ...] = ("Cr",),
     )->Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given scan area with the scanning x-ray microscope.
         
@@ -104,8 +107,6 @@ class BlueSkyAcquireImage(AcquireImage):
         stepsize_y: float
             The scan step size in the y direction, i.e., the distance between
             two adjacent pixels in the y direction in microns.
-        xrf_elms: Tuple[str, ...]
-            The elements to be detected in the XRF data.
 
         Returns
         -------
@@ -183,7 +184,7 @@ class BlueSkyAcquireImage(AcquireImage):
                     os.path.join(parent_dir, "img.dat"),
                     f"{current_mda_file}.h50")
 
-                img_path = save_xrfdata(img_h5_path, png_output_dir, elms=xrf_elms)
+                img_path = save_xrfdata(img_h5_path, png_output_dir, elms=self.xrf_elms)
                 if img_path:
                     return img_path
                 else:
