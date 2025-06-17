@@ -423,6 +423,11 @@ class OpenAIAgent:
         responses will be returned. This function is able to handle 
         multiple tool calls.
         
+        If an exception is encountered when executing a tool, the tool
+        response will be a string containing the exception message. If
+        `return_tool_return_types` is True, the return type of that tool
+        execution will set to be ToolReturnType.EXCEPTION.
+        
         Parameters
         ----------
         message : Dict[str, Any]
@@ -449,7 +454,13 @@ class OpenAIAgent:
             tool_call_id = tool_call_info["id"]
             tool_name = tool_call_info["function"]["name"]
             tool_call_kwargs = json.loads(tool_call_info["function"]["arguments"])
-            result = self.tool_manager.execute_tool(tool_name, tool_call_kwargs)
+            
+            exception_encountered = False
+            try:
+                result = self.tool_manager.execute_tool(tool_name, tool_call_kwargs)
+            except Exception as e:
+                exception_encountered = True
+                result = str(e)
             
             response = generate_openai_message(
                 content=str(result),
@@ -457,7 +468,10 @@ class OpenAIAgent:
                 tool_call_id=tool_call_id
             )
             responses.append(response)
-            response_types.append(self.tool_manager.get_tool_return_type(tool_name))
+            response_types.append(
+                self.tool_manager.get_tool_return_type(tool_name) if not exception_encountered 
+                else ToolReturnType.EXCEPTION
+            )
             
         if return_tool_return_types:
             return responses, response_types

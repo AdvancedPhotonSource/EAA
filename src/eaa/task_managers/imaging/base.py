@@ -138,18 +138,29 @@ class ImagingBaseTaskManager(BaseTaskManager):
                 print_message(tool_response)
                 self.update_message_history(tool_response, update_context=True, update_full_history=True)
                 
-                if not tool_response_type == ToolReturnType.IMAGE_PATH:
-                    raise ValueError(
-                        "The tool returned a response that is not an image path. "
-                        "Make sure the tool returns an image path."
+                if tool_response_type == ToolReturnType.IMAGE_PATH:
+                    image_path = tool_response["content"]
+                    response, outgoing = self.agent.receive(
+                        message_with_acquired_image,
+                        image_path=image_path,
+                        context=self.context,
+                        return_outgoing_message=True
                     )
-                image_path = tool_response["content"]
-                response, outgoing = self.agent.receive(
-                    message_with_acquired_image,
-                    image_path=image_path,
-                    context=self.context,
-                    return_outgoing_message=True
-                )
+                elif tool_response_type == ToolReturnType.EXCEPTION:
+                    response, outgoing = self.agent.receive(
+                        "The tool returned an exception. Please fix the exception and try again.",
+                        image_path=None,
+                        context=self.context,
+                        return_outgoing_message=True
+                    )
+                else:
+                    response, outgoing = self.agent.receive(
+                        f"The tool should return an image path, but got {str(tool_response_type)}. "
+                        "Make sure you call the right tool correctly.",
+                        image_path=None,
+                        context=self.context,
+                        return_outgoing_message=True
+                    )
                 self.update_message_history(outgoing, update_context=store_all_images_in_context, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:

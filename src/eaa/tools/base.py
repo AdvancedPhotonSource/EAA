@@ -17,6 +17,7 @@ class ToolReturnType(StrEnum):
     BOOL = auto()
     LIST = auto()
     DICT = auto()
+    EXCEPTION = auto()
 
 
 class BaseTool:
