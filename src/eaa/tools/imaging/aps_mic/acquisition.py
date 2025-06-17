@@ -1,4 +1,4 @@
-from typing import Annotated, Tuple
+from typing import Annotated, Tuple, Optional
 import logging
 import os
 import time
@@ -27,6 +27,8 @@ class BlueSkyAcquireImage(AcquireImage):
         xrf_on: bool = True,
         preamp1_on: bool = False,
         using_xrf_maps: bool = False,
+        allowable_x_range: Optional[Tuple[float, float]] = None,
+        allowable_y_range: Optional[Tuple[float, float]] = None,
         *args, **kwargs
     ):
         """Image acquisition tool with Bluesky.
@@ -43,6 +45,10 @@ class BlueSkyAcquireImage(AcquireImage):
             Whether to collect Preamp1 data.
         using_xrf_maps: bool, optional
             Whether to use the XRF-Maps executable to process the data.
+        allowable_x_range: Optional[Tuple[float, float]], optional
+            The allowable range of scan center position in the x direction.
+        allowable_y_range: Optional[Tuple[float, float]], optional
+            The allowable range of scan center position in the y direction.
 
         Raises
         ------
@@ -66,6 +72,8 @@ class BlueSkyAcquireImage(AcquireImage):
         self.xrf_on = xrf_on
         self.preamp1_on = preamp1_on
         self.using_xrf_maps = using_xrf_maps
+        self.allowable_x_range = allowable_x_range
+        self.allowable_y_range = allowable_y_range
         super().__init__(*args, **kwargs)
         
     def acquire_image(
@@ -105,6 +113,19 @@ class BlueSkyAcquireImage(AcquireImage):
             The path of the acquired image saved in hard drive.
         """
         try:
+            if self.allowable_x_range:
+                if x_center < self.allowable_x_range[0] or x_center > self.allowable_x_range[1]:
+                    raise ValueError(
+                        f"The scan center position in the x direction {x_center} um is out "
+                        f"of the allowable range {self.allowable_x_range} um."
+                    )
+            if self.allowable_y_range:
+                if y_center < self.allowable_y_range[0] or y_center > self.allowable_y_range[1]:
+                    raise ValueError(
+                        f"The scan center position in the y direction {y_center} um is out "
+                        f"of the allowable range {self.allowable_y_range} um."
+                    )
+            
             logger.info(f"Acquiring image of size {width} um x {height} um at location {x_center} um, {y_center} um.")
             self.savedata.update_next_file_name()
             self.RE(self.scanplan(
