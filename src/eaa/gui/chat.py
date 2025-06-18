@@ -32,7 +32,8 @@ class ChatUI:
         
     def _setup_ui(self):
         with gr.Blocks() as self.blocks:
-            self.chatbot = gr.Chatbot(type="messages")
+            self.chatbot = gr.Chatbot(type="messages", height="80vh", autoscroll=True)
+            timer = gr.Timer(1.0)
             
             # Create a function to update the chat
             def update_chat():
@@ -68,7 +69,7 @@ class ChatUI:
                 return context_processed
             
             # Set up periodic updates
-            self.blocks.load(update_chat, None, self.chatbot, stream_every=1)
+            timer.tick(update_chat, None, self.chatbot)
     
     def launch(self, **kwargs):
         """Launch the UI in a non-blocking way"""
