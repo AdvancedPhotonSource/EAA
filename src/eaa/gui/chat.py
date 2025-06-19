@@ -24,8 +24,9 @@ from eaa.agents.openai import print_message
 
 
 class ChatUI:
-    def __init__(self, task_manager: BaseTaskManager):
+    def __init__(self, task_manager: BaseTaskManager, auto_update: bool = True):
         self.task_manager = task_manager
+        self.auto_update = auto_update
         self.chatbot: Optional[gr.Chatbot] = None
         self.blocks: Optional[gr.Blocks] = None
         self._setup_ui()
@@ -68,8 +69,11 @@ class ChatUI:
                         context_processed.append(context[i])
                 return context_processed
             
-            # Set up periodic updates
-            timer.tick(update_chat, None, self.chatbot)
+            if self.auto_update:
+                # Set up periodic updates
+                timer.tick(update_chat, None, self.chatbot)
+            else:
+                self.blocks.load(update_chat, outputs=self.chatbot)
     
     def launch(self, **kwargs):
         """Launch the UI in a non-blocking way"""
@@ -84,21 +88,22 @@ class ChatUI:
         return server_thread
 
 
-def launch_gui(task_manager: BaseTaskManager, **kwargs) -> threading.Thread:
+def launch_gui(task_manager: BaseTaskManager, auto_update=True,**kwargs) -> threading.Thread:
     """
     Launch the GUI in a non-blocking way.
     
     Parameters
     ----------
     task_manager : BaseTaskManager
-        The task manager instance to use
-    **kwargs : dict
-        Additional arguments to pass to gr.Blocks.launch()
+        The task manager instance to use.
+    auto_update : bool
+        Whether to automatically update the displayed messages.
+        This may cause the UI to flicker.
         
     Returns
     -------
     threading.Thread
         The thread running the Gradio server
     """
-    ui = ChatUI(task_manager)
+    ui = ChatUI(task_manager, auto_update=auto_update)
     return ui.launch(**kwargs)
