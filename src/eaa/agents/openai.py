@@ -331,7 +331,10 @@ class OpenAIAgent:
             returns.append(response.choices[0].message.content)
         if return_outgoing_message:
             returns.append(message[0] if len(message) > 0 else None)
-        return returns
+        if len(returns) == 1:
+            return returns[0]
+        else:
+            return returns
     
     def send_message_and_get_response(
         self,
