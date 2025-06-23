@@ -1,103 +1,132 @@
-"""WebUI based on Gradio.
+"""WeUI based on Chainlit. To use this WebUI, you need to make some slight
+modifications to your run script.
 
-To use the WebUI, import `launch_gui` from `eaa.gui.chat` and call it after
-creating the task manager.
+Example: 
 
-Example:
-```python
-from eaa.gui.chat import launch_gui
+If you originally have
+```
+task_manager.run_fov_search(
+    feature_description="a camera or optical device",
+    y_range=(0, 800),
+    x_range=(0, 800),
+    fov_size=(200, 200),
+    step_size=(200, 200)
+)
+```
 
-task_manager = TaskManager(...)
-launch_gui(task_manager)
+Change it to:
+```
+from eaa.gui.chat import *
+set_task_manager(task_manager)
+set_function_to_run(
+    task_manager.run_fov_search, 
+    kwargs={
+        "feature_description": "a camera or optical device",
+        "y_range": (0, 800),
+        "x_range": (0, 800),
+        "fov_size": (200, 200),
+        "step_size": (200, 200)
+    }
+)
+```
+Then instead of running the script with `python`, run it with
+```
+chainlit run myscript.py
 ```
 """
 
+import chainlit as cl
+import asyncio
 import threading
-from typing import Optional
 import re
+import base64
 
-import gradio as gr
-
-from eaa.task_managers.base import BaseTaskManager
-from eaa.util import decode_image_base64
 from eaa.agents.openai import print_message
 
 
-class ChatUI:
-    def __init__(self, task_manager: BaseTaskManager):
-        self.task_manager = task_manager
-        self.chatbot: Optional[gr.Chatbot] = None
-        self.blocks: Optional[gr.Blocks] = None
-        self._setup_ui()
-        
-    def _setup_ui(self):
-        with gr.Blocks() as self.blocks:
-            self.chatbot = gr.Chatbot(type="messages")
-            
-            # Create a function to update the chat
-            def update_chat():
-                context = self.task_manager.full_history
-                context_processed = []
-                for i in range(len(context)):
-                    if isinstance(context[i]["content"], list) and "type" in context[i]["content"][0]:
-                        for item in context[i]["content"]:
-                            if item["type"] == "image_url":
-                                img_base64 = item["image_url"]["url"]
-                                base64_data = re.sub('^data:image/.+;base64,', '', img_base64)
-                                pil_image = decode_image_base64(base64_data, return_type="pil")
-                                if pil_image.mode != "RGB":
-                                    pil_image = pil_image.convert("RGB")
-                                gradio_im = gr.Image(pil_image)
-                                context_processed.append({"content": gradio_im, "role": context[i]["role"]})
-                            elif item["type"] == "text":
-                                context_processed.append({"content": item["text"], "role": context[i]["role"]})
-                    elif (
-                        "tool_calls" in context[i] 
-                        and isinstance(context[i]["tool_calls"], list) 
-                        and len(context[i]["tool_calls"]) > 0
-                    ):
-                        tool_call_message = print_message(context[i], return_string=True)
-                        context_processed.append({"content": tool_call_message, "role": context[i]["role"]})
-                    elif context[i]["role"] == "tool":
-                        tool_response_message = print_message(context[i], return_string=True)
-                        context_processed.append({"content": tool_response_message, "role": "user"})
-                    else:
-                        if context[i]["content"] is None:
-                            context[i]["content"] = ""
-                        context_processed.append(context[i])
-                return context_processed
-            
-            # Set up periodic updates
-            self.blocks.load(update_chat, None, self.chatbot, stream_every=1)
-    
-    def launch(self, **kwargs):
-        """Launch the UI in a non-blocking way"""
-        def run_server():
-            self.blocks.launch(**kwargs)
-            
-        # Start the server in a separate thread
-        server_thread = threading.Thread(target=run_server)
-        server_thread.daemon = True  # Make thread daemon so it exits when main program exits
-        server_thread.start()
-        
-        return server_thread
+_task_manager = None
+_function_to_run = None
+_kwargs = None
 
 
-def launch_gui(task_manager: BaseTaskManager, **kwargs) -> threading.Thread:
-    """
-    Launch the GUI in a non-blocking way.
+def set_task_manager(task_manager):
+    global _task_manager
+    _task_manager = task_manager
+
+
+def get_task_manager():
+    global _task_manager
+    return _task_manager
+
+
+def set_function_to_run(function_to_run, kwargs=None):
+    global _function_to_run
+    global _kwargs
+    if kwargs is None:
+        kwargs = {}
+    _function_to_run = function_to_run
+    _kwargs = kwargs
     
-    Parameters
-    ----------
-    task_manager : BaseTaskManager
-        The task manager instance to use
-    **kwargs : dict
-        Additional arguments to pass to gr.Blocks.launch()
-        
-    Returns
-    -------
-    threading.Thread
-        The thread running the Gradio server
-    """
-    ui = ChatUI(task_manager)
-    return ui.launch(**kwargs)
+
+def compose_chainlit_message(message: dict) -> cl.Message:
+    elements = []
+    content = ""
+    role = message["role"]
+    if isinstance(message["content"], list) and "type" in message["content"][0]:
+        for item in message["content"]:
+            if item["type"] == "image_url":
+                img_base64 = item["image_url"]["url"]
+                base64_data = re.sub("^data:image/.+;base64,", "", img_base64)
+                image_bytes = base64.b64decode(base64_data)
+                image = cl.Image(name="image", display="inline", content=image_bytes)
+                elements.append(image)
+        content += print_message(message, return_string=True)
+    elif (
+        "tool_calls" in message 
+        and isinstance(message["tool_calls"], list) 
+        and len(message["tool_calls"]) > 0
+    ):
+        tool_call_message = print_message(message, return_string=True)
+        content += tool_call_message
+    elif role == "tool":
+        tool_response_message = print_message(message, return_string=True)
+        content += tool_response_message
+    else:
+        if message["content"] is None:
+            message["content"] = ""
+        content += message["content"]
+    return cl.Message(
+        content=content,
+        author=role,
+        elements=elements
+    )
+
+
+@cl.on_chat_start
+async def on_chat_start():    
+    await cl.Message("Chat started. Listening for external messages...").send()
+
+    # Start background thread only once
+    if not hasattr(cl.user_session, "thread_started"):
+        threading.Thread(target=_function_to_run, kwargs=_kwargs, daemon=True).start()
+        cl.user_session.thread_started = True
+
+    # Async polling loop to check for new messages
+    async def poll_new_messages():
+        last_index = 0
+        while True:
+            messages = _task_manager.full_history
+            if last_index < len(messages):
+                for i_msg in range(last_index, len(messages)):
+                    cl_message = compose_chainlit_message(messages[i_msg])
+                    await cl_message.send()
+                last_index = len(messages)
+            await asyncio.sleep(1)
+
+    # Start the polling task
+    cl.user_session.set("polling_task", asyncio.create_task(poll_new_messages()))
+
+@cl.on_message
+async def on_message(message: cl.Message):
+    await cl.Message(content=f"You said: {message.content}").send()
+

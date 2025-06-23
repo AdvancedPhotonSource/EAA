@@ -2,7 +2,8 @@ from typing import Any, Dict
 
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
-from eaa.agents.openai import OpenAIAgent
+from eaa.agents.openai import OpenAIAgent, generate_openai_message
+from eaa.tools.base import ToolReturnType
 
 
 class BaseTaskManager:
@@ -117,13 +118,46 @@ class BaseTaskManager:
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()
 
-    def run_conversation(self, *args, **kwargs) -> None:
-        """Run a conversation with the assistant."""
-        message = input("Enter a message: ")
+    def run_conversation(
+        self, 
+        store_all_images_in_context: bool = False, 
+        *args, **kwargs
+    ) -> None:
+        """Start a free-dtyle conversation with the assistant.
+
+        Parameters
+        ----------
+        store_all_images_in_context : bool, optional
+            Whether to store all images in the context. If False, only the image
+            in the initial prompt, if any, is stored in the context. Keep this
+            False to reduce the context size and save costs.
+        """
         while True:
+            message = input("Enter a message: ")
             if message.lower() == "exit":
                 break
+            
+            # Send message and get response
             response, outgoing_message = self.agent.receive(message, return_outgoing_message=True)
             self.update_message_history(outgoing_message, update_context=True, update_full_history=True)
             self.update_message_history(response, update_context=True, update_full_history=True)
-            message = input("Enter a message: ")
+            
+            # Handle tool calls
+            tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
+            if len(tool_responses) >= 1:        
+                for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                    self.update_message_history(tool_response, update_context=True, update_full_history=True)
+                    # If the tool returns an image path, load the image and send it to 
+                    # the assistant in a follow-up message as user.
+                    if tool_response_type == ToolReturnType.IMAGE_PATH:
+                        image_path = tool_response["content"]
+                        image_message = generate_openai_message(
+                            content="Here is the image the tool returned.",
+                            image_path=image_path,
+                            role="user",
+                        )
+                        self.update_message_history(
+                            image_message, update_context=store_all_images_in_context, update_full_history=True
+                        )
+                response = self.agent.receive(message=None, context=self.context, return_outgoing_message=False)
+                self.update_message_history(response, update_context=True, update_full_history=True)
