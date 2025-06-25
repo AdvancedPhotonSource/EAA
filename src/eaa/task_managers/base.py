@@ -16,6 +16,7 @@ class BaseTaskManager:
         model_base_url: str = None, 
         access_token: str = None,
         tools: list[BaseTool] = [], 
+        build: bool = True,
         *args, **kwargs
     ):
         self.context = []
@@ -25,7 +26,9 @@ class BaseTaskManager:
         self.access_token = access_token
         self.agent = None
         self.tools = tools
-        self.build()
+        
+        if build:
+            self.build()
         
     def build(self, *args, **kwargs):
         self.build_agent()

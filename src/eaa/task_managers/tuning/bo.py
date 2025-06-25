@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 import torch
 
@@ -18,6 +18,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         bayesian_optimization_tool: BayesianOptimizationTool = None,
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
+        objective_function: Callable = None,
         *args, **kwargs
     ) -> None:
         """Bayesian optimization task manager.
@@ -40,15 +41,25 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             generated.
         n_initial_points : int, optional
             The number of initial points to generate if `initial_points` is None.
+        objective_function : Callable
+            The objective function to be maximized. This function should take
+            a single argument, which is a (n_points, n_features) tensor of
+            points to evaluate the objective function at. It should return
+            a (n_points, n_objectives) tensor of objective function values.
         """
         if bayesian_optimization_tool is None:
             raise ValueError("`bayesian_optimization_tool` is required.")
+        if objective_function is None:
+            raise ValueError("`objective_function` is required.")
+        
         self.bayesian_optimization_tool = bayesian_optimization_tool
         
         for tool in tools:
             if isinstance(tool, BayesianOptimizationTool):
                 raise ValueError("`BayesianOptimizationTool` should not be included in `tools`.")
             
+        self.objective_function = objective_function
+        
         self.initial_points = initial_points
         self.n_initial_points = n_initial_points
         
