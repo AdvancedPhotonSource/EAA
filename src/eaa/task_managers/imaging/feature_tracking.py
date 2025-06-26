@@ -47,10 +47,11 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         feature_description: str = None,
         y_range: tuple[float, float] = None,
         x_range: tuple[float, float] = None,
-        fov_size: tuple[float, float] = (100, 100),
-        step_size: tuple[float, float] = (100, 100),
+        fov_size: tuple[float, float] = None,
+        step_size: tuple[float, float] = None,
         max_rounds: int = 99,
         initial_prompt: Optional[str] = None,
+        additional_prompt: Optional[str] = None,
         *args, **kwargs
     ) -> None:
         """Run a search for the best field of view for the microscope.
@@ -64,9 +65,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         x_range : tuple[float, float]
             The range of x coordinates to search for the feature.
         fov_size : tuple[float, float], optional
-            The size of the field of view.
+            The size of the field of view in (height, width).
         step_size : float, optional
-            The step size to move the field of view each time.
+            The step size to move the field of view each time (dy, dx).
         max_rounds : int, optional
             The maximum number of rounds to search for the feature.
         initial_prompt : str, optional
@@ -79,15 +80,25 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             initial_prompt = dedent(f"""\
                 You are given a tool that acquires an image of a sub-region
                 of a sample at given location and with given size (the field
-                of view, or FOV). Use this tool to find a subregion that contains
+                of view, or FOV). Each time you call the tool, you will see
+                the image acquired. Use this tool to find a subregion that contains
                 the following feature: {feature_description}.
-                The feature should be roughly centered in the field of view. 
-                The field of view size should always be {fov_size}. Start from 
-                position (y={y_range[0]}, x={x_range[0]}), and gradually move the FOV 
-                with a step size of {step_size[0]} in the y direction and 
-                {step_size[1]} in the x direction, and examine the image until you 
-                find the feature of interest. Positions should not go beyond 
-                y={y_range[1]} and x={x_range[1]}. 
+                The feature should be centered in the field of view. Each time you
+                see an acquired image, check if it is in the FOV; if not, move the
+                FOV until you find it.
+                Here are your detailed instructions:
+                - At the beginning, use an FOV size of {fov_size} (height, width). You can
+                  change the FOV size during the process to see a larger area,
+                  but go back to this size when you find the feature and acquire a final
+                  image of it.
+                - Start from position (y={y_range[0]}, x={x_range[0]}), and gradually move the FOV 
+                  to find the feature. Positions should not go beyond y={y_range[1]} and x={x_range[1]}.
+                  When moving the FOV, you can start with the step 
+                  size of {step_size[0]} in the y direction and {step_size[1]} in the x direction.
+                  You can change the step sizes during the process.
+                - When you find the feature, adjust the positions of the FOV to make the feature
+                  centered in the FOV. If the feature is off to the left, move the FOV to the left;
+                  if the feature is off to the top, move the FOV to the top.
                 When you find the feature of interest, report the coordinates of 
                 the FOV. When calling tools, make only one call at a time. Do not make
                 another call before getting the response of a previous one. When you 
@@ -107,6 +118,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                     "should not be provided if `initial_prompt` is given."
                 )
         
+        if additional_prompt is not None:
+            initial_prompt = initial_prompt + "\nAdditional instructions:\n" + additional_prompt
+
         self.run_imaging_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=None,
@@ -130,6 +144,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         x_range: Optional[tuple[float, float]] = None,
         max_rounds: int = 99,
         initial_prompt: Optional[str] = None,
+        additional_prompt: Optional[str] = None
     ):
         """Search for a feature that drifted out of the field of view
         given a reference image of it, and bring the feature back into
@@ -190,7 +205,10 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                     "`initial_position`, `initial_fov_size`, `y_range`, and `x_range` "
                     "should not be provided if `initial_prompt` is given."
                 )
-        
+
+        if additional_prompt is not None:
+            initial_prompt = initial_prompt + "\nAdditional instructions:\n" + additional_prompt
+
         self.run_imaging_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,

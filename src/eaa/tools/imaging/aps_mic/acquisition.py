@@ -160,12 +160,13 @@ class BlueSkyAcquireImage(AcquireImage):
                 logger.info(f"The expected .h5 file path is {img_h5_path}")
                 
                 time_diff = 0
-                timenow = time.time()
+                time_mod = 0
                 while any([time_diff < 30, not os.path.exists(img_h5_path)]):
                     time.sleep(1)
                     if os.path.exists(img_h5_path):
-                        time_diff = os.path.getmtime(img_h5_path) - timenow
-                        timenow = time.time()
+                        if os.path.getmtime(img_h5_path) != time_mod:
+                            time_mod = os.path.getmtime(img_h5_path)
+                        time_diff = time.time() - time_mod
                         logger.info(f"The .h5 file {img_h5_path} exists")
                         logger.info("watch file and wait until the file doesn't change for 30 seconds to process.")
                     else:
@@ -185,13 +186,29 @@ class BlueSkyAcquireImage(AcquireImage):
                     f"{current_mda_file}.h50")
 
                 img_path = save_xrfdata(img_h5_path, png_output_dir, elms=self.xrf_elms)
+
+                time_diff = 0
+                time_mod = 0
+                while any([time_diff < 5, not os.path.exists(img_path)]):
+                    time.sleep(1)
+                    if os.path.exists(img_path):
+                        if os.path.getmtime(img_path) != time_mod:
+                            time_mod = os.path.getmtime(img_path)
+                        time_diff = time.time() - time_mod
+                        logger.info(f"The .png file {img_path} exists")
+                        logger.info("watch file and wait until the file doesn't change for 5 seconds to process.")
+                    else:
+                        logger.info(f"The .png file {img_path} does not exist")
+                        logger.info("wait for 5 seconds to process.")
+                        time.sleep(5)
+
                 if img_path:
                     return img_path
                 else:
                     logger.error(f"Failed to save images for {current_mda_file}")
-                    return None
+                    return f"Failed to save images for {current_mda_file}"
             logger.error(f"Failed to process {current_mda_file}")
-            return None
+            return f"Failed to process {current_mda_file}"
         
         except Exception as e:
             logger.error(f"Error acquiring image: {e}")

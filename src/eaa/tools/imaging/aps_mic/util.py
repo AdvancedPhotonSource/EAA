@@ -179,7 +179,7 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
     matplotlib.figure.Figure
         The figure object.
     """
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(5, 5))
     img = ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
     ax.set_title(f"{scan_name} {elm_name}")
 
@@ -191,8 +191,8 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
     ax.set_xticklabels([np.round(xaxis[i], 2) for i in xticks])
     ax.set_yticklabels([np.round(yaxis[i], 2) for i in yticks])
     ax.tick_params(axis="both", which="major", labelsize=12)
-    cbar = fig.colorbar(img, ax=ax, shrink=0.3)
-    cbar.set_label("cts/sec")
+    # cbar = fig.colorbar(img, ax=ax, shrink=0.3)
+    # cbar.set_label("cts/sec")
     plt.tight_layout()
     return fig
 
