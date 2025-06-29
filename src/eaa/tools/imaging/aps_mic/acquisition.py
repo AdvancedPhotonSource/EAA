@@ -5,6 +5,7 @@ import time
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.aps_mic.util import process_xrfdata, save_xrfdata
+from eaa.util import wait_for_file
 
 logger = logging.getLogger(__name__)
 
@@ -159,22 +160,7 @@ class BlueSkyAcquireImage(AcquireImage):
                     f"{current_mda_file}.h50")
                 logger.info(f"The expected .h5 file path is {img_h5_path}")
                 
-                time_diff = 0
-                time_mod = 0
-                while any([time_diff < 30, not os.path.exists(img_h5_path)]):
-                    time.sleep(1)
-                    if os.path.exists(img_h5_path):
-                        if os.path.getmtime(img_h5_path) != time_mod:
-                            time_mod = os.path.getmtime(img_h5_path)
-                        time_diff = time.time() - time_mod
-                        logger.info(f"The .h5 file {img_h5_path} exists")
-                        logger.info("watch file and wait until the file doesn't change for 30 seconds to process.")
-                    else:
-                        logger.info(f"The .h5 file {img_h5_path} does not exist")
-                        logger.info("wait for 30 seconds to process.")
-                        time.sleep(30)
-
-                process_code = 1
+                process_code = wait_for_file(img_h5_path, duration=30)
 
             if process_code: 
                 logger.info(f"Fitting {current_mda_file} completed successfully.")
@@ -186,21 +172,7 @@ class BlueSkyAcquireImage(AcquireImage):
                     f"{current_mda_file}.h50")
 
                 img_path = save_xrfdata(img_h5_path, png_output_dir, elms=self.xrf_elms)
-
-                time_diff = 0
-                time_mod = 0
-                while any([time_diff < 5, not os.path.exists(img_path)]):
-                    time.sleep(1)
-                    if os.path.exists(img_path):
-                        if os.path.getmtime(img_path) != time_mod:
-                            time_mod = os.path.getmtime(img_path)
-                        time_diff = time.time() - time_mod
-                        logger.info(f"The .png file {img_path} exists")
-                        logger.info("watch file and wait until the file doesn't change for 5 seconds to process.")
-                    else:
-                        logger.info(f"The .png file {img_path} does not exist")
-                        logger.info("wait for 5 seconds to process.")
-                        time.sleep(5)
+                wait_for_file(img_path, duration=5)
 
                 if img_path:
                     return img_path
