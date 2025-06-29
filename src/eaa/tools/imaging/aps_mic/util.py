@@ -180,7 +180,7 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
         The figure object.
     """
     fig, ax = plt.subplots(figsize=(5, 5))
-    img = ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
+    ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
     ax.set_title(f"{scan_name} {elm_name}")
 
     # Show only 5 ticks for both x- and y- axes

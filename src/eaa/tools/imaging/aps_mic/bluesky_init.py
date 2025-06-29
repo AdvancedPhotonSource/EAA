@@ -7,6 +7,7 @@ from s2idd_uprobe.startup import *
 
 def get_control_components(device_name: str):
     try:
+        # ruff: noqa: F405
         return oregistry[device_name]
     except KeyError:
         raise KeyError(f"Device {device_name} not found in the oregistry")
