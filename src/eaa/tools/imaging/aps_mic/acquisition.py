@@ -1,7 +1,6 @@
 from typing import Annotated, Tuple, Optional
 import logging
 import os
-import time
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.aps_mic.util import process_xrfdata, save_xrfdata
