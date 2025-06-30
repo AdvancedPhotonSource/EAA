@@ -19,6 +19,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
         objective_function: Callable = None,
+        message_db_path: Optional[str] = None,
         *args, **kwargs
     ) -> None:
         """Bayesian optimization task manager.
@@ -46,6 +47,11 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             a single argument, which is a (n_points, n_features) tensor of
             points to evaluate the objective function at. It should return
             a (n_points, n_objectives) tensor of objective function values.
+        message_db_path : Optional[str]
+            If provided, the entire chat history will be stored in 
+            a SQLite database at the given path. This is essential
+            if you want to use the WebUI, which polls the database
+            for new messages.
         """
         if bayesian_optimization_tool is None:
             raise ValueError("`bayesian_optimization_tool` is required.")
@@ -67,6 +73,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             model_name=model_name,
             model_base_url=model_base_url,
             tools=tools,
+            message_db_path=message_db_path,
             *args, **kwargs
         )
         
