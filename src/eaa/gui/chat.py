@@ -1,62 +1,56 @@
-"""WeUI based on Chainlit. To use this WebUI, you need to make some slight
-modifications to your run script.
+"""WeUI based on Chainlit. To use this WebUI, create a Python
+script named `start_webui.py` that contains the following:
 
-Example: 
-
-If you originally have
-```
-task_manager.run_fov_search(
-    feature_description="a camera or optical device",
-    y_range=(0, 800),
-    x_range=(0, 800),
-    fov_size=(200, 200),
-    step_size=(200, 200)
-)
-```
-
-Change it to:
 ```
 from eaa.gui.chat import *
-set_task_manager(task_manager)
-set_function_to_run(
-    task_manager.run_fov_search, 
-    kwargs={
-        "feature_description": "a camera or optical device",
-        "y_range": (0, 800),
-        "x_range": (0, 800),
-        "fov_size": (200, 200),
-        "step_size": (200, 200)
-    }
-)
+set_message_db_path("messages.db")
 ```
-Then instead of running the script with `python`, run it with
+Replace `messages.db` with the path to the SQLite database that stores 
+the chat history. To make the WebUI show messages in real time, this
+DB path must match  `message_db_path` given to the task manager.
+
+To launch the WebUI, run the following command:
 ```
-chainlit run myscript.py
+chainlit run start_webui.py
 ```
 """
 
 import chainlit as cl
+import sqlite3
 import asyncio
-import threading
 import re
 import base64
 
-from eaa.agents.openai import print_message
+
+_message_db_path = None
+_message_db_conn = None
 
 
-_task_manager = None
-_function_to_run = None
-_kwargs = None
+def set_message_db_path(path: str):
+    """Set the path to the SQLite database that stores the chat history.
+
+    Parameters
+    ----------
+    path : str
+        _description_
+    """
+    global _message_db_path
+    _message_db_path = path
+    
+
+def get_message_db_path():
+    global _message_db_path
+    return _message_db_path
 
 
-def set_task_manager(task_manager):
-    global _task_manager
-    _task_manager = task_manager
+def get_message_db_conn():
+    global _message_db_conn
+    return _message_db_conn
 
 
-def get_task_manager():
-    global _task_manager
-    return _task_manager
+def create_message_db_conn(path: str):
+    global _message_db_conn
+    _message_db_conn = sqlite3.connect(path)
 
 
 def set_function_to_run(function_to_run, kwargs=None):
@@ -67,34 +61,34 @@ def set_function_to_run(function_to_run, kwargs=None):
     _function_to_run = function_to_run
     _kwargs = kwargs
     
+    
+def get_messages():
+    global _message_db_conn
+    cursor = _message_db_conn.cursor()
+    cursor.execute("SELECT role, content, tool_calls, image FROM messages ORDER BY rowid")
+    return cursor.fetchall()
+    
 
-def compose_chainlit_message(message: dict) -> cl.Message:
+def compose_chainlit_message(
+    role: str = None, 
+    content: str = None, 
+    tool_calls: list = None, 
+    image_base64: str = None
+) -> cl.Message:
+    message_content = "" if content is None else content
+    content = f"[Role] {role}\n"
+    content += "[Content]\n"
+    content += message_content
+    
+    if tool_calls is not None:
+        content += f"[Tool calls]\n{tool_calls}\n"
+        
     elements = []
-    content = ""
-    role = message["role"]
-    if isinstance(message["content"], list) and "type" in message["content"][0]:
-        for item in message["content"]:
-            if item["type"] == "image_url":
-                img_base64 = item["image_url"]["url"]
-                base64_data = re.sub("^data:image/.+;base64,", "", img_base64)
-                image_bytes = base64.b64decode(base64_data)
-                image = cl.Image(name="image", display="inline", content=image_bytes)
-                elements.append(image)
-        content += print_message(message, return_string=True)
-    elif (
-        "tool_calls" in message 
-        and isinstance(message["tool_calls"], list) 
-        and len(message["tool_calls"]) > 0
-    ):
-        tool_call_message = print_message(message, return_string=True)
-        content += tool_call_message
-    elif role == "tool":
-        tool_response_message = print_message(message, return_string=True)
-        content += tool_response_message
-    else:
-        if message["content"] is None:
-            message["content"] = ""
-        content += message["content"]
+    if image_base64 is not None:
+        image_base64 = base64.b64decode(image_base64)
+        image = cl.Image(name="image", display="inline", content=image_base64)
+        elements.append(image)
+    
     return cl.Message(
         content=content,
         author=role,
@@ -103,22 +97,27 @@ def compose_chainlit_message(message: dict) -> cl.Message:
 
 
 @cl.on_chat_start
-async def on_chat_start():    
+async def on_chat_start():
+    create_message_db_conn(_message_db_path)
+    
     await cl.Message("Chat started. Listening for external messages...").send()
-
-    # Start background thread only once
-    if not hasattr(cl.user_session, "thread_started"):
-        threading.Thread(target=_function_to_run, kwargs=_kwargs, daemon=True).start()
-        cl.user_session.thread_started = True
 
     # Async polling loop to check for new messages
     async def poll_new_messages():
         last_index = 0
         while True:
-            messages = _task_manager.full_history
+            messages = get_messages()
             if last_index < len(messages):
                 for i_msg in range(last_index, len(messages)):
-                    cl_message = compose_chainlit_message(messages[i_msg])
+                    image_base64 = messages[i_msg][3]
+                    if image_base64 is not None:
+                        image_base64 = re.sub("^data:image/.+;base64,", "", image_base64)
+                    cl_message = compose_chainlit_message(
+                        role=messages[i_msg][0],
+                        content=messages[i_msg][1],
+                        tool_calls=messages[i_msg][2],
+                        image_base64=image_base64
+                    )
                     await cl_message.send()
                 last_index = len(messages)
             await asyncio.sleep(1)
@@ -126,7 +125,7 @@ async def on_chat_start():
     # Start the polling task
     cl.user_session.set("polling_task", asyncio.create_task(poll_new_messages()))
 
+
 @cl.on_message
 async def on_message(message: cl.Message):
     await cl.Message(content=f"You said: {message.content}").send()
-

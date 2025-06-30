@@ -1,3 +1,4 @@
+from typing import Optional
 from textwrap import dedent
 import logging
 
@@ -18,6 +19,7 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
         param_setting_tool: TuneOpticsParameters = None,
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
+        message_db_path: Optional[str] = None,
         *args, **kwargs
     ) -> None:
         """An agent that searches for the best setup parameters
@@ -36,13 +38,11 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
             executed automatically following each parameter adjustment.
         initial_parameters : dict[str, float], optional
             The initial parameters given as a dictionary of parameter names and values.
-        speaker_selection_method : Literal["round_robin", "random", "auto"], optional
-            The method to select the next speaker in the group chat.
-            - "round_robin": select the next speaker in a round-robin fashion.
-            - "random": select the next speaker randomly.
-            - "auto": let the LLM decide the next speaker. Some models might have issues
-              with suggesting the speaker in the right format when used as the group chat
-              manager. In that case, use "round_robin" or "random" instead.
+        message_db_path : Optional[str]
+            If provided, the entire chat history will be stored in 
+            a SQLite database at the given path. This is essential
+            if you want to use the WebUI, which polls the database
+            for new messages.
         """
         if "tools" in kwargs.keys():
             raise ValueError(
@@ -54,6 +54,7 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
             model_name=model_name, 
             model_base_url=model_base_url,
             tools=[param_setting_tool],
+            message_db_path=message_db_path,
             *args, **kwargs
         )
         self.param_setting_tool = param_setting_tool

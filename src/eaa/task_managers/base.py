@@ -1,8 +1,13 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+import sqlite3
 
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
-from eaa.agents.openai import OpenAIAgent, generate_openai_message
+from eaa.agents.openai import (
+    OpenAIAgent, 
+    generate_openai_message, 
+    get_message_elements,
+)
 from eaa.tools.base import ToolReturnType
 
 
@@ -16,8 +21,30 @@ class BaseTaskManager:
         model_base_url: str = None, 
         access_token: str = None,
         tools: list[BaseTool] = [], 
+        message_db_path: Optional[str] = None,
+        build: bool = True,
         *args, **kwargs
     ):
+        """The base task manager.
+        
+        Parameters
+        ----------
+        model_name : str
+            The name of the model to use.
+        model_base_url : str
+            The base URL of the model.
+        access_token : str
+            The access token for the model.
+        tools : list[BaseTool]
+            A list of tools provided to the agent.
+        message_db_path : Optional[str]
+            If provided, the entire chat history will be stored in 
+            a SQLite database at the given path. This is essential
+            if you want to use the WebUI, which polls the database
+            for new messages.
+        build : bool
+            Whether to build the internal state of the task manager.
+        """
         self.context = []
         self.full_history = []
         self.model = model_name
@@ -25,11 +52,23 @@ class BaseTaskManager:
         self.access_token = access_token
         self.agent = None
         self.tools = tools
-        self.build()
+        self.message_db_path = message_db_path
+        self.message_db_conn = None
+        if build:
+            self.build()
         
     def build(self, *args, **kwargs):
+        self.build_db()
         self.build_agent()
         self.build_tools()
+    
+    def build_db(self, *args, **kwargs):
+        if self.message_db_path:
+            self.message_db_conn = sqlite3.connect(self.message_db_path)
+            self.message_db_conn.execute(
+                "CREATE TABLE IF NOT EXISTS messages (role TEXT, content TEXT, tool_calls TEXT, image TEXT)"
+            )
+            self.message_db_conn.commit()
     
     def build_agent(self, *args, **kwargs):
         """Build the assistant(s)."""
@@ -114,6 +153,16 @@ class BaseTaskManager:
             self.context.append(message)
         if update_full_history:
             self.full_history.append(message)
+        if self.message_db_conn:
+            self.add_message_to_db(message)
+            
+    def add_message_to_db(self, message: Dict[str, Any]) -> None:
+        elements = get_message_elements(message)
+        self.message_db_conn.execute(
+            "INSERT INTO messages (role, content, tool_calls, image) VALUES (?, ?, ?, ?)",
+            (elements["role"], elements["content"], elements["tool_calls"], elements["image"])
+        )
+        self.message_db_conn.commit()
 
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()
