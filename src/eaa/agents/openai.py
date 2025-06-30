@@ -697,25 +697,62 @@ def print_message(
     text = f"[Role] {message['role']}\n"
     if response_requested is not None:
         text += f"[Response requested] {response_requested}\n"
+        
+    elements = get_message_elements(message)
     
-    if "content" in message.keys():
-        text += "[Content]\n"
-        if isinstance(message["content"], str):
-            text += message["content"] + "\n"
-        elif isinstance(message["content"], list):
-            for item in message["content"]:
-                if item["type"] == "text":
-                    text += item["text"] + "\n"
-                elif item["type"] == "image_url":
-                    text += "<image> \n"
-    if "tool_calls" in message.keys():
+    text += "[Content]\n"
+    text += elements["content"] + "\n"
+    
+    if elements["tool_calls"] is not None:
         text += "[Tool call]\n"
-        for tool_call in message["tool_calls"]:
-            text += f"{tool_call['id']}: {tool_call['function']['name']}\n"
-            text += f"Arguments: {tool_call['function']['arguments']}\n"
+        text += elements["tool_calls"] + "\n"
+
     text += "\n ========================================= \n"
     
     if return_string:
         return text
     else:
         print(f"{color}{text}\033[0m")
+
+
+def get_message_elements(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the elements of the message.
+    
+    Parameters
+    ----------
+    message : Dict[str, Any]
+        The message to get the elements from.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        The elements of the message.
+    """
+    role = message["role"]
+    
+    image = None
+    content = ""
+    if "content" in message.keys():
+        if isinstance(message["content"], str):
+            content += message["content"] + "\n"
+        elif isinstance(message["content"], list):
+            for item in message["content"]:
+                if item["type"] == "text":
+                    content += item["text"] + "\n"
+                elif item["type"] == "image_url":
+                    content += "<image> \n"
+                    image = item["image_url"]["url"]
+                    
+    tool_calls = None
+    if "tool_calls" in message.keys():
+        tool_calls = ""
+        for tool_call in message["tool_calls"]:
+            tool_calls += f"{tool_call['id']}: {tool_call['function']['name']}\n"
+            tool_calls += f"Arguments: {tool_call['function']['arguments']}\n"
+    
+    return {
+        "role": role,
+        "content": content,
+        "tool_calls": tool_calls,
+        "image": image
+    }
