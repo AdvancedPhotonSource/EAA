@@ -1,4 +1,4 @@
-from typing import Annotated, Callable, Tuple, List, Type
+from typing import Annotated, Callable, Tuple, List, Type, Dict, Any
 import logging
 
 import botorch.generation
@@ -10,7 +10,7 @@ from botorch.acquisition import AcquisitionFunction
 import gpytorch
 import torch
 
-from eaa.tools.base import BaseTool
+from eaa.tools.base import BaseTool, ToolReturnType
 from eaa.util import to_tensor
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,19 @@ class BayesianOptimizationTool(BaseTool):
         self.outcome_transform = None
 
         super().__init__(*args, build=False, **kwargs)
+        
+        self.exposed_tools: List[Dict[str, Any]] = [
+            {
+                "name": "update",
+                "function": self.update,
+                "return_type": ToolReturnType.NUMBER
+            },
+            {
+                "name": "suggest",
+                "function": self.suggest,
+                "return_type": ToolReturnType.NUMBER
+            }
+        ]
 
     def check_x_data(self, data: torch.Tensor):
         if not (data.ndim == 2 and data.shape[1] == self.n_dims_in):
