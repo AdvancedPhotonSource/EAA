@@ -6,7 +6,7 @@ import tifffile
 import numpy as np
 
 from eaa.tools.imaging.acquisition import SimulatedAcquireImage
-from eaa.tools.imaging.param_tuning import SimulatedTuneOpticsParameters
+from eaa.tools.imaging.param_tuning import SimulatedSetParameters
 
 import test_utils as tutils
 
@@ -26,7 +26,7 @@ class TestSimulatedParameterTuning(tutils.BaseTester):
         )
         
         acquisition_tool = SimulatedAcquireImage(whole_image, return_message=False)
-        tuning_tool = SimulatedTuneOpticsParameters(
+        tuning_tool = SimulatedSetParameters(
             acquisition_tool, 
             true_parameters=[1.0, 2.0, 3.0],
             parameter_ranges=[[0.0, 0.0, 0.0], [2.0, 4.0, 6.0]],

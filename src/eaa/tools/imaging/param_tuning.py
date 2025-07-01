@@ -6,7 +6,7 @@ from eaa.tools.base import BaseTool, check, ToolReturnType
 from eaa.tools.imaging.acquisition import SimulatedAcquireImage
 
 
-class TuneOpticsParameters(BaseTool):
+class SetParameters(BaseTool):
     
     name: str = "tune_optics_parameters"
     
@@ -27,7 +27,7 @@ class TuneOpticsParameters(BaseTool):
         raise NotImplementedError
         
         
-class BlueSkyTuneOpticsParameters(TuneOpticsParameters):
+class BlueSkySetParameters(SetParameters):
     
     name: str = "bluesky_tune_optics_parameters"
     
@@ -38,7 +38,7 @@ class BlueSkyTuneOpticsParameters(TuneOpticsParameters):
         raise NotImplementedError
         
         
-class SimulatedTuneOpticsParameters(TuneOpticsParameters):
+class SimulatedSetParameters(SetParameters):
     
     name: str = "simulated_tune_optics_parameters"
     

@@ -3,7 +3,7 @@ from textwrap import dedent
 import logging
 
 from eaa.tools.imaging.acquisition import AcquireImage
-from eaa.tools.imaging.param_tuning import TuneOpticsParameters
+from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 import eaa.image_proc as ip
 
@@ -16,7 +16,7 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
         self,
         model_name: str = "gpt-4o", 
         model_base_url: str = None,
-        param_setting_tool: TuneOpticsParameters = None,
+        param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
         message_db_path: Optional[str] = None,
