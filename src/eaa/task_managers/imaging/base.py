@@ -113,7 +113,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         self.update_message_history(response, update_context=True, update_full_history=True)
         while round < max_rounds:
             if response["content"] is not None and "TERMINATE" in response["content"]:
-                message = input(
+                message = self.get_user_input(
                     "Termination condition triggered. What to do next? Type \"exit\" to exit. "
                 )
                 if message.lower() == "exit":

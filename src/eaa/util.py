@@ -16,8 +16,11 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-def get_timestamp():
-    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+def get_timestamp(as_int: bool = False) -> str | int:
+    if as_int:
+        return int(datetime.datetime.now().strftime("%Y%m%d%H%M%S%f"))
+    else:
+        return datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
 def to_tensor(x):

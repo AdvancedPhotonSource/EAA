@@ -21,6 +21,8 @@ import asyncio
 import re
 import base64
 
+from eaa.util import get_timestamp
+
 
 _message_db_path = None
 _message_db_conn = None
@@ -65,7 +67,7 @@ def set_function_to_run(function_to_run, kwargs=None):
 def get_messages():
     global _message_db_conn
     cursor = _message_db_conn.cursor()
-    cursor.execute("SELECT role, content, tool_calls, image FROM messages ORDER BY rowid")
+    cursor.execute("SELECT timestamp, role, content, tool_calls, image FROM messages ORDER BY rowid")
     return cursor.fetchall()
     
 
@@ -109,13 +111,13 @@ async def on_chat_start():
             messages = get_messages()
             if last_index < len(messages):
                 for i_msg in range(last_index, len(messages)):
-                    image_base64 = messages[i_msg][3]
+                    image_base64 = messages[i_msg][4]
                     if image_base64 is not None:
                         image_base64 = re.sub("^data:image/.+;base64,", "", image_base64)
                     cl_message = compose_chainlit_message(
-                        role=messages[i_msg][0],
-                        content=messages[i_msg][1],
-                        tool_calls=messages[i_msg][2],
+                        role=messages[i_msg][1],
+                        content=messages[i_msg][2],
+                        tool_calls=messages[i_msg][3],
                         image_base64=image_base64
                     )
                     await cl_message.send()
@@ -128,4 +130,9 @@ async def on_chat_start():
 
 @cl.on_message
 async def on_message(message: cl.Message):
-    await cl.Message(content=f"You said: {message.content}").send()
+    _message_db_conn.execute(
+        "INSERT INTO messages (timestamp, role, content, tool_calls, image) VALUES (?, ?, ?, ?, ?)",
+        (str(get_timestamp(as_int=True)), "user_webui", message.content, None, None)
+    )
+    _message_db_conn.commit()
+    await message.send()

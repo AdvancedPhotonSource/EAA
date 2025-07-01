@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional
 import sqlite3
+import logging
+import time
 
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
@@ -8,7 +10,10 @@ from eaa.agents.openai import (
     generate_openai_message, 
     get_message_elements,
 )
+from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
+
+logger = logging.getLogger(__name__)
 
 
 class BaseTaskManager:
@@ -52,8 +57,11 @@ class BaseTaskManager:
         self.access_token = access_token
         self.agent = None
         self.tools = tools
+        
         self.message_db_path = message_db_path
         self.message_db_conn = None
+        self.webui_user_input_last_timestamp = 0
+        
         if build:
             self.build()
         
@@ -66,7 +74,7 @@ class BaseTaskManager:
         if self.message_db_path:
             self.message_db_conn = sqlite3.connect(self.message_db_path)
             self.message_db_conn.execute(
-                "CREATE TABLE IF NOT EXISTS messages (role TEXT, content TEXT, tool_calls TEXT, image TEXT)"
+                "CREATE TABLE IF NOT EXISTS messages (timestamp TEXT, role TEXT, content TEXT, tool_calls TEXT, image TEXT)"
             )
             self.message_db_conn.commit()
     
@@ -159,10 +167,48 @@ class BaseTaskManager:
     def add_message_to_db(self, message: Dict[str, Any]) -> None:
         elements = get_message_elements(message)
         self.message_db_conn.execute(
-            "INSERT INTO messages (role, content, tool_calls, image) VALUES (?, ?, ?, ?)",
-            (elements["role"], elements["content"], elements["tool_calls"], elements["image"])
+            "INSERT INTO messages (timestamp, role, content, tool_calls, image) VALUES (?, ?, ?, ?, ?)",
+            (
+                str(get_timestamp(as_int=True)), 
+                elements["role"], 
+                elements["content"], 
+                elements["tool_calls"], 
+                elements["image"]
+            )
         )
         self.message_db_conn.commit()
+        
+    def get_user_input(self, prompt: Optional[str] = None, *args, **kwargs) -> str:
+        """Get user input. If the task manager has a SQL message database connection,
+        it will be assumed that the user input is coming from the WebUI and is relayed
+        by the database. Otherwise, the user will be prompted to enter a message from
+        terminal.
+        
+        Parameters
+        ----------
+        prompt : Optional[str], optional
+            The prompt to display to the user in the terminal.
+
+        Returns
+        -------
+        str
+            The user input.
+        """
+        if self.message_db_conn:
+            logger.info("Getting user input from relay database. Please enter your message in the WebUI.")
+            cursor = self.message_db_conn.cursor()
+            while True:
+                cursor.execute("SELECT timestamp, role, content, tool_calls, image FROM messages WHERE role = 'user_webui' ORDER BY rowid")
+                messages = cursor.fetchall()
+                if len(messages) > 0 and int(messages[-1][0]) > self.webui_user_input_last_timestamp:
+                    self.webui_user_input_last_timestamp = int(messages[-1][0])
+                    return messages[-1][2]
+                time.sleep(1)
+        else:
+            if prompt is None:
+                prompt = "Enter a message: "
+            message = input(prompt)
+            return message
 
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()
@@ -182,7 +228,7 @@ class BaseTaskManager:
             False to reduce the context size and save costs.
         """
         while True:
-            message = input("Enter a message: ")
+            message = self.get_user_input(prompt="Enter a message: ")
             if message.lower() == "exit":
                 break
             
