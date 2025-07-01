@@ -28,6 +28,7 @@ class TestSimulatedParameterTuning(tutils.BaseTester):
         acquisition_tool = SimulatedAcquireImage(whole_image, return_message=False)
         tuning_tool = SimulatedSetParameters(
             acquisition_tool, 
+            parameter_names=["param1", "param2", "param3"],
             true_parameters=[1.0, 2.0, 3.0],
             parameter_ranges=[[0.0, 0.0, 0.0], [2.0, 4.0, 6.0]],
             blur_factor=5,

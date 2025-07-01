@@ -11,9 +11,46 @@ class SetParameters(BaseTool):
     name: str = "tune_optics_parameters"
     
     @check
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        parameter_names: list[str],
+        parameter_ranges: list[tuple[float, ...], tuple[float, ...]],
+        *args, 
+        **kwargs
+    ):
+        """Base parameter setting tool.
+        
+        Parameters
+        ----------
+        parameter_names : list[str]
+            The names of the parameters.
+        parameter_ranges : list[tuple[float, ...], tuple[float, ...]]
+            The ranges of the parameters. It should be given as a list of 2 sub-lists,
+            with the first sub-list containing the lower bounds and the second
+            sub-list containing the upper bounds. These ranges will be used to
+            scale the parameter errors. As such, inf is not allowed.
+        """
         super().__init__(*args, **kwargs)
-        self.parameter_history = []
+        
+        parameter_ranges = np.array(parameter_ranges)
+        if np.any(np.isinf(parameter_ranges)):
+            raise ValueError("Inf is not allowed in parameter ranges.")
+        if (
+            len(parameter_ranges) != 2 
+            or len(parameter_ranges[0]) != len(parameter_ranges[1])
+            or np.any(parameter_ranges[1] <= parameter_ranges[0])
+            or len(parameter_names) != len(parameter_ranges[0])
+        ):
+            raise ValueError(
+                "`parameter_ranges` must be a list of 2 sub-lists, with the "
+                "first sub-list containing the lower bounds and the second "
+                "sub-list containing the upper bounds. The number of parameters "
+                "must match the number of lower and upper bounds."
+            )
+        self.parameter_ranges = parameter_ranges
+        self.parameter_history: dict[str, list[float]] = self.get_initial_parameter_history(
+            parameter_names
+        )
         
         self.exposed_tools: List[Dict[str, Any]] = [
             {
@@ -23,8 +60,50 @@ class SetParameters(BaseTool):
             }
         ]
         
+    @property
+    def parameter_names(self) -> list[str]:
+        return list(self.parameter_history.keys())
+        
+    @property
+    def len_parameter_history(self) -> int:
+        return len(self.parameter_history[self.parameter_names[0]])
+    
+    def get_parameter_at_iteration(
+        self, iteration: int, as_dict: bool = False
+    ) -> list[float] | dict[str, float]:
+        """Get the parameters at a certain index from the parameter history.
+
+        Parameters
+        ----------
+        iteration : int
+            The index of the iteration.
+        as_dict : bool, optional
+            Whether to return the parameters as a dictionary.
+
+        Returns
+        -------
+        list[float] | dict[str, float]
+            The parameters at the given iteration. If `as_dict` is True, the parameters
+            are returned as a dictionary. Otherwise, they are returned as a list.
+        """
+        if as_dict:
+            return {k: self.parameter_history[k][iteration] for k in self.parameter_history.keys()}
+        else:
+            return [self.parameter_history[k][iteration] for k in self.parameter_history.keys()]
+        
+    def get_initial_parameter_history(self, parameter_names: list[str]):
+        return {name: [] for name in parameter_names}
+        
     def set_parameters(*args, **kwargs):
         raise NotImplementedError
+    
+    def update_parameter_history(self, parameters: list[float] | dict[str, float]):
+        if isinstance(parameters, dict):
+            for name, param in parameters.items():
+                self.parameter_history[name].append(param)
+        else:
+            for i, val in enumerate(parameters):
+                self.parameter_history[self.parameter_names[i]].append(val)
         
         
 class BlueSkySetParameters(SetParameters):
@@ -44,9 +123,10 @@ class SimulatedSetParameters(SetParameters):
     
     def __init__(
         self, 
-        acquisition_tool: SimulatedAcquireImage, 
-        true_parameters: list[float], 
+        acquisition_tool: SimulatedAcquireImage,
+        parameter_names: list[str],
         parameter_ranges: list[list[float], list[float]],
+        true_parameters: list[float], 
         blur_factor: float = 5,
         drift_factor: float = 0,
         *args, **kwargs
@@ -74,29 +154,15 @@ class SimulatedSetParameters(SetParameters):
             The factor determining the amount of drift of the acquisition tool
             due to deviation from the true parameters.
         """
-        super().__init__(*args, **kwargs)
-        
-        parameter_ranges = np.array(parameter_ranges)
-        if np.any(np.isinf(parameter_ranges)):
-            raise ValueError("Inf is not allowed in parameter ranges.")
-        if (
-            len(parameter_ranges) != 2 
-            or len(parameter_ranges[0]) != len(parameter_ranges[1])
-            or len(parameter_ranges[0]) != len(true_parameters)
-            or np.any(parameter_ranges[1] <= parameter_ranges[0])
-        ):
-            raise ValueError(
-                "`parameter_ranges` must be a list of 2 sub-lists, with the "
-                "first sub-list containing the lower bounds and the second "
-                "sub-list containing the upper bounds."
-            )
-        
+        super().__init__(
+            parameter_names=parameter_names,
+            parameter_ranges=parameter_ranges,
+            *args, **kwargs
+        )
         self.acquisition_tool = acquisition_tool
         self.true_parameters = np.array(true_parameters)
-        self.parameter_ranges = parameter_ranges
         self.blur_factor = blur_factor
         self.drift_factor = drift_factor
-        self.parameter_history = []
         
     def set_parameters(
         self, 
@@ -125,12 +191,12 @@ class SimulatedSetParameters(SetParameters):
         self.acquisition_tool.set_blur(blur)
         
         # Set drift.
-        if len(self.parameter_history) > 0 and self.drift_factor > 0:
-            mean_delta = ((self.parameter_history[-1] - parameters) / scalers).mean()
+        if self.len_parameter_history > 0 and self.drift_factor > 0:
+            mean_delta = ((self.get_parameter_at_iteration(-1) - parameters) / scalers).mean()
             drift = np.random.rand(2) * mean_delta * self.drift_factor
             self.acquisition_tool.set_offset(drift)
         
         # Update parameter history.
-        self.parameter_history.append(parameters)
+        self.update_parameter_history(parameters)
         
         return "Optics parameters set."
