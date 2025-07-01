@@ -7,6 +7,8 @@ from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.tools.bo import BayesianOptimizationTool
 
+logger = logging.getLogger(__name__)
+
 
 class BayesianOptimizationTaskManager(BaseTaskManager):
     
@@ -98,6 +100,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
                 xs_init = self.bayesian_optimization_tool.get_random_initial_points(n_points=self.n_initial_points)
             else:
                 xs_init = self.initial_points
+            logger.info(f"Initial points (shape: {xs_init.shape}):\n{xs_init}")
                 
             for x in xs_init:
                 x = x[None, :]
@@ -107,7 +110,8 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         
         for i in range(n_iterations):
             candidates = self.bayesian_optimization_tool.suggest(n_suggestions=1)
-            logging.info(f"Candidate suggested: {candidates[0]}")
+            logger.info(f"Candidate suggested: {candidates[0]}")
             y = self.objective_function(candidates)
+            logger.info(f"Objective function value: {y.item()}")
             self.bayesian_optimization_tool.update(candidates, y)
         
