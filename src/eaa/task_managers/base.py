@@ -77,6 +77,14 @@ class BaseTaskManager:
                 "CREATE TABLE IF NOT EXISTS messages (timestamp TEXT, role TEXT, content TEXT, tool_calls TEXT, image TEXT)"
             )
             self.message_db_conn.commit()
+            
+            # Set timestamp buffer to the timestamp of the last user input in the database
+            # if it exists..
+            cursor = self.message_db_conn.cursor()
+            cursor.execute("SELECT timestamp, role, content, tool_calls, image FROM messages WHERE role = 'user_webui' ORDER BY rowid")
+            messages = cursor.fetchall()
+            if len(messages) > 0 and self.webui_user_input_last_timestamp == 0:
+                self.webui_user_input_last_timestamp = int(messages[-1][0])
     
     def build_agent(self, *args, **kwargs):
         """Build the assistant(s)."""
