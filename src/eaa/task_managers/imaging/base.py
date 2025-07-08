@@ -69,7 +69,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
         initial_image_path: Optional[str] = None,
         message_with_acquired_image: str = "Here is the image the tool returned.",
         max_rounds: int = 99,
-        store_all_images_in_context: bool = False
+        store_all_images_in_context: bool = False,
+        allow_non_image_tool_responses: bool = True
     ) -> None:
         """Run an agent-involving feedback loop.
         
@@ -100,6 +101,9 @@ class ImagingBaseTaskManager(BaseTaskManager):
             Whether to store all images in the context. If False, only the image
             in the initial prompt, if any, is stored in the context. Keep this
             False to reduce the context size and save costs.
+        allow_non_image_tool_responses : bool, optional
+            If False, the agent will be asked to redo the tool call if it returns
+            anything that is not an image path.
         """
         round = 0
         image_path = None
@@ -154,13 +158,14 @@ class ImagingBaseTaskManager(BaseTaskManager):
                         return_outgoing_message=True
                     )
                 else:
-                    response, outgoing = self.agent.receive(
-                        f"The tool should return an image path, but got {str(tool_response_type)}. "
-                        "Make sure you call the right tool correctly.",
-                        image_path=None,
-                        context=self.context,
-                        return_outgoing_message=True
-                    )
+                    if not allow_non_image_tool_responses:
+                        response, outgoing = self.agent.receive(
+                            f"The tool should return an image path, but got {str(tool_response_type)}. "
+                            "Make sure you call the right tool correctly.",
+                            image_path=None,
+                            context=self.context,
+                            return_outgoing_message=True
+                        )
                 self.update_message_history(outgoing, update_context=store_all_images_in_context, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:
@@ -176,7 +181,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
                 self.update_message_history(response, update_context=True, update_full_history=True)
             else:
                 response, outgoing = self.agent.receive(
-                    "There is no tool call in the response. Make sure you call the tool correctly.",
+                    "There is no tool call in the response. Make sure you call the tool correctly. "
+                    "If you need human intervention, say \"TERMINATE\".",
                     image_path=None,
                     context=self.context,
                     return_outgoing_message=True
