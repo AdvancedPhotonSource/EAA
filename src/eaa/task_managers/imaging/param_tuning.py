@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 from textwrap import dedent
 import logging
 
@@ -6,7 +6,7 @@ from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.tools.base import ToolReturnType
-from eaa.agents.openai import print_message
+from eaa.agents.base import print_message
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +14,18 @@ logger = logging.getLogger(__name__)
 class ParameterTuningTaskManager(ImagingBaseTaskManager):
     
     def __init__(
-        self,
+        self, 
         model_name: str = "gpt-4o", 
-        model_base_url: str = None,
+        model_base_url: str = None, 
+        access_token: str = None,
+        other_llm_config: Optional[dict] = None,
+        api_type: Literal["openai", "asksage"] = "openai",
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
         message_db_path: Optional[str] = None,
+        build: bool = True,
         *args, **kwargs
     ) -> None:
         """An agent that searches for the best setup parameters
@@ -34,8 +38,25 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
         model_base_url : str, optional
             The base URL of the model. This is only needed for
             self-hosted models.
-        tools : list[BaseTool], optional
-            A list of tools given to the agent.
+        access_token : str
+            The access token or API key for the model.
+        other_llm_config : Optional[dict]
+            Other configuration for the model, not including the model name,
+            base URL, and access token. This information is only needed when
+            using an endpoint that requires them (such as AskSage). Keys in 
+            this dictionary can include:
+            - `cacert_path`: The path to the CA certificate file (*.pem).
+            - `email`: The email of the user.
+            - `user_base_url`: The user base URL of the endpoint (used by AskSage).
+            - `server_base_url`: The server base URL for the endpoint (used by AskSage).
+              When `api_type` is "asksage", this will be used as the model base URL and
+              `model_base_url` will be ignored.
+        api_type : Literal["openai", "asksage"]
+            The type of the API format. This is determined by the API used by
+            the inference endpoint. Use "openai" whenever the endpoint offers
+            OpenAI-compatible API. For AskSage endpoints, use "asksage".
+        param_setting_tool : SetParameters
+            The tool to use to set the parameters.
         acquisition_tool : SimulatedAcquireImage, optional
             The tool to use to acquire images. This tool will 
             not be called by AI; it is executed automatically 
@@ -69,8 +90,12 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
         super().__init__(
             model_name=model_name, 
             model_base_url=model_base_url,
+            access_token=access_token,
+            other_llm_config=other_llm_config,
+            api_type=api_type,
             tools=[param_setting_tool],
             message_db_path=message_db_path,
+            build=build,
             *args, **kwargs
         )
         

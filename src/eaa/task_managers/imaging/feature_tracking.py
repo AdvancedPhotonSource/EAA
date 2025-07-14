@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 from textwrap import dedent
 
 from eaa.tools.base import BaseTool
@@ -8,35 +8,62 @@ from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 class FeatureTrackingTaskManager(ImagingBaseTaskManager):
     
     def __init__(
-        self,
+        self, 
         model_name: str = "gpt-4o", 
-        model_base_url: str = None,
-        tools: list[BaseTool] = [],
+        model_base_url: str = None, 
+        access_token: str = None,
+        other_llm_config: Optional[dict] = None,
+        api_type: Literal["openai", "asksage"] = "openai",
+        tools: list[BaseTool] = [], 
         message_db_path: Optional[str] = None,
+        build: bool = True,
         *args, **kwargs
     ) -> None:
-        """An agent that searches for the best setup parameters
-        for an imaging system.
+        """An agent that searches for a described feature in the sample,
+        or tracks the position of a feature when the FOV drifts.
 
         Parameters
         ----------
-        model_name : str, optional
+        model_name : str
             The name of the model to use.
-        model_base_url : str, optional
-            The base URL of the model. This is only needed for self-hosted models.
-        tools : list[BaseTool], optional
-            A list of tools given to the agent.
+        model_base_url : str
+            The base URL of the model.
+        access_token : str
+            The access token or API key for the model.
+        other_llm_config : Optional[dict]
+            Other configuration for the model, not including the model name,
+            base URL, and access token. This information is only needed when
+            using an endpoint that requires them (such as AskSage). Keys in 
+            this dictionary can include:
+            - `cacert_path`: The path to the CA certificate file (*.pem).
+            - `email`: The email of the user.
+            - `user_base_url`: The user base URL of the endpoint (used by AskSage).
+            - `server_base_url`: The server base URL for the endpoint (used by AskSage).
+              When `api_type` is "asksage", this will be used as the model base URL and
+              `model_base_url` will be ignored.
+        api_type : Literal["openai", "asksage"]
+            The type of the API format. This is determined by the API used by
+            the inference endpoint. Use "openai" whenever the endpoint offers
+            OpenAI-compatible API. For AskSage endpoints, use "asksage".
+        tools : list[BaseTool]
+            A list of tools provided to the agent.
         message_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
             for new messages.
+        build : bool
+            Whether to build the internal state of the task manager.
         """        
         super().__init__(
             model_name=model_name, 
             model_base_url=model_base_url,
+            access_token=access_token,
+            other_llm_config=other_llm_config,
+            api_type=api_type,
             tools=tools, 
             message_db_path=message_db_path,
+            build=build,
             *args, **kwargs
         )
         

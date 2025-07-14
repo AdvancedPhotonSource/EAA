@@ -1,17 +1,23 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
 import sqlite3
 import logging
 import time
 
+from eaa.agents.base import generate_openai_message, get_message_elements
 from eaa.tools.base import BaseTool
 from eaa.comms import get_api_key
-from eaa.agents.openai import (
-    OpenAIAgent, 
-    generate_openai_message, 
-    get_message_elements,
-)
+from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
+try:
+    from eaa.agents.asksage import AskSageAgent
+except ImportError:
+    logging.warning(
+        "AskSage endpoint is not supported because the `asksageclient` "
+        "package is not installed. To use AskSage endpoints, install it with "
+        "`pip install asksageclient`."
+    )
+    AskSageAgent = None
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +31,8 @@ class BaseTaskManager:
         model_name: str = "gpt-4o", 
         model_base_url: str = None, 
         access_token: str = None,
+        other_llm_config: Optional[dict] = None,
+        api_type: Literal["openai", "asksage"] = "openai",
         tools: list[BaseTool] = [], 
         message_db_path: Optional[str] = None,
         build: bool = True,
@@ -39,7 +47,22 @@ class BaseTaskManager:
         model_base_url : str
             The base URL of the model.
         access_token : str
-            The access token for the model.
+            The access token or API key for the model.
+        other_llm_config : Optional[dict]
+            Other configuration for the model, not including the model name,
+            base URL, and access token. This information is only needed when
+            using an endpoint that requires them (such as AskSage). Keys in 
+            this dictionary can include:
+            - `cacert_path`: The path to the CA certificate file (*.pem).
+            - `email`: The email of the user.
+            - `user_base_url`: The user base URL of the endpoint (used by AskSage).
+            - `server_base_url`: The server base URL for the endpoint (used by AskSage).
+              When `api_type` is "asksage", this will be used as the model base URL and
+              `model_base_url` will be ignored.
+        api_type : Literal["openai", "asksage"]
+            The type of the API format. This is determined by the API used by
+            the inference endpoint. Use "openai" whenever the endpoint offers
+            OpenAI-compatible API. For AskSage endpoints, use "asksage".
         tools : list[BaseTool]
             A list of tools provided to the agent.
         message_db_path : Optional[str]
@@ -55,6 +78,8 @@ class BaseTaskManager:
         self.model = model_name
         self.model_base_url = model_base_url
         self.access_token = access_token
+        self.other_llm_config = other_llm_config
+        self.api_type = api_type
         self.agent = None
         self.tools = tools
         
@@ -89,7 +114,13 @@ class BaseTaskManager:
     def build_agent(self, *args, **kwargs):
         """Build the assistant(s)."""
         llm_config = self.get_llm_config(*args, **kwargs)
-        self.agent = OpenAIAgent(
+        agent_class = {
+            "openai": OpenAIAgent,
+            "asksage": AskSageAgent,
+        }[self.api_type]
+        if agent_class is None:
+            raise RuntimeError(f"Dependencies required for {self.api_type} is unavailable.")
+        self.agent = agent_class(
             llm_config=llm_config,
             system_message=self.assistant_system_message,
         )
@@ -154,6 +185,9 @@ class BaseTaskManager:
         }
         if self.model_base_url:
             llm_config["base_url"] = self.model_base_url
+        
+        if self.other_llm_config:
+            llm_config.update(self.other_llm_config)
         return llm_config
 
     def prerun_check(self, *args, **kwargs) -> bool:
