@@ -241,7 +241,11 @@ class BaseTaskManager:
                 break
             
             # Send message and get response
-            response, outgoing_message = self.agent.receive(message, return_outgoing_message=True)
+            response, outgoing_message = self.agent.receive(
+                message, 
+                context=self.context, 
+                return_outgoing_message=True
+            )
             self.update_message_history(outgoing_message, update_context=True, update_full_history=True)
             self.update_message_history(response, update_context=True, update_full_history=True)
             
@@ -262,7 +266,12 @@ class BaseTaskManager:
                         self.update_message_history(
                             image_message, update_context=store_all_images_in_context, update_full_history=True
                         )
-                response = self.agent.receive(message=None, context=self.context, return_outgoing_message=False)
+                # Send tool responses stored in the context
+                response = self.agent.receive(
+                    message=None, 
+                    context=self.context, 
+                    return_outgoing_message=False
+                )
                 self.update_message_history(response, update_context=True, update_full_history=True)
 
     def purge_context_images(self, keep_fist_n: int = 0, keep_last_n: int = 0) -> None:
