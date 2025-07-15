@@ -7,8 +7,11 @@ import pytest
 import numpy as np
 
 from eaa.agents.base import print_message
-from eaa.agents.openai import OpenAIAgent
 from eaa.tools.base import ToolReturnType
+try:
+    from eaa.agents.asksage import AskSageAgent
+except ImportError:
+    print("AskSageAgent is not installed.")
 
 import test_utils as tutils
 
@@ -16,10 +19,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-class TestOpenAIAPI(tutils.BaseTester):
+class TestAskSageAPI(tutils.BaseTester):
     
     @pytest.mark.local
-    def test_openai_api(self):
+    def test_asksage_api(self):
         
         def list_sum(numbers: list[float]) -> float:
             """
@@ -40,11 +43,14 @@ class TestOpenAIAPI(tutils.BaseTester):
         
         context = []
         
-        agent = OpenAIAgent(
+        agent = AskSageAgent(
             llm_config={
-                "model": "gpt-4o-2024-11-20",
-                "api_key": os.getenv("OPENAI_API_KEY"),
-                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4o",
+                "api_key": os.getenv("ASKSAGE_API_KEY"),
+                "email": "mingdu@anl.gov",
+                "cacert_path": "/home/oxygen/MINGDU/.ssl/certchain_asksage_anl_gov.pem",
+                "user_base_url": "https://api.asksage.anl.gov/user",
+                "server_base_url": "https://api.asksage.anl.gov/server",
             },
             system_message="You are a helpful assistant."
         )
@@ -71,7 +77,7 @@ class TestOpenAIAPI(tutils.BaseTester):
             print(response)
             
     @pytest.mark.local
-    def test_openai_api_with_image(self):
+    def test_asksage_api_with_image(self):
         image_path = os.path.join(self.get_ci_input_data_dir(), "simulated_images", "cameraman.png")
         
         def get_image() -> str:
@@ -86,11 +92,14 @@ class TestOpenAIAPI(tutils.BaseTester):
         
         context = []
         
-        agent = OpenAIAgent(
+        agent = AskSageAgent(
             llm_config={
-                "model": "gpt-4o-2024-11-20",
-                "api_key": os.getenv("OPENAI_API_KEY"),
-                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4o",
+                "api_key": os.getenv("ASKSAGE_API_KEY"),
+                "email": "mingdu@anl.gov",
+                "cacert_path": "/home/oxygen/MINGDU/.ssl/certchain_asksage_anl_gov.pem",
+                "user_base_url": "https://api.asksage.anl.gov/user",
+                "server_base_url": "https://api.asksage.anl.gov/server",
             },
             system_message="You are a helpful assistant."
         )
@@ -135,7 +144,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     args = parser.parse_args()
 
-    tester = TestOpenAIAPI()
+    tester = TestAskSageAPI()
     tester.setup_method(name="", generate_data=False, generate_gold=False, debug=True)
-    tester.test_openai_api()
-    tester.test_openai_api_with_image()
+    tester.test_asksage_api()
+    tester.test_asksage_api_with_image()

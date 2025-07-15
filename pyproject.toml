@@ -26,6 +26,9 @@ aps_mic = [
     "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
     "h5py",
 ]
+asksage = [
+    "asksageclient==1.31"
+]
 docs = [
     "sphinx", 
     "sphinx-rtd-theme"
