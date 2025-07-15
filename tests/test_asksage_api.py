@@ -7,8 +7,12 @@ import pytest
 import numpy as np
 
 from eaa.agents.base import print_message
-from eaa.agents.asksage import AskSageAgent
 from eaa.tools.base import ToolReturnType
+try:
+    from eaa.agents.asksage import AskSageAgent
+except ImportError:
+    print("AskSageAgent is not installed. Skipping test.")
+    exit()
 
 import test_utils as tutils
 
