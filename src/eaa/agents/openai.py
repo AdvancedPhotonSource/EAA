@@ -30,6 +30,10 @@ class OpenAIAgent(BaseAgent):
             system_message=system_message
         )
         
+    @property
+    def base_url(self) -> str:
+        return self.llm_config.get("base_url", "https://api.openai.com/v1")
+        
     def create_client(self) -> OpenAI:
         return OpenAI(
             api_key=self.api_key,

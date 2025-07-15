@@ -87,12 +87,16 @@ from typing import (
 )
 import inspect
 import json
+import logging
 
 import numpy as np
 from openai.types.chat import ChatCompletionMessage
 
 from eaa.tools.base import ToolReturnType
+from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
+
+logger = logging.getLogger(__name__)
 
 
 class ToolManager:
@@ -187,9 +191,6 @@ class BaseAgent:
             The system message for the OpenAI-compatible API.
         """
         self.llm_config = llm_config
-        self.model = llm_config.get("model")
-        self.api_key = llm_config.get("api_key", "")
-        self.base_url = llm_config.get("base_url", "https://api.openai.com/v1")
         
         self.message_hooks = []
         
@@ -199,6 +200,37 @@ class BaseAgent:
         self.tool_manager = ToolManager()
         
         self.client = self.create_client()
+        
+    @property
+    def model(self) -> str:
+        return self.llm_config.get("model")
+    
+    @property
+    def base_url(self) -> str:
+        if "base_url" in self.llm_config.keys():
+            return self.llm_config["base_url"]
+        elif "server_base_url" in self.llm_config.keys():
+            return self.llm_config["server_base_url"]
+        else:
+            raise ValueError(
+                "Unable to infer the base URL of the LLM. "
+                "Please provide the base URL in the LLM configuration."
+            )
+    
+    @property
+    def api_key(self) -> str:
+        api_key = self.llm_config.get("api_key")
+        if api_key is None:
+            logger.warning(
+                "`api_key` is not set in the LLM configuration. "
+                "Attempting to infer it from environment variables..."
+            )
+            api_key = get_api_key(
+                model_name=self.model,
+                model_base_url=self.base_url
+            )
+        return api_key
+    
         
     def create_client(self) -> Any:
         raise NotImplementedError

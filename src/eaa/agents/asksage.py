@@ -36,6 +36,14 @@ class AskSageAgent(BaseAgent):
             llm_config=llm_config, 
             system_message=system_message
         )
+    
+    @property
+    def user_base_url(self) -> str:
+        return self.llm_config.get("user_base_url")
+    
+    @property
+    def server_base_url(self) -> str:
+        return self.llm_config.get("server_base_url")
         
     def create_client(self) -> AskSageClient:
         if "cacert_path" in self.llm_config.keys():
@@ -44,8 +52,8 @@ class AskSageAgent(BaseAgent):
         return AskSageClient(
             email=self.llm_config["email"],
             api_key=self.api_key,
-            user_base_url=self.llm_config["user_base_url"],
-            server_base_url=self.llm_config["server_base_url"],
+            user_base_url=self.user_base_url,
+            server_base_url=self.server_base_url,
         )
         
     def send_message_and_get_response(

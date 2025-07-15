@@ -1,14 +1,14 @@
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional
 import sqlite3
 import logging
 import time
 
 from eaa.agents.base import generate_openai_message, get_message_elements
 from eaa.tools.base import BaseTool
-from eaa.comms import get_api_key
 from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
+from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -28,11 +28,7 @@ class BaseTaskManager:
             
     def __init__(
         self, 
-        model_name: str = "gpt-4o", 
-        model_base_url: str = None, 
-        access_token: str = None,
-        other_llm_config: Optional[dict] = None,
-        api_type: Literal["openai", "asksage"] = "openai",
+        llm_config: LLMConfig = None,
         tools: list[BaseTool] = [], 
         message_db_path: Optional[str] = None,
         build: bool = True,
@@ -42,27 +38,8 @@ class BaseTaskManager:
         
         Parameters
         ----------
-        model_name : str
-            The name of the model to use.
-        model_base_url : str
-            The base URL of the model.
-        access_token : str
-            The access token or API key for the model.
-        other_llm_config : Optional[dict]
-            Other configuration for the model, not including the model name,
-            base URL, and access token. This information is only needed when
-            using an endpoint that requires them (such as AskSage). Keys in 
-            this dictionary can include:
-            - `cacert_path`: The path to the CA certificate file (*.pem).
-            - `email`: The email of the user.
-            - `user_base_url`: The user base URL of the endpoint (used by AskSage).
-            - `server_base_url`: The server base URL for the endpoint (used by AskSage).
-              When `api_type` is "asksage", this will be used as the model base URL and
-              `model_base_url` will be ignored.
-        api_type : Literal["openai", "asksage"]
-            The type of the API format. This is determined by the API used by
-            the inference endpoint. Use "openai" whenever the endpoint offers
-            OpenAI-compatible API. For AskSage endpoints, use "asksage".
+        llm_config : LLMConfig
+            The configuration for the LLM.
         tools : list[BaseTool]
             A list of tools provided to the agent.
         message_db_path : Optional[str]
@@ -75,11 +52,7 @@ class BaseTaskManager:
         """
         self.context = []
         self.full_history = []
-        self.model = model_name
-        self.model_base_url = model_base_url
-        self.access_token = access_token
-        self.other_llm_config = other_llm_config
-        self.api_type = api_type
+        self.llm_config = llm_config
         self.agent = None
         self.tools = tools
         
@@ -113,15 +86,23 @@ class BaseTaskManager:
     
     def build_agent(self, *args, **kwargs):
         """Build the assistant(s)."""
-        llm_config = self.get_llm_config(*args, **kwargs)
+        if not isinstance(self.llm_config, LLMConfig):
+            raise ValueError(
+                "`llm_config` must be an instance of `LLMConfig`. The type of this "
+                "config object will be used to determine the API type of the LLM."
+            )
+        
         agent_class = {
-            "openai": OpenAIAgent,
-            "asksage": AskSageAgent,
-        }[self.api_type]
+            OpenAIConfig: OpenAIAgent,
+            AskSageConfig: AskSageAgent,
+        }[type(self.llm_config)]
+        
         if agent_class is None:
-            raise RuntimeError(f"Dependencies required for {self.api_type} is unavailable.")
+            raise RuntimeError(
+                f"Dependencies required for {agent_class.__name__} is unavailable."
+            )
         self.agent = agent_class(
-            llm_config=llm_config,
+            llm_config=self.llm_config.to_dict(),
             system_message=self.assistant_system_message,
         )
     
@@ -173,22 +154,6 @@ class BaseTaskManager:
                 tool_list.append(tool_dict)
                 registered_tool_names.append(tool_dict["name"])
         return tool_list
-
-    def get_llm_config(self, *args, **kwargs):
-        llm_config = {
-            "model": self.model,
-            "api_key": (
-                get_api_key(self.model, self.model_base_url) 
-                if self.access_token is None 
-                else self.access_token
-            ),
-        }
-        if self.model_base_url:
-            llm_config["base_url"] = self.model_base_url
-        
-        if self.other_llm_config:
-            llm_config.update(self.other_llm_config)
-        return llm_config
 
     def prerun_check(self, *args, **kwargs) -> bool:
         return True
