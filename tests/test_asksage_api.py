@@ -11,8 +11,7 @@ from eaa.tools.base import ToolReturnType
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
-    print("AskSageAgent is not installed. Skipping test.")
-    exit()
+    print("AskSageAgent is not installed.")
 
 import test_utils as tutils
 
