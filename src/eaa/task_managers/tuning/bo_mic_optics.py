@@ -9,6 +9,7 @@ from eaa.task_managers.tuning.bo import BayesianOptimizationTaskManager
 from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa.tools.base import BaseTool
 from eaa.tools.bo import BayesianOptimizationTool
+from eaa.api.llm_config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +18,16 @@ class MicroscopyOpticsTuningBOTaskManager(
     BayesianOptimizationTaskManager, 
     FeatureTrackingTaskManager
 ):
-
     def __init__(
         self,
-        model_name: str = "gpt-4o",
-        model_base_url: str = None,
+        llm_config: LLMConfig = None,
         image_acquisition_tool: BaseTool = None,
         parameter_setting_tool: BaseTool = None,
         bayesian_optimization_tool: BayesianOptimizationTool = None,
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
         image_acquisition_kwargs: dict = {},
+        feature_tracking_kwargs: dict = {},
         message_db_path: Optional[str] = None,
         *args, **kwargs
     ):
@@ -35,13 +35,8 @@ class MicroscopyOpticsTuningBOTaskManager(
 
         Parameters
         ----------
-        model_name : str, optional
-            The model name of the agent.
-        model_base_url : str, optional
-            The LLM inference endpoint's base URL.
-        tools : list[BaseTool], optional
-            A list of tools for the agent. This should NOT include the
-            `BayesianOptimizationTool`.
+        llm_config : LLMConfig, optional
+            The configuration for the LLM.
         bayesian_optimization_tool : BayesianOptimizationTool
             The Bayesian optimization tool to use.
         initial_points : torch.Tensor, optional
@@ -54,40 +49,52 @@ class MicroscopyOpticsTuningBOTaskManager(
         image_acquisition_kwargs : dict, optional
             The arguments of the image acquisition tool that should be used
             when acquiring images for evaluating the objective function.
+        feature_tracking_kwargs : dict, optional
+            The arguments of the feature tracking task manager's `run` method.
         message_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
             for new messages.
+        build : bool, optional
+            Whether to build the internal state of the task manager.
         """
         if bayesian_optimization_tool is None:
-            raise ValueError("`bayesian_optimization_tool` is required.")
+            raise ValueError(
+                "Bayesian optimization tool should be explicitly passed to "
+                "`bayesian_optimization_tool`."
+            )
         if image_acquisition_tool is None:
-            raise ValueError("`image_acquisition_tool` is required.")
+            raise ValueError(
+                "Image acquisition tool should be explicitly passed to "
+                "`image_acquisition_tool`."
+            )
         if parameter_setting_tool is None:
-            raise ValueError("`parameter_setting_tool` is required.")
+            raise ValueError(
+                "Parameter setting tool should be explicitly passed to "
+                "`parameter_setting_tool`."
+            )
         
         self.image_acquisition_tool = image_acquisition_tool
         self.parameter_setting_tool = parameter_setting_tool
         self.image_acquisition_kwargs = image_acquisition_kwargs
+        self.feature_tracking_kwargs = feature_tracking_kwargs
         
         BayesianOptimizationTaskManager.__init__(
             self,
-            model_name=model_name,
-            model_base_url=model_base_url,
+            llm_config=llm_config,
             tools=[],
             bayesian_optimization_tool=bayesian_optimization_tool,
             initial_points=initial_points,
             n_initial_points=n_initial_points,
             objective_function=self.objective_function,
-            build=False,
             message_db_path=message_db_path,
+            build=False,
             *args, **kwargs
         )
         FeatureTrackingTaskManager.__init__(
             self, 
-            model_name=model_name,
-            model_base_url=model_base_url,
+            llm_config=llm_config,
             tools=[image_acquisition_tool],
             build=True,
             *args, **kwargs
@@ -126,10 +133,9 @@ class MicroscopyOpticsTuningBOTaskManager(
             
             # Now the original feature will have drifted. Run feature tracking
             # to bring it back.
-            if False:
-                self.run_feature_tracking(
-                    reference_image_path=acquired_image_path
-                )
+            self.run_feature_tracking(
+                **self.feature_tracking_kwargs
+            )
             
             # Get a new image after feature tracking.
             acquired_image_path = self.image_acquisition_tool.acquire_image(
