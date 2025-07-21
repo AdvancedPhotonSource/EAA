@@ -51,12 +51,37 @@ class SimulatedAcquireImage(AcquireImage):
     
     name: str = "simulated_acquire_image"
     
-    def __init__(self, whole_image: np.ndarray, return_message: bool = True, *args, **kwargs):
+    def __init__(
+        self, 
+        whole_image: np.ndarray, 
+        return_message: bool = True,
+        add_axis_ticks: bool = False,
+        *args, **kwargs
+    ):
+        """The simulated acquisition tool.
+
+        Parameters
+        ----------
+        whole_image : np.ndarray
+            A (h, w) numpy array giving the whole image. Images captured
+            with specific locations and sizes will be interpolated from this
+            whole image.
+        return_message : bool, optional
+            If True, the tool returns a string giving the path of the acquired
+            image saved on the local hard drive. If False, the tool returns a
+            numpy array of the acquired image.
+        add_axis_ticks : bool, optional
+            If True, the tool adds axis ticks to the acquired image that indicate
+            the positions.
+        """
         self.whole_image = whole_image
         self.interpolator = None
-        self.return_message = return_message
         self.blur = None
         self.offset = np.array([0, 0])
+        
+        self.return_message = return_message
+        self.add_axis_ticks = add_axis_ticks
+
         super().__init__(*args, **kwargs)
                 
     def build(self):
@@ -70,9 +95,25 @@ class SimulatedAcquireImage(AcquireImage):
         )
         
     def set_blur(self, blur: float):
+        """Set the amount of blurring added to the acquired image
+        to simulate out of focus effect.
+
+        Parameters
+        ----------
+        blur : float
+            The standard deviation of the Gaussian blur.
+        """
         self.blur = blur
         
     def set_offset(self, offset: np.ndarray):
+        """Set the offset of the acquired image to simulate drift.
+
+        Parameters
+        ----------
+        offset : np.ndarray
+            The offset of the acquired image. The offset is given as a tuple
+            of (y, x) coordinates.
+        """
         self.offset = offset
 
     def acquire_image(
@@ -113,7 +154,13 @@ class SimulatedAcquireImage(AcquireImage):
             self.update_real_time_view(arr)
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
-            self.save_image_to_temp_dir(arr, filename)
+            self.save_image_to_temp_dir(
+                arr, 
+                filename, 
+                add_axis_ticks=self.add_axis_ticks,
+                x_ticks=x,
+                y_ticks=y,
+            )
             return f".tmp/{filename}"
         else:
             return arr

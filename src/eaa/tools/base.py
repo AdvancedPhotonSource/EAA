@@ -53,8 +53,29 @@ class BaseTool:
         self, 
         image: np.ndarray, 
         filename: Optional[str] = None,
-        add_timestamp: bool = False
+        add_timestamp: bool = False,
+        add_axis_ticks: bool = False,
+        x_ticks: Optional[List[float]] = None,
+        y_ticks: Optional[List[float]] = None,
     ) -> str:
+        """Save an image to the temporary directory.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            The image to save.
+        filename : str, optional
+            The filename to save the image as. If not provided, the image is
+            saved as "image.png".
+        add_timestamp : bool, optional
+            If True, the timestamp is added to the filename.
+        add_axis_ticks : bool, optional
+            If True, axis ticks are added to the image to indicate positions.
+        x_ticks : List[float], optional
+            The x-axis ticks to add to the image. Required when `add_axis_ticks` is True.
+        y_ticks : List[float], optional
+            The y-axis ticks to add to the image. Required when `add_axis_ticks` is True.
+        """
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")
         if filename is None:
@@ -66,7 +87,21 @@ class BaseTool:
             parts = os.path.splitext(filename)
             filename = parts[0] + "_" + eaa.util.get_timestamp() + parts[1]
         path = os.path.join(".tmp", filename)
-        plt.imsave(path, image, cmap='gray')
+        if add_axis_ticks:
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(image, cmap='gray')
+            ax.set_xticks(np.linspace(0, len(x_ticks) - 1, 5, dtype=int))
+            ax.set_yticks(np.linspace(0, len(y_ticks) - 1, 5, dtype=int))
+            ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
+            ax.set_yticklabels([np.round(y_ticks[i], 2) for i in ax.get_yticks()])
+            ax.grid(True)
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            plt.tight_layout()
+            fig.savefig(path, bbox_inches="tight", pad_inches=0)
+            plt.close(fig)
+        else:   
+            plt.imsave(path, image, cmap='gray')
         return path
     
     def create_image_message(self, image: np.ndarray, text: str) -> str:
