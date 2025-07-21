@@ -34,12 +34,12 @@ class TestBayesianOptimization(tutils.BaseTester):
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(1, 2)
         ax[0].imshow(mu, extent=[x_ticks.min(), x_ticks.max(), y_ticks.min(), y_ticks.max()])
-        ax[0].scatter(bo_tool.xs_raw[:, 0], bo_tool.xs_raw[:, 1], color='gray')
-        ax[0].scatter(bo_tool.xs_raw[-1:, 0], bo_tool.xs_raw[-1:, 1], color='red', marker='x')
+        ax[0].scatter(bo_tool.xs_untransformed[:, 0], bo_tool.xs_untransformed[:, 1], color='gray')
+        ax[0].scatter(bo_tool.xs_untransformed[-1:, 0], bo_tool.xs_untransformed[-1:, 1], color='red', marker='x')
         ax[0].set_title('mean')
         ax[1].imshow(sigma, extent=[x_ticks.min(), x_ticks.max(), y_ticks.min(), y_ticks.max()])
-        ax[1].scatter(bo_tool.xs_raw[:, 0], bo_tool.xs_raw[:, 1], color='gray')
-        ax[1].scatter(bo_tool.xs_raw[-1:, 0], bo_tool.xs_raw[-1:, 1], color='red', marker='x')
+        ax[1].scatter(bo_tool.xs_untransformed[:, 0], bo_tool.xs_untransformed[:, 1], color='gray')
+        ax[1].scatter(bo_tool.xs_untransformed[-1:, 0], bo_tool.xs_untransformed[-1:, 1], color='red', marker='x')
         ax[1].set_title('std')
         plt.show()
     
@@ -76,8 +76,9 @@ class TestBayesianOptimization(tutils.BaseTester):
         
         for i in range(50):
             candidates = tool.suggest(n_suggestions=1)
-            logging.info(f"Candidate suggested: {candidates[0]}")
+            logger.info(f"Candidate suggested: {candidates[0]}")
             y = objective_function(candidates)
+            logger.info(f"Objective function value: {y.reshape(-1)}")
             tool.update(candidates, y)
             # if self.debug:
             #     self.visualize_gp(tool)
