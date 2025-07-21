@@ -86,6 +86,12 @@ class BaseTaskManager:
     
     def build_agent(self, *args, **kwargs):
         """Build the assistant(s)."""
+        if self.llm_config is None:
+            logger.info(
+                "Skipping agent build because `llm_config` is not provided."
+            )
+            return
+        
         if not isinstance(self.llm_config, LLMConfig):
             raise ValueError(
                 "`llm_config` must be an instance of `LLMConfig`. The type of this "
