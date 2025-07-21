@@ -1,5 +1,6 @@
 from typing import Annotated, Dict, List, Any
 import logging
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -241,7 +242,12 @@ class SimulatedAcquireImage(AcquireImage):
         ax.set_title("Line scan")
         ax.grid(True)
         
-        fname = f".tmp/line_scan_{start_y}_{end_y}_{start_x}_{end_x}_{scan_step}_{eaa.util.get_timestamp()}.png"
+        if not os.path.exists(".tmp"):
+            os.makedirs(".tmp")
+        fname = os.path.join(
+            ".tmp",
+            f"line_scan_{start_y}_{end_y}_{start_x}_{end_x}_{scan_step}_{eaa.util.get_timestamp()}.png"
+        )
         fig.savefig(fname)
         plt.close(fig)
         return fname
