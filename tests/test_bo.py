@@ -8,6 +8,7 @@ import gpytorch
 import torch
 
 from eaa.tools.bo import BayesianOptimizationTool
+from eaa.task_managers.tuning.bo import BayesianOptimizationTaskManager
 
 import test_utils as tutils
 
@@ -85,6 +86,41 @@ class TestBayesianOptimization(tutils.BaseTester):
         
         final_suggestion = candidates[0]
         assert torch.allclose(final_suggestion.float(), torch.tensor([1.0, 2.0]), rtol=0.1)
+        
+    def test_bo_task_manager(self):
+        def objective_function(x: torch.Tensor) -> torch.Tensor:
+            # Expected input shape: (n_samples, n_features)
+            # Maximum: x = [1, 2]
+            y = torch.exp(-((x[:, 0] - 1) ** 2 + (x[:, 1] - 2) ** 2) / (2 * 10 ** 2))
+            return y[:, None]
+        
+        tutils.set_seed(42)
+        
+        bo_tool = BayesianOptimizationTool(
+            bounds=([-10, -10], [10, 10]),
+            acquisition_function_class=botorch.acquisition.LogExpectedImprovement,
+            acquisition_function_kwargs={
+                "best_f": -100
+            },
+            model_class=botorch.models.SingleTaskGP,
+            model_kwargs={
+                "covar_module": gpytorch.kernels.MaternKernel(
+                    nu=2.5,
+                )
+            },
+            optimization_function=botorch.optim.optimize_acqf,
+        )
+        
+        task_manager = BayesianOptimizationTaskManager(
+            llm_config=None,
+            bayesian_optimization_tool=bo_tool,
+            n_initial_points=20,
+            objective_function=objective_function,
+        )
+        task_manager.run(n_iterations=20)
+        
+        final_suggestion = task_manager.bayesian_optimization_tool.xs_untransformed[-1]
+        assert torch.allclose(final_suggestion.float(), torch.tensor([1.0, 2.0]), rtol=0.1)
 
 
 if __name__ == '__main__':
@@ -94,3 +130,4 @@ if __name__ == '__main__':
     tester = TestBayesianOptimization()
     tester.setup_method(name="", generate_data=False, generate_gold=False, debug=True)
     tester.test_bayesian_optimization()
+    tester.test_bo_task_manager()
