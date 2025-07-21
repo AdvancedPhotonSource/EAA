@@ -9,6 +9,7 @@ import scipy.ndimage as ndi
 from eaa.tools.base import BaseTool, check, ToolReturnType
 import eaa.comms
 import eaa.util
+import eaa.maths
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,14 @@ class SimulatedAcquireImage(AcquireImage):
         self.add_axis_ticks = add_axis_ticks
 
         super().__init__(*args, **kwargs)
+        
+        self.exposed_tools.append(
+            {
+                "name": "scan_line",
+                "function": self.scan_line,
+                "return_type": ToolReturnType.IMAGE_PATH
+            }
+        )
                 
     def build(self):
         self.build_interpolator()
@@ -91,6 +100,13 @@ class SimulatedAcquireImage(AcquireImage):
         self.interpolator = scipy.interpolate.RectBivariateSpline(
             np.arange(self.whole_image.shape[0]),
             np.arange(self.whole_image.shape[1]),
+            self.whole_image,
+        )
+        self.line_interpolator = scipy.interpolate.RegularGridInterpolator(
+            (
+                np.arange(self.whole_image.shape[0]), 
+                np.arange(self.whole_image.shape[1])
+            ),
             self.whole_image,
         )
         
@@ -164,3 +180,68 @@ class SimulatedAcquireImage(AcquireImage):
             return f".tmp/{filename}"
         else:
             return arr
+
+
+    def scan_line(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        scan_step: float,
+    ) -> Annotated[str, "The path to the plot of the line scan."]:
+        """Scan along a line in the sample. This function
+        generates a plot of the line scan, and a Gaussian fit
+        of it. The FWHM of the Gaussian fit is annotated on the plot.
+
+        Parameters
+        ----------
+        start_x, start_y : float
+            The starting point of the line scan.
+        end_x, end_y : float
+            The ending point of the line scan.
+        scan_step : float
+            The step size of the line scan.
+
+        Returns
+        -------
+        str
+            The path of the plot of the line scan saved in hard drive.
+        """
+        pt_start = np.array([start_y, start_x])
+        pt_end = np.array([end_y, end_x])
+        d_tot = np.linalg.norm(pt_end - pt_start)
+        ds = np.arange(0, d_tot, scan_step)
+        pts = pt_start + ds[:, None] * (pt_end - pt_start) / d_tot
+        
+        arr = self.line_interpolator(pts).reshape(-1)
+        
+        if self.blur is not None and self.blur > 0:
+            arr = ndi.gaussian_filter(arr, self.blur)
+            
+        # Fit a Gaussian to the line scan
+        a, mu, sigma, c = eaa.maths.fit_gaussian_1d(ds, arr)
+        val_gauss = eaa.maths.gaussian_1d(ds, a, mu, sigma, c)
+        fwhm = 2.35 * sigma
+        
+        fig, ax = plt.subplots(1, 1, squeeze=True)
+        ax.plot(ds, arr, label="data")
+        ax.plot(ds, val_gauss, linestyle="--", label="Gaussian fit")
+        ax.text(
+            0.05, 
+            0.95, 
+            f"FWHM = {fwhm:.2f}", 
+            transform=ax.transAxes, 
+            verticalalignment="top", 
+            horizontalalignment="left"
+        )
+        ax.legend()
+        ax.set_xlabel("distance")
+        ax.set_ylabel("value")
+        ax.set_title("Line scan")
+        ax.grid(True)
+        
+        fname = f".tmp/line_scan_{start_y}_{end_y}_{start_x}_{end_x}_{scan_step}_{eaa.util.get_timestamp()}.png"
+        fig.savefig(fname)
+        plt.close(fig)
+        return fname
