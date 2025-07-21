@@ -86,9 +86,6 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             *args, **kwargs
         )
         
-    def objective_function(self, *args, **kwargs) -> None:
-        raise NotImplementedError
-        
     def run(
         self, 
         n_iterations: int = 50, 
@@ -102,7 +99,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         n_iterations : int, optional
             The number of iterations to run.
         """
-        if len(self.bayesian_optimization_tool.xs_raw) == 0:
+        if len(self.bayesian_optimization_tool.xs_untransformed) == 0:
             if self.initial_points is None:
                 xs_init = self.bayesian_optimization_tool.get_random_initial_points(n_points=self.n_initial_points)
             else:
