@@ -76,7 +76,7 @@ jobs:
         
       - name: Install dependencies
         run: |
-          source .venv_lint/bin/activate
+          source .venv_pytest/bin/activate
           uv pip install --upgrade pip
           uv pip install pytest
           uv pip install -r requirements.txt
@@ -84,12 +84,12 @@ jobs:
 
       - name: List build environment
         run: |
-          source .venv_lint/bin/activate
+          source .venv_pytest/bin/activate
           uv pip list
 
       - name: Test with pytest
         run: |
-          source .venv_lint/bin/activate
+          source .venv_pytest/bin/activate
           echo $(which python)
           cd tests
           pytest -s --high-tol
