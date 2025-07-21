@@ -6,6 +6,7 @@ import torch
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.tools.bo import BayesianOptimizationTool
+from eaa.api.llm_config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -14,24 +15,22 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
     
     def __init__(
         self,
-        model_name: str = "gpt-4o",
-        model_base_url: str = None,
+        llm_config: LLMConfig = None,
         tools: list[BaseTool] = [],
         bayesian_optimization_tool: BayesianOptimizationTool = None,
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
         objective_function: Callable = None,
         message_db_path: Optional[str] = None,
+        build: bool = True,
         *args, **kwargs
     ) -> None:
         """Bayesian optimization task manager.
 
         Parameters
         ----------
-        model_name : str, optional
-            The model name of the agent.
-        model_base_url : str, optional
-            The LLM inference endpoint's base URL.
+        llm_config : LLMConfig, optional
+            The configuration for the LLM.
         tools : list[BaseTool], optional
             A list of tools for the agent. This should NOT include the
             `BayesianOptimizationTool`.
@@ -54,9 +53,14 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
             for new messages.
+        build : bool, optional
+            Whether to build the internal state of the task manager.
         """
         if bayesian_optimization_tool is None:
-            raise ValueError("`bayesian_optimization_tool` is required.")
+            raise ValueError(
+                "Bayesian optimization tool should be explicitly passed to "
+                "`bayesian_optimization_tool`."
+            )
         if objective_function is None:
             raise ValueError("`objective_function` is required.")
         
@@ -64,7 +68,10 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         
         for tool in tools:
             if isinstance(tool, BayesianOptimizationTool):
-                raise ValueError("`BayesianOptimizationTool` should not be included in `tools`.")
+                raise ValueError(
+                    "`BayesianOptimizationTool` should not be included in `tools`. "
+                    "Instead, pass it to `bayesian_optimization_tool`."
+                )
             
         self.objective_function = objective_function
         
@@ -72,10 +79,10 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         self.n_initial_points = n_initial_points
         
         super().__init__(
-            model_name=model_name,
-            model_base_url=model_base_url,
+            llm_config=llm_config,
             tools=tools,
             message_db_path=message_db_path,
+            build=build,
             *args, **kwargs
         )
         
@@ -114,4 +121,3 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             y = self.objective_function(candidates)
             logger.info(f"Objective function value: {y.item()}")
             self.bayesian_optimization_tool.update(candidates, y)
-        
