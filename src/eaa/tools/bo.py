@@ -102,12 +102,12 @@ class BayesianOptimizationTool(BaseTool):
         )
 
         # Untransformed data
-        self.xs_raw = torch.tensor([])
-        self.ys_raw = torch.tensor([])
+        self.xs_untransformed = torch.tensor([])
+        self.ys_untransformed = torch.tensor([])
 
         # Transformed data
-        self.xs = torch.tensor([])
-        self.ys = torch.tensor([])
+        self.xs_transformed = torch.tensor([])
+        self.ys_transformed = torch.tensor([])
 
         self.input_transform = None
         self.outcome_transform = None
@@ -170,7 +170,7 @@ class BayesianOptimizationTool(BaseTool):
         """
         self.initialize_transforms()
         self.train_transforms_and_transform_data()
-        self.initialize_model(self.xs, self.ys)
+        self.initialize_model(self.xs_transformed, self.ys_transformed)
         self.fit_kernel_hyperparameters()
         self.build_acquisition_function()
 
@@ -232,8 +232,8 @@ class BayesianOptimizationTool(BaseTool):
         The bounds of the input transformed are set when the transform is instantiated
         and are not trained here.
         """
-        self.xs, self.ys = self.transform_data(
-            self.xs_raw, self.ys_raw, train_x=False, train_y=True
+        self.xs_transformed, self.ys_transformed = self.transform_data(
+            self.xs_untransformed, self.ys_untransformed, train_x=False, train_y=True
         )
 
     def transform_data(self, x=None, y=None, train_x=False, train_y=False):
@@ -421,26 +421,49 @@ class BayesianOptimizationTool(BaseTool):
         ----------
         x : torch.Tensor | np.ndarray
             A tensor or numpy array of shape (n_samples, n_features) giving
-            the *un-transformed* input parameters.
+            the *un-transformed* input parameters (raw values before normalization).
         y : torch.Tensor | np.ndarray
             A tensor or numpy array of shape (n_samples, n_observations) giving the
-            *un-transformed* observations of the objective function. For multi-task
-            optimization problems, `n_observations` should be equal to the number of
-            tasks.
+            *un-transformed* observations (raw values before standardization) 
+            of the objective function. For multi-task optimization problems, 
+            `n_observations` should be equal to the number of tasks.
         """
         x = to_tensor(x)
         y = to_tensor(y)
 
-        x, y = self.transform_data(x, y)
-
         self.check_x_data(x)
         self.check_y_data(y)
 
-        self.xs_raw = torch.cat([self.xs_raw, x])
-        self.ys_raw = torch.cat([self.ys_raw, y])
+        self.xs_untransformed = torch.cat([self.xs_untransformed, x])
+        self.ys_untransformed = torch.cat([self.ys_untransformed, y])
 
         if self.input_transform is not None and self.outcome_transform is not None:
-            self.xs, self.ys = self.transform_data(x, y)
+            x, y = self.transform_data(x, y)
+            self.xs_transformed = torch.cat([self.xs_transformed, x])
+            self.ys_transformed = torch.cat([self.ys_transformed, y])
+            if self.model is not None:
+                self.model.condition_on_observations(x, y)
+            else:
+                logger.info(
+                    "GP model is not updated because it is not built yet by calling "
+                    "`build`."
+                )
+        else:
+            logger.info(
+                "GP model and variable buffers are not updated because normalization "
+                "and standardization transforms are not built yet by calling `build`."
+            )
+            
+        if (
+            len(self.xs_untransformed) != len(self.xs_transformed) 
+            or len(self.ys_untransformed) != len(self.ys_transformed)
+        ):
+            logger.debug(
+                "The number of untransformed and transformed data are not equal. "
+                "This is expected if normalization and standardization transforms "
+                "are not built yet by calling `build`. However, if you have "
+                "already done so, this is unexpected."
+            )
 
     def suggest(
         self, n_suggestions: int = 1
@@ -456,6 +479,8 @@ class BayesianOptimizationTool(BaseTool):
         -------
         torch.Tensor
             A (n_samples, n_features) tensor giving the suggested points to observe.
+            The values are in the untransformed space (raw observation before
+            normalization and standardization).
         """
         if isinstance(
             self.acquisition_function, botorch.acquisition.AnalyticAcquisitionFunction
@@ -469,8 +494,8 @@ class BayesianOptimizationTool(BaseTool):
             acq_function=self.acquisition_function,
             bounds=torch.stack(
                 [
-                    torch.zeros(self.n_dims_in, dtype=self.xs.dtype),
-                    torch.ones(self.n_dims_in, dtype=self.xs.dtype),
+                    torch.zeros(self.n_dims_in, dtype=self.xs_transformed.dtype),
+                    torch.ones(self.n_dims_in, dtype=self.xs_transformed.dtype),
                 ]
             ),
             q=n_suggestions,
