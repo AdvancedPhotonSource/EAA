@@ -144,8 +144,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
             if len(tool_responses) == 1:
                 tool_response = tool_responses[0]
                 tool_response_type = tool_response_types[0]
-                # Just save the tool response, but don't send yet. We will send it
-                # together with the image later.
+                # Just save the tool response to context, but don't send yet. We will send it later;
+                # that will be together with the image if the tool returns an image path.
                 print_message(tool_response)
                 self.update_message_history(tool_response, update_context=True, update_full_history=True)
                 
@@ -169,6 +169,14 @@ class ImagingBaseTaskManager(BaseTaskManager):
                         response, outgoing = self.agent.receive(
                             f"The tool should return an image path, but got {str(tool_response_type)}. "
                             "Make sure you call the right tool correctly.",
+                            image_path=None,
+                            context=self.context,
+                            return_outgoing_message=True
+                        )
+                    else:
+                        # Tool response is already added to the context so just send it.
+                        response, outgoing = self.agent.receive(
+                            message=None,
                             image_path=None,
                             context=self.context,
                             return_outgoing_message=True
