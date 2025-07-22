@@ -4,15 +4,217 @@ import logging
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
+from eaa.task_managers.base import BaseTaskManager
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
-from eaa.tools.base import ToolReturnType
+from eaa.task_managers.tuning.base import BaseParameterTuningTaskManager
+from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
 
-class ParameterTuningTaskManager(ImagingBaseTaskManager):
+class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
+    
+    def __init__(
+        self,
+        llm_config: LLMConfig = None,
+        param_setting_tool: SetParameters = None,
+        acquisition_tool: AcquireImage = None,
+        tools: list[BaseTool] = (),
+        initial_parameters: dict[str, float] = None,
+        parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
+        message_db_path: Optional[str] = None,
+        build: bool = True,
+        *args, **kwargs
+    ):
+        """A task manager for focusing a scanning microscope.
+        
+        The task manager assumes that the user has a test pattern that has
+        thin lines that can be used to evaluate the focus. It expects a
+        2D image acquisition tool, a line scan tool, and a parameter setting 
+        tool. The workflow is as follows:
+        
+        1. The user provides a reference image that highlights the thin
+           feature that should be used to evaluate the focus through line
+           scan, or describe it verbally.
+        2. The agent runs a line scan across the feature and obtain its
+           line profile and the FWHM of its Gaussian fit.
+        3. The agent uses the parameter setting tool to adjust the parameters
+           controlling the focus.
+        4. The agent runs a 2D image scan around the area to acquire a new image,
+           which may have drifted due to the focus adjustment.
+        5. The agent runs a new line scan across the same feature used previously
+           and compare the FWHM of the Gaussian fit.
+        6. The agent repeats the process until the FWHM of the Gaussian fit is
+           minimized.
+
+        Parameters
+        ----------
+        llm_config : LLMConfig, optional
+            The LLM configuration to use.
+        param_setting_tool : SetParameters
+            The tool to use to set the parameters.
+        acquisition_tool : AcquireImage
+            The BaseTool object used to acquire data. It should contain a 2D
+            image acquisition tool and a line scan tool.
+        tools : list[BaseTool], optional
+            Other tools provided to the agent.
+        initial_parameters : dict[str, float], optional
+            The initial parameters given as a dictionary of 
+            parameter names and values.
+        parameter_ranges : list[tuple[float, ...], tuple[float, ...]]
+            The ranges of the parameters. It should be given as a list of
+            2 tuples, where the first tuple gives the lower bounds and the
+            second tuple gives the upper bounds. The order of the parameters
+            should match the order of the initial parameters.
+        message_db_path : Optional[str], optional
+            If provided, the entire chat history will be stored in 
+            a SQLite database at the given path. This is essential
+            if you want to use the WebUI, which polls the database
+            for new messages.
+        build : bool, optional
+            Whether to build the internal state of the task manager.
+        """
+        self.acquisition_tool = acquisition_tool
+        
+        super().__init__(
+            llm_config=llm_config,
+            param_setting_tool=param_setting_tool,
+            tools=[acquisition_tool, *tools],
+            initial_parameters=initial_parameters,
+            parameter_ranges=parameter_ranges,
+            message_db_path=message_db_path,
+            build=build,
+            *args, **kwargs
+        )
+        
+    def run(
+        self,
+        reference_image_path: Optional[str] = None,
+        reference_feature_description: Optional[str] = None,
+        suggested_2d_scan_kwargs: dict = None,
+        line_scan_step_size: float = None,
+        initial_prompt: Optional[str] = None,
+        max_iters: int = 20,
+        additional_prompt: Optional[str] = None,
+        *args, **kwargs
+    ):
+        """Run the focusing task.
+        
+        Parameters
+        ----------
+        reference_image_path : Optional[str]
+            The path to the reference image, which should show a 2D scan
+            of the ROI with the desired line scan path indicated by a
+            marker. `reference_feature_description` will be ignored if
+            this argument is provided.
+        reference_feature_description : Optional[str]
+            The description of the feature across which line scans should
+            be done. Ignored if `reference_image_path` is provided.
+        suggested_2d_scan_kwargs : dict
+            The suggested kwargs for the 2D scan. The argument should match
+            the arguments of the 2D image acquisition tool.
+        line_scan_step_size : float
+            The step size for the line scan.
+        initial_prompt : Optional[str]
+            If provided, this prompt will override the default initial prompt.
+        max_iters : int, optional
+            The maximum number of iterations to run.
+        """
+        if reference_image_path is None and reference_feature_description is None:
+            raise ValueError(
+                "Either `reference_image_path` or `reference_feature_description` must be provided."
+            )
+        
+        if initial_prompt is None:
+            if reference_image_path is not None:
+                step_1_prompt = dedent(
+                    f"""\
+                    You are given an image of a 2D scan in the region of interest that
+                    contains the thin feature to be line-scanned. The line scan path
+                    across that feature is indicated by a marker. Perform a line scan
+                    according to the marker. You can read the start and end points'
+                    coordinates from the axis ticks. Use a scan step size of {line_scan_step_size}.
+                    <img {reference_image_path}>
+                    """
+                )
+            else:
+                step_1_prompt = dedent(
+                    f"""\
+                    Perform a 2D scan of the region of interest using the following
+                    arguments of the 2D image acquisition tool: {suggested_2d_scan_kwargs}.
+                    Locate the feature that meets the following description:
+                    {reference_feature_description}.
+                    Then perform a line scan across that feature. Use a scan step 
+                    size of {line_scan_step_size}.
+                    """
+                )
+            
+            initial_prompt = dedent(
+                f"""\
+                You will adjust the focus of a scanning microscope by adjusting
+                the parameters of its optics. The focusing quality can be evalutated
+                by performing a line scan across a thin feature and observe the FWHM
+                of its Gaussian fit. The smaller the FWHM, the sharper the image.
+                But each time you adjust the focus, the image may drift due to
+                the change of the optics. You will need to perform a 2D scan
+                prior to the line scan to locate the feature that is line-scanned.
+                
+                Follow the procedure below to focus the microscope:
+                
+                1. {step_1_prompt}
+                2. The line scan tool will return a plot along the scan line. You should
+                   see a peak in the plot. A Gaussian fit will be included in the plot
+                   and the FWHM of the Gaussian fit will be shown.
+                3. Adjust the optics parameters using the parameter setting tool.
+                   The initial parameter values are {self.initial_parameters}.
+                4. Acquire an image of the region using the image acquisition tool.
+                   Here are the suggested arguments: {suggested_2d_scan_kwargs}. The 
+                   image acquired may have drifted compared to the last one you saw,
+                   but you should still see the line-scanned feature there. If not,
+                   try adjusting the image acquisition tool's parameters to locate that
+                   feature.
+                5. Once you find the line-scanned feature, perform a new line scan across
+                   it again. Due to the drift, the start/end points' coordinates may need to
+                   be changed. Read the coordinates from the axis ticks.
+                6. You will be presented with the new line scan plot and the FWHM of the
+                   Gaussian fit.
+                7. Compare the new FWHM with the last one. If it is smaller, you are on the
+                   right track. Keep adjusting the parameters to the same direction. Otherwise,
+                   adjust the parameters in the opposite direction.
+                8. Repeat the process from step 4.
+                9. When you find the FWHM is minimized, you are done. Add "TERMINATE" to 
+                   your response to hand over control back to the user.
+                   
+                Other notes:
+                
+                - You should see a peak in the line scan plot. If there isn't one, or if
+                  the Gaussian fit looks bad, check your arguments to the line scan tool
+                  and run it again.
+                - The minimal point of the FWHM is indicated by an inflection of the trend
+                  of the FWHM with regards to the optics parameters. For example, if the FWHM
+                  is 3 with a parameter value of 10, then 1 with a parameter value of 11, then
+                  3 with a parameter value of 12, this means the optimal parameter value is around
+                  11.
+                
+                When you finish or when you need human input, add "TERMINATE" to your response.\
+                """
+            )
+        if additional_prompt is not None:
+            initial_prompt += "\nAdditional instructions:\n" + additional_prompt
+        
+        self.run_feedback_loop(
+            initial_prompt=initial_prompt,
+            initial_image_path=reference_image_path,
+            store_all_images_in_context=True,
+            allow_non_image_tool_responses=True,
+            max_rounds=max_iters,
+            *args, **kwargs
+        )
+
+
+class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
     
     def __init__(
         self, 
@@ -58,22 +260,18 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
                 "provide the `param_setting_tool` and `acquisition_tool`."
             )
             
-        self.param_setting_tool = param_setting_tool
         self.acquisition_tool = acquisition_tool
-        self.initial_parameters = initial_parameters
-        self.parameter_names = list(initial_parameters.keys())
-        self.parameter_ranges = parameter_ranges
         
         super().__init__(
             llm_config=llm_config,
+            param_setting_tool=param_setting_tool,
             tools=[param_setting_tool],
+            initial_parameters=initial_parameters,
+            parameter_ranges=parameter_ranges,
             message_db_path=message_db_path,
             build=build,
             *args, **kwargs
         )
-        
-    def set_initial_parameters(self, initial_params: dict[str, float]):
-        self.initial_parameters = initial_params
         
     def prerun_check(self, *args, **kwargs) -> bool:
         if self.initial_parameters is None:
