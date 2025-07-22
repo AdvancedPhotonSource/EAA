@@ -212,7 +212,7 @@ class ParameterTuningTaskManager(ImagingBaseTaskManager):
                         context=self.context,
                         return_outgoing_message=True
                     )
-                self.purge_context_images(keep_fist_n=1, keep_last_n=n_past_images_to_keep - 1)
+                self.purge_context_images(keep_first_n=1, keep_last_n=n_past_images_to_keep - 1)
                 self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:

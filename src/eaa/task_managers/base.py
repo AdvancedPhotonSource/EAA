@@ -279,7 +279,7 @@ class BaseTaskManager:
                 )
                 self.update_message_history(response, update_context=True, update_full_history=True)
 
-    def purge_context_images(self, keep_fist_n: int = 0, keep_last_n: int = 0) -> None:
+    def purge_context_images(self, keep_first_n: int = 0, keep_last_n: int = 0) -> None:
         """Remove image-containing messages from the context, only keeping
         the ones in the first `keep_fist_n` and last `keep_last_n`.
 
@@ -290,7 +290,7 @@ class BaseTaskManager:
         keep_last_n : int, optional
             The last n image-containing messages to keep.
         """
-        if keep_fist_n < 0 or keep_last_n < 0:
+        if keep_first_n < 0 or keep_last_n < 0:
             raise ValueError("`keep_fist_n` and `keep_last_n` must be non-negative.")
         n_image_messages = 0
         image_message_indices = []
@@ -299,7 +299,7 @@ class BaseTaskManager:
             if elements["image"] is not None:
                 n_image_messages += 1
                 image_message_indices.append(i)
-        ind_range_to_remove = [keep_fist_n, n_image_messages - keep_last_n - 1]
+        ind_range_to_remove = [keep_first_n, n_image_messages - keep_last_n - 1]
         new_context = []
         i_img_msg = 0
         for i, message in enumerate(self.context):
