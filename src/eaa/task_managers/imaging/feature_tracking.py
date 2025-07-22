@@ -121,7 +121,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         if additional_prompt is not None:
             initial_prompt = initial_prompt + "\nAdditional instructions:\n" + additional_prompt
 
-        self.run_imaging_feedback_loop(
+        self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=None,
             message_with_acquired_image=dedent("""\
@@ -209,7 +209,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         if additional_prompt is not None:
             initial_prompt = initial_prompt + "\nAdditional instructions:\n" + additional_prompt
 
-        self.run_imaging_feedback_loop(
+        self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,
             store_all_images_in_context=False,
