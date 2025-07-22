@@ -422,7 +422,8 @@ class BaseTaskManager:
                             context=self.context,
                             return_outgoing_message=True
                         )
-                self.update_message_history(outgoing, update_context=store_all_images_in_context, update_full_history=True)
+                if outgoing is not None:
+                    self.update_message_history(outgoing, update_context=store_all_images_in_context, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:
                 response, outgoing = self.agent.receive(
