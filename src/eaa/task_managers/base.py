@@ -29,7 +29,7 @@ class BaseTaskManager:
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        tools: list[BaseTool] = [], 
+        tools: list[BaseTool] = (), 
         message_db_path: Optional[str] = None,
         build: bool = True,
         *args, **kwargs
