@@ -54,9 +54,6 @@ class ImagingBaseTaskManager(BaseTaskManager):
             build=build,
             *args, **kwargs
         )
-    
-    def build_tools(self, *args, **kwargs):
-        self.register_tools(self.tools)
             
     def prerun_check(self, *args, **kwargs) -> bool:
         if len(self.agent.tool_manager.tools) == 0:

@@ -113,7 +113,7 @@ class BaseTaskManager:
         )
     
     def build_tools(self, *args, **kwargs):
-        pass
+        self.register_tools(self.tools)
 
     def register_tools(
         self, 
