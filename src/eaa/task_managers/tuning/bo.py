@@ -16,7 +16,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
     def __init__(
         self,
         llm_config: LLMConfig = None,
-        tools: list[BaseTool] = [],
+        tools: list[BaseTool] = (),
         bayesian_optimization_tool: BayesianOptimizationTool = None,
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
