@@ -185,19 +185,18 @@ class SimulatedAcquireImage(AcquireImage):
             self.update_real_time_view(arr)
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
-            self.save_image_to_temp_dir(
+            fig = self.plot_2d_image(
                 arr, 
-                filename, 
                 add_axis_ticks=self.add_axis_ticks,
                 x_ticks=x,
                 y_ticks=y,
                 add_grid_lines=self.add_grid_lines,
                 invert_yaxis=self.invert_yaxis
             )
+            self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
             return f".tmp/{filename}"
         else:
             return arr
-
 
     def scan_line(
         self,
