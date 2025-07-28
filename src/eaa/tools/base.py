@@ -49,28 +49,21 @@ class BaseTool:
         img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
         return img_base64
     
-    def save_image_to_temp_dir(
+    def plot_2d_image(
         self, 
         image: np.ndarray, 
-        filename: Optional[str] = None,
-        add_timestamp: bool = False,
         add_axis_ticks: bool = False,
         x_ticks: Optional[List[float]] = None,
         y_ticks: Optional[List[float]] = None,
         add_grid_lines: bool = False,
         invert_yaxis: bool = False,
-    ) -> str:
+    ) -> plt.Figure:
         """Save an image to the temporary directory.
 
         Parameters
         ----------
         image : np.ndarray
             The image to save.
-        filename : str, optional
-            The filename to save the image as. If not provided, the image is
-            saved as "image.png".
-        add_timestamp : bool, optional
-            If True, the timestamp is added to the filename.
         add_axis_ticks : bool, optional
             If True, axis ticks are added to the image to indicate positions.
         x_ticks : List[float], optional
@@ -81,6 +74,39 @@ class BaseTool:
             If True, grid lines are added to the image.
         invert_yaxis : bool, optional
             If True, the y-axis is inverted.
+        """
+        fig, ax = plt.subplots(1, 1)
+        if add_axis_ticks:
+            ax.imshow(image, cmap='gray')
+            ax.set_xticks(np.linspace(0, len(x_ticks) - 1, 5, dtype=int))
+            ax.set_yticks(np.linspace(0, len(y_ticks) - 1, 5, dtype=int))
+            ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
+            ax.set_yticklabels([np.round(y_ticks[i], 2) for i in ax.get_yticks()])
+        ax.grid(add_grid_lines)
+        if invert_yaxis:
+            ax.invert_yaxis()
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        plt.tight_layout()
+        return fig
+    
+    def save_image_to_temp_dir(
+        self, 
+        fig: plt.Figure, 
+        filename: Optional[str] = None, 
+        add_timestamp: bool = False
+    ) -> str:
+        """Save a figure to the temporary directory.
+
+        Parameters
+        ----------
+        fig : plt.Figure
+            The figure to save.
+        filename : str, optional
+            The filename to save the image as. If not provided, the image is
+            saved as "image.png".
+        add_timestamp : bool, optional
+            If True, the timestamp is added to the filename.
         """
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")
@@ -93,23 +119,8 @@ class BaseTool:
             parts = os.path.splitext(filename)
             filename = parts[0] + "_" + eaa.util.get_timestamp() + parts[1]
         path = os.path.join(".tmp", filename)
-        if add_axis_ticks:
-            fig, ax = plt.subplots(1, 1)
-            ax.imshow(image, cmap='gray')
-            ax.set_xticks(np.linspace(0, len(x_ticks) - 1, 5, dtype=int))
-            ax.set_yticks(np.linspace(0, len(y_ticks) - 1, 5, dtype=int))
-            ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
-            ax.set_yticklabels([np.round(y_ticks[i], 2) for i in ax.get_yticks()])
-            ax.grid(add_grid_lines)
-            if invert_yaxis:
-                ax.invert_yaxis()
-            ax.set_xlabel("x")
-            ax.set_ylabel("y")
-            plt.tight_layout()
-            fig.savefig(path, bbox_inches="tight", pad_inches=0)
-            plt.close(fig)
-        else:   
-            plt.imsave(path, image, cmap='gray')
+        fig.savefig(path, bbox_inches="tight", pad_inches=0)
+        plt.close(fig)
         return path
     
     def create_image_message(self, image: np.ndarray, text: str) -> str:
