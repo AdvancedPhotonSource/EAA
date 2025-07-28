@@ -189,9 +189,11 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                    
                 Other notes:
                 
-                - You should see a peak in the line scan plot. If there isn't one, or if
-                  the Gaussian fit looks bad, check your arguments to the line scan tool
-                  and run it again.
+                - Your line scan should cross only one line feature, and you should see
+                  exactly one peak in the line scan plot. If there isn't one, or if there
+                  are multiple peaks, or if the Gaussian fit looks bad, check your arguments
+                  to the line scan tool and run it again. Make sure your line scan strictly
+                  follow the marker in the reference image.
                 - The minimal point of the FWHM is indicated by an inflection of the trend
                   of the FWHM with regards to the optics parameters. For example, if the FWHM
                   is 3 with a parameter value of 10, then 1 with a parameter value of 11, then
