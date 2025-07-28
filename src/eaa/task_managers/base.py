@@ -279,17 +279,22 @@ class BaseTaskManager:
                 )
                 self.update_message_history(response, update_context=True, update_full_history=True)
 
-    def purge_context_images(self, keep_first_n: int = 0, keep_last_n: int = 0) -> None:
+    def purge_context_images(self, keep_first_n: Optional[int] = 0, keep_last_n: Optional[int] = 0) -> None:
         """Remove image-containing messages from the context, only keeping
         the ones in the first `keep_fist_n` and last `keep_last_n`.
 
         Parameters
         ----------
-        keep_fist_n : int, optional
-            The first n image-containing messages to keep.
-        keep_last_n : int, optional
-            The last n image-containing messages to keep.
+        keep_first_n, keep_last_n : int, optional
+            The first and last n image-containing messages to keep. If any of them
+            is None, no images will be removed. If there is an overlap between the
+            ranges given by `keep_first_n` and `keep_last_n`, the overlap will be
+            kept. For example, if `keep_first_n` is 3 and `keep_last_n` is 3 and there
+            are 5 image-containing messages in the context, all the 5 images will be
+            kept.
         """
+        if keep_first_n is None or keep_last_n is None:
+            return
         if keep_first_n < 0 or keep_last_n < 0:
             raise ValueError("`keep_fist_n` and `keep_last_n` must be non-negative.")
         n_image_messages = 0
@@ -318,7 +323,9 @@ class BaseTaskManager:
         message_with_acquired_image: str = "Here is the image the tool returned.",
         max_rounds: int = 99,
         store_all_images_in_context: bool = False,
-        allow_non_image_tool_responses: bool = True
+        n_first_images_to_keep: Optional[int] = None,
+        n_past_images_to_keep: Optional[int] = None,
+        allow_non_image_tool_responses: bool = True,
     ) -> None:
         """Run an agent-involving feedback loop.
         
@@ -349,6 +356,10 @@ class BaseTaskManager:
             Whether to store all images in the context. If False, only the image
             in the initial prompt, if any, is stored in the context. Keep this
             False to reduce the context size and save costs.
+        n_first_images_to_keep, n_past_images_to_keep : int, optional
+            The number of first and last images to keep in the context. If any of
+            them is None, all images will be kept. To use this feature, it is
+            recommended to set `store_all_images_in_context` to True.
         allow_non_image_tool_responses : bool, optional
             If False, the agent will be asked to redo the tool call if it returns
             anything that is not an image path.
@@ -447,4 +458,11 @@ class BaseTaskManager:
                 self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             
+            if n_past_images_to_keep is not None or n_first_images_to_keep is not None:
+                n_past_images_to_keep = n_past_images_to_keep if n_past_images_to_keep is not None else 0
+                n_first_images_to_keep = n_first_images_to_keep if n_first_images_to_keep is not None else 0
+                self.purge_context_images(
+                    keep_first_n=n_first_images_to_keep, 
+                    keep_last_n=n_past_images_to_keep - 1
+                )
             round += 1
