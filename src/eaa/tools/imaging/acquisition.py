@@ -61,6 +61,7 @@ class SimulatedAcquireImage(AcquireImage):
         add_grid_lines: bool = False,
         invert_yaxis: bool = False,
         line_scan_gaussian_fit_y_threshold: float = 0,
+        add_line_scan_candidates_to_image: bool = False,
         plot_image_in_log_scale: bool = False,
         *args, **kwargs
     ):
@@ -87,6 +88,8 @@ class SimulatedAcquireImage(AcquireImage):
             The threshold for the Gaussian fit of the line scan. Only points whose
             y values are above y_min + y_threshold * (y_max - y_min) are considered
             for fitting. To disable point selection, set y_threshold to 0.
+        add_line_scan_candidates_to_image : bool, optional
+            If True, the tool adds line scan candidates to the image.
         plot_image_in_log_scale : bool, optional
             If True, 2D images are plotted in log scale.
         """
@@ -100,8 +103,10 @@ class SimulatedAcquireImage(AcquireImage):
         self.add_axis_ticks = add_axis_ticks
         self.add_grid_lines = add_grid_lines
         self.invert_yaxis = invert_yaxis
+        self.add_line_scan_candidates_to_image = add_line_scan_candidates_to_image
         self.plot_image_in_log_scale = plot_image_in_log_scale
         
+        self.line_scan_candidates: Dict[int, list[int]] = {}
 
         super().__init__(*args, **kwargs)
         
@@ -151,6 +156,70 @@ class SimulatedAcquireImage(AcquireImage):
             of (y, x) coordinates.
         """
         self.offset = offset
+        
+    def add_line_scan_candidates(
+        self, 
+        fig: plt.Figure, 
+        length: float = 30,
+        gap: float = 5,
+        spacing: float = 30,
+        horizontal: bool = True,
+    ):
+        """Add markers indicating line scan paths that can be chosen from
+        to a figure.
+        
+        Parameters
+        ----------
+        fig : plt.Figure
+            The figure to add the markers to.
+        ny, nx : int
+            The number of markers to add in the y and x directions.
+        length : float
+            The length of the markers.
+        gap : float
+            The gap between the ends of the markers.
+        spacing : float
+            The parallel spacing between the markers.
+        horizontal : bool, optional
+            If True, the markers are added horizontally. If False, the markers
+            are added vertically.
+        """
+        self.line_scan_candidates = {}
+        
+        ax = fig.get_axes()[0]
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        ylim_sorted = sorted(ylim)
+        if horizontal:
+            start_xs = np.arange(xlim[0], xlim[1], length + gap)
+            end_xs = start_xs + length
+            start_ys = np.arange(ylim_sorted[0], ylim_sorted[1], spacing)
+            end_ys = start_ys
+        else:
+            start_ys = np.arange(ylim_sorted[0], ylim_sorted[1], length + gap)
+            end_ys = start_ys + length
+            start_xs = np.arange(xlim[0], xlim[1], spacing)
+            end_xs = start_xs
+        start_xs_all, start_ys_all = np.meshgrid(start_xs, start_ys, indexing="ij")
+        end_xs_all, end_ys_all = np.meshgrid(end_xs, end_ys, indexing="ij")
+        start_xs_all = start_xs_all.flatten()
+        start_ys_all = start_ys_all.flatten()
+        end_xs_all = end_xs_all.flatten()
+        end_ys_all = end_ys_all.flatten()
+        for i in range(len(start_xs_all)):
+            ax.plot([start_xs_all[i], end_xs_all[i]], [start_ys_all[i], end_ys_all[i]], color="red")
+            ax.text(
+                (start_xs_all[i] + end_xs_all[i]) / 2,
+                (start_ys_all[i] + end_ys_all[i]) / 2,
+                f"{i}",
+                color="red",
+                horizontalalignment="center",
+                verticalalignment="bottom"
+            )
+            self.line_scan_candidates[i] = [start_xs_all[i], start_ys_all[i], end_xs_all[i], end_ys_all[i]]
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        return fig
 
     def acquire_image(
         self, 
@@ -198,6 +267,8 @@ class SimulatedAcquireImage(AcquireImage):
                 add_grid_lines=self.add_grid_lines,
                 invert_yaxis=self.invert_yaxis
             )
+            if self.add_line_scan_candidates_to_image:
+                fig = self.add_line_scan_candidates(fig)
             self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
             return f".tmp/{filename}"
         else:
@@ -273,3 +344,29 @@ class SimulatedAcquireImage(AcquireImage):
         fig.savefig(fname)
         plt.close(fig)
         return fname
+
+    def scan_line_by_choice(
+        self, 
+        choice: int,
+        scan_step: float = 1.0,
+    ) -> Annotated[str, "The path to the plot of the line scan."]:
+        """Conduct a line scan along a chosen path. To use this tool,
+        you must call the tool "acquire_image" first, examine the image
+        with the candidates, and then call this tool with the index of the
+        candidate you want to use.
+        
+        Parameters
+        ----------
+        choice : int
+            The index of the line scan candidate to use. You should have
+            seen an image with the line scan candidates.
+        scan_step : float
+            The step size of the line scan.
+
+        Returns
+        -------
+        str
+            The path of the plot of the line scan saved in hard drive.
+        """
+        start_x, start_y, end_x, end_y = self.line_scan_candidates[choice]
+        return self.scan_line(start_x, start_y, end_x, end_y, scan_step=scan_step)
