@@ -57,6 +57,8 @@ class BaseTool:
         add_axis_ticks: bool = False,
         x_ticks: Optional[List[float]] = None,
         y_ticks: Optional[List[float]] = None,
+        add_grid_lines: bool = False,
+        invert_yaxis: bool = False,
     ) -> str:
         """Save an image to the temporary directory.
 
@@ -75,6 +77,10 @@ class BaseTool:
             The x-axis ticks to add to the image. Required when `add_axis_ticks` is True.
         y_ticks : List[float], optional
             The y-axis ticks to add to the image. Required when `add_axis_ticks` is True.
+        add_grid_lines : bool, optional
+            If True, grid lines are added to the image.
+        invert_yaxis : bool, optional
+            If True, the y-axis is inverted.
         """
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")
@@ -94,7 +100,9 @@ class BaseTool:
             ax.set_yticks(np.linspace(0, len(y_ticks) - 1, 5, dtype=int))
             ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
             ax.set_yticklabels([np.round(y_ticks[i], 2) for i in ax.get_yticks()])
-            ax.grid(True)
+            ax.grid(add_grid_lines)
+            if invert_yaxis:
+                ax.invert_yaxis()
             ax.set_xlabel("x")
             ax.set_ylabel("y")
             plt.tight_layout()
