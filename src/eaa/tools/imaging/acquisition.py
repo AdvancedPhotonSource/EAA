@@ -61,6 +61,7 @@ class SimulatedAcquireImage(AcquireImage):
         add_grid_lines: bool = False,
         invert_yaxis: bool = False,
         line_scan_gaussian_fit_y_threshold: float = 0,
+        plot_image_in_log_scale: bool = False,
         *args, **kwargs
     ):
         """The simulated acquisition tool.
@@ -86,6 +87,8 @@ class SimulatedAcquireImage(AcquireImage):
             The threshold for the Gaussian fit of the line scan. Only points whose
             y values are above y_min + y_threshold * (y_max - y_min) are considered
             for fitting. To disable point selection, set y_threshold to 0.
+        plot_image_in_log_scale : bool, optional
+            If True, 2D images are plotted in log scale.
         """
         self.whole_image = whole_image
         self.interpolator = None
@@ -97,6 +100,8 @@ class SimulatedAcquireImage(AcquireImage):
         self.add_axis_ticks = add_axis_ticks
         self.add_grid_lines = add_grid_lines
         self.invert_yaxis = invert_yaxis
+        self.plot_image_in_log_scale = plot_image_in_log_scale
+        
 
         super().__init__(*args, **kwargs)
         
@@ -186,7 +191,7 @@ class SimulatedAcquireImage(AcquireImage):
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
             fig = self.plot_2d_image(
-                arr, 
+                arr if not self.plot_image_in_log_scale else np.log10(arr + 1),
                 add_axis_ticks=self.add_axis_ticks,
                 x_ticks=x,
                 y_ticks=y,
