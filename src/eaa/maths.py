@@ -29,7 +29,7 @@ def gaussian_1d(x: np.ndarray, a: float, mu: float, sigma: float, c: float = 0) 
 def fit_gaussian_1d(
     x: np.ndarray,
     y: np.ndarray,
-    y_threshold: float = 0.3,
+    y_threshold: float = 0,
 ) -> tuple[float, float, float]:
     """Fit a 1D Gaussian to the data after subtracting a linear background.
 
