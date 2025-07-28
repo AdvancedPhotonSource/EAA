@@ -150,9 +150,16 @@ class SimulatedSetParameters(SetParameters):
         blur_factor : float
             The factor determining the amount of blurring of the acquisition tool
             due to deviation from the true parameters.
+            The amount of blurring is determined as
+            ``sum(abs(delta_params / range)) * blur_factor``, where ``delta_params``
+            is the difference between the true parameters and the parameters to set.
         drift_factor : float
             The factor determining the amount of drift of the acquisition tool
-            due to deviation from the true parameters.
+            due to deviation from the true parameters. The amount of drift is
+            determined as
+            ``mean(delta_params / range) * drift_factor * z``, 
+            where ``z`` is a random variable from a uniform distribution between 
+            0 and 1.
         """
         super().__init__(
             parameter_names=parameter_names,
@@ -193,7 +200,7 @@ class SimulatedSetParameters(SetParameters):
         # Set drift.
         if self.len_parameter_history > 0 and self.drift_factor > 0:
             mean_delta = ((self.get_parameter_at_iteration(-1) - parameters) / scalers).mean()
-            drift = np.random.rand(2) * mean_delta * self.drift_factor
+            drift = np.ones(2) * mean_delta * self.drift_factor
             self.acquisition_tool.set_offset(drift)
         
         # Update parameter history.
