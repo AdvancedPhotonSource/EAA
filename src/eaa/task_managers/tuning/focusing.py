@@ -224,6 +224,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                   11.
                 {param_step_size_prompt}
                 - When calling a tool, explain what you are doing.
+                - When making a tool call, only call one tool at a time. Do not call multiple
+                  tools in one response.
                 
                 When you finish or when you need human input, add "TERMINATE" to your response.\
                 """
