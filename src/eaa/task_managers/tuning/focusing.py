@@ -94,9 +94,11 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         reference_image_path: Optional[str] = None,
         reference_feature_description: Optional[str] = None,
         suggested_2d_scan_kwargs: dict = None,
+        suggested_parameter_step_size: Optional[float] = None,
         line_scan_step_size: float = None,
         initial_prompt: Optional[str] = None,
         max_iters: int = 20,
+        n_past_images_to_keep: Optional[int] = None,
         additional_prompt: Optional[str] = None,
         *args, **kwargs
     ):
@@ -115,12 +117,19 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         suggested_2d_scan_kwargs : dict
             The suggested kwargs for the 2D scan. The argument should match
             the arguments of the 2D image acquisition tool.
+        suggested_parameter_step_size : float
+            The suggested step size for the parameter adjustment.
         line_scan_step_size : float
             The step size for the line scan.
         initial_prompt : Optional[str]
             If provided, this prompt will override the default initial prompt.
         max_iters : int, optional
             The maximum number of iterations to run.
+        n_past_images_to_keep : int, optional
+            The number of past images to keep in the context. If None, all images
+            will be kept.
+        additional_prompt : Optional[str]
+            If provided, this prompt will be added to the initial prompt.
         """
         if reference_image_path is None and reference_feature_description is None:
             raise ValueError(
@@ -129,11 +138,14 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         
         if initial_prompt is None:
             if reference_image_path is not None:
+                feat_text_description = ""
+                if reference_feature_description is not None:
+                    feat_text_description = f"Also, here is the description of the feature: {reference_feature_description}. "
                 step_1_prompt = dedent(
                     f"""\
                     You are given an image of a 2D scan in the region of interest that
                     contains the thin feature to be line-scanned. The line scan path
-                    across that feature is indicated by a marker. Perform a line scan
+                    across that feature is indicated by a marker. {feat_text_description}Perform a line scan
                     according to the marker. You can read the start and end points'
                     coordinates from the axis ticks. Use a scan step size of {line_scan_step_size}.
                     <img {reference_image_path}>
@@ -148,6 +160,15 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     {reference_feature_description}.
                     Then perform a line scan across that feature. Use a scan step 
                     size of {line_scan_step_size}.
+                    """
+                )
+            param_step_size_prompt = ""
+            if suggested_parameter_step_size is not None:
+                param_step_size_prompt = dedent(
+                    f"""\
+                    - The suggested step size for adjusting the parameter is 
+                      {suggested_parameter_step_size}. You can adjust the step size
+                      to a smaller value if you want to fine-tune the parameter.
                     """
                 )
             
@@ -190,15 +211,19 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 Other notes:
                 
                 - Your line scan should cross only one line feature, and you should see
-                  exactly one peak in the line scan plot. If there isn't one, or if there
+                  **exactly one peak** in the line scan plot. If there isn't one, or if there
                   are multiple peaks, or if the Gaussian fit looks bad, check your arguments
                   to the line scan tool and run it again. Make sure your line scan strictly
                   follow the marker in the reference image.
+                - The line scan plot should show a complete peak. If the peak is incomplete,
+                  adjust the line scan tool's arguments to make it complete.
                 - The minimal point of the FWHM is indicated by an inflection of the trend
                   of the FWHM with regards to the optics parameters. For example, if the FWHM
                   is 3 with a parameter value of 10, then 1 with a parameter value of 11, then
                   3 with a parameter value of 12, this means the optimal parameter value is around
                   11.
+                {param_step_size_prompt}
+                - When calling a tool, explain what you are doing.
                 
                 When you finish or when you need human input, add "TERMINATE" to your response.\
                 """
@@ -206,11 +231,14 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         if additional_prompt is not None:
             initial_prompt += "\nAdditional instructions:\n" + additional_prompt
         
+        # Always keep the first (reference) image.
         self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,
             store_all_images_in_context=True,
             allow_non_image_tool_responses=True,
+            n_first_images_to_keep=1,
+            n_past_images_to_keep=n_past_images_to_keep,
             max_rounds=max_iters,
             *args, **kwargs
         )
