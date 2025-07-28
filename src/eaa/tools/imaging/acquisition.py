@@ -58,6 +58,8 @@ class SimulatedAcquireImage(AcquireImage):
         whole_image: np.ndarray, 
         return_message: bool = True,
         add_axis_ticks: bool = False,
+        add_grid_lines: bool = False,
+        invert_yaxis: bool = False,
         line_scan_gaussian_fit_y_threshold: float = 0,
         *args, **kwargs
     ):
@@ -76,6 +78,10 @@ class SimulatedAcquireImage(AcquireImage):
         add_axis_ticks : bool, optional
             If True, the tool adds axis ticks to the acquired image that indicate
             the positions.
+        add_grid_lines : bool, optional
+            If True, the tool adds grid lines to the image.
+        invert_yaxis : bool, optional
+            If True, the tool inverts the y-axis of the acquired image.
         line_scan_gaussian_fit_y_threshold : float, optional
             The threshold for the Gaussian fit of the line scan. Only points whose
             y values are above y_min + y_threshold * (y_max - y_min) are considered
@@ -89,6 +95,8 @@ class SimulatedAcquireImage(AcquireImage):
         
         self.return_message = return_message
         self.add_axis_ticks = add_axis_ticks
+        self.add_grid_lines = add_grid_lines
+        self.invert_yaxis = invert_yaxis
 
         super().__init__(*args, **kwargs)
         
@@ -183,6 +191,8 @@ class SimulatedAcquireImage(AcquireImage):
                 add_axis_ticks=self.add_axis_ticks,
                 x_ticks=x,
                 y_ticks=y,
+                add_grid_lines=self.add_grid_lines,
+                invert_yaxis=self.invert_yaxis
             )
             return f".tmp/{filename}"
         else:
