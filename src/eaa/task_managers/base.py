@@ -113,7 +113,8 @@ class BaseTaskManager:
         )
     
     def build_tools(self, *args, **kwargs):
-        self.register_tools(self.tools)
+        if self.agent is not None:
+            self.register_tools(self.tools)
 
     def register_tools(
         self, 
