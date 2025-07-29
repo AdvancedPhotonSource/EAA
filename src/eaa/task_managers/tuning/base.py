@@ -1,12 +1,9 @@
 from typing import Optional
-from textwrap import dedent
 import logging
 
-from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.base import BaseTaskManager
-from eaa.tools.base import ToolReturnType, BaseTool
-from eaa.agents.base import print_message
+from eaa.tools.base import BaseTool
 from eaa.api.llm_config import LLMConfig
 
 logger = logging.getLogger(__name__)
