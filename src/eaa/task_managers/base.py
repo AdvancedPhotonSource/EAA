@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable
 import sqlite3
 import logging
 import time
@@ -327,6 +327,8 @@ class BaseTaskManager:
         n_first_images_to_keep: Optional[int] = None,
         n_past_images_to_keep: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
+        hook_functions: Optional[dict[str, Callable]] = None,
+        *args, **kwargs
     ) -> None:
         """Run an agent-involving feedback loop.
         
@@ -364,7 +366,20 @@ class BaseTaskManager:
         allow_non_image_tool_responses : bool, optional
             If False, the agent will be asked to redo the tool call if it returns
             anything that is not an image path.
+        hook_functions : dict[str, Callable], optional
+            A dictionary of hook functions to call at certain points in the loop.
+            The keys specify the points where the hook functions are called, and
+            the values are the callables. Allowed keys are:
+            - `image_path_tool_response`: 
+              args: {"img_path": str}
+              return: {"response": Dict[str, Any], "outgoing": Dict[str, Any]}
+              Executed when the tool response is an image path, after the tool
+              response is added to the context but before the image is loaded and
+              sent to the agent. When this function is given, it **replaces** the
+              `agent.receive` call so be sure to send the image to the agent in
+              the hook if this is intended.
         """
+        hook_functions = hook_functions or {}
         round = 0
         image_path = None
         response, outgoing = self.agent.receive(
@@ -404,12 +419,15 @@ class BaseTaskManager:
                 
                 if tool_response_type == ToolReturnType.IMAGE_PATH:
                     image_path = tool_response["content"]
-                    response, outgoing = self.agent.receive(
-                        message_with_acquired_image,
-                        image_path=image_path,
-                        context=self.context,
-                        return_outgoing_message=True
-                    )
+                    if "image_path_tool_response" in hook_functions:
+                        response, outgoing = hook_functions["image_path_tool_response"](image_path)
+                    else:
+                        response, outgoing = self.agent.receive(
+                            message_with_acquired_image,
+                            image_path=image_path,
+                            context=self.context,
+                            return_outgoing_message=True
+                        )
                 elif tool_response_type == ToolReturnType.EXCEPTION:
                     response, outgoing = self.agent.receive(
                         "The tool returned an exception. Please fix the exception and try again.",
