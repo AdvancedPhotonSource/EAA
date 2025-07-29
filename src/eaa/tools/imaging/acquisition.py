@@ -248,9 +248,9 @@ class SimulatedAcquireImage(AcquireImage):
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
-        y = np.arange(loc[0] + self.offset[0], loc[0] + size[0] + self.offset[0])
-        x = np.arange(loc[1] + self.offset[1], loc[1] + size[1] + self.offset[1])
-        arr = self.interpolator(y, x).reshape(size)
+        y = np.arange(loc[0], loc[0] + size[0])
+        x = np.arange(loc[1], loc[1] + size[1])
+        arr = self.interpolator(y + self.offset[0], x + self.offset[1]).reshape(size)
         
         if self.blur is not None and self.blur > 0:
             arr = ndi.gaussian_filter(arr, self.blur)
@@ -305,6 +305,7 @@ class SimulatedAcquireImage(AcquireImage):
         d_tot = np.linalg.norm(pt_end - pt_start)
         ds = np.arange(0, d_tot, scan_step)
         pts = pt_start + ds[:, None] * (pt_end - pt_start) / d_tot
+        pts = pts + self.offset
         
         arr = self.line_interpolator(pts).reshape(-1)
         
