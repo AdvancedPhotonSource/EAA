@@ -16,6 +16,17 @@ import eaa.maths
 logger = logging.getLogger(__name__)
 
 
+def post_image_acquisition(func):
+    """A decorator to be used to decorate the `acquire_image` method.
+    The decorated function will be called after the image is acquired.
+    """
+    def wrapper(self, *args, **kwargs):
+        ret = func(self, *args, **kwargs)
+        self.counter += 1
+        return ret
+    return wrapper
+
+
 class AcquireImage(BaseTool):
     
     name: str = "acquire_image"
@@ -35,6 +46,19 @@ class AcquireImage(BaseTool):
             }
         ]
         
+        # Buffered images:
+        # image_0 - the first image
+        # image_km1 - the previous image
+        # image_k - the current image
+        self.image_0: np.ndarray = None
+        self.image_km1: np.ndarray = None
+        self.image_k: np.ndarray = None
+        self.psize_0 = None
+        self.psize_km1 = None
+        self.psize_k = None
+        
+        self.counter = 0
+        
     def update_real_time_view(self, image: np.ndarray):
         if self.rt_fig is None:
             self.rt_fig, ax = plt.subplots(1, 1, squeeze=True)
@@ -44,7 +68,26 @@ class AcquireImage(BaseTool):
         ax.imshow(image)
         plt.draw()
         plt.pause(0.001)  # Small pause to allow GUI to update
+        
+    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1):
+        """Update the image buffers.
+        
+        Parameters
+        ----------
+        new_image : np.ndarray
+            The new image.
+        psize : float, optional
+            The pixel size (or scan step) of the new image.
+        """
+        if self.counter == 0:
+            self.image_0 = new_image
+            self.psize_0 = psize
+        self.image_km1 = self.image_k
+        self.psize_km1 = self.psize_k
+        self.image_k = new_image
+        self.psize_k = psize
 
+    @post_image_acquisition
     def acquire_image(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -221,6 +264,7 @@ class SimulatedAcquireImage(AcquireImage):
         ax.set_ylim(ylim)
         return fig
 
+    @post_image_acquisition
     def acquire_image(
         self, 
         loc_y: float, 
@@ -257,6 +301,9 @@ class SimulatedAcquireImage(AcquireImage):
         
         if self.show_image_in_real_time:
             self.update_real_time_view(arr)
+            
+        self.update_image_buffers(arr, psize=1)
+            
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
             fig = self.plot_2d_image(
