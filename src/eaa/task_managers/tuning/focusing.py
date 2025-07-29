@@ -4,12 +4,11 @@ import logging
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
-from eaa.task_managers.base import BaseTaskManager
-from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.task_managers.tuning.base import BaseParameterTuningTaskManager
 from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
+from eaa.image_proc import windowed_phase_cross_correlation
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +77,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         """
         self.acquisition_tool = acquisition_tool
         
+        self.last_acquisition_count_registered = -1
+        
         super().__init__(
             llm_config=llm_config,
             param_setting_tool=param_setting_tool,
@@ -89,9 +90,48 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             *args, **kwargs
         )
         
+    def run_registration_and_send_image(self, image_path: str) -> None:
+        """Register the new image with the previous one and
+        send the offset and the new image to the agent.
+        
+        This routine assumes `self.image_km1` and `self.image_k` of
+        `self.acquisition_tool` are already set.
+        """
+        image_k = self.acquisition_tool.image_k
+        image_km1 = self.acquisition_tool.image_km1
+        
+        if (
+            image_km1 is None 
+            or self.acquisition_tool.counter == self.last_acquisition_count_registered
+        ):
+            response, outgoing = self.agent.receive(
+                "Here is the new image.",
+                image_path=image_path,
+                context=self.context,
+                return_outgoing_message=True
+            )
+        else:
+            # Run registration.
+            image_k = image_k if image_k.ndim == 2 else image_k.mean(-1)
+            image_km1 = image_km1 if image_km1.ndim == 2 else image_km1.mean(-1)
+            shift = windowed_phase_cross_correlation(image_k, image_km1)
+            shift = shift * self.acquisition_tool.psize_k
+            
+            response, outgoing = self.agent.receive(
+                f"Here is the new image. Phase correlation has found the offset between "
+                f"the new image and the previous one to be {shift.tolist()} (y, x). Use "
+                f"this offset to adjust the line scan positions by **adding** it to both "
+                f"the x and y coordinates of the start and end points of the previous line scan.",
+                image_path=image_path,
+                context=self.context,
+                return_outgoing_message=True
+            )
+            self.last_acquisition_count_registered = self.acquisition_tool.counter
+        return response, outgoing
+        
     def run(
         self,
-        reference_image_path: Optional[str] = None,
+        reference_image_path: str,
         reference_feature_description: Optional[str] = None,
         suggested_2d_scan_kwargs: dict = None,
         suggested_parameter_step_size: Optional[float] = None,
@@ -135,33 +175,11 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             raise ValueError(
                 "Either `reference_image_path` or `reference_feature_description` must be provided."
             )
-        
+
         if initial_prompt is None:
-            if reference_image_path is not None:
-                feat_text_description = ""
-                if reference_feature_description is not None:
-                    feat_text_description = f"Also, here is the description of the feature: {reference_feature_description}. "
-                step_1_prompt = dedent(
-                    f"""\
-                    You are given an image of a 2D scan in the region of interest that
-                    contains the thin feature to be line-scanned. The line scan path
-                    across that feature is indicated by a marker. {feat_text_description}Perform a line scan
-                    according to the marker. You can read the start and end points'
-                    coordinates from the axis ticks. Use a scan step size of {line_scan_step_size}.
-                    <img {reference_image_path}>
-                    """
-                )
-            else:
-                step_1_prompt = dedent(
-                    f"""\
-                    Perform a 2D scan of the region of interest using the following
-                    arguments of the 2D image acquisition tool: {suggested_2d_scan_kwargs}.
-                    Locate the feature that meets the following description:
-                    {reference_feature_description}.
-                    Then perform a line scan across that feature. Use a scan step 
-                    size of {line_scan_step_size}.
-                    """
-                )
+            feat_text_description = ""
+            if reference_feature_description is not None:
+                feat_text_description = f"Also, here is the description of the feature: {reference_feature_description}. "
             param_step_size_prompt = ""
             if suggested_parameter_step_size is not None:
                 param_step_size_prompt = dedent(
@@ -181,10 +199,21 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 But each time you adjust the focus, the image may drift due to
                 the change of the optics. You will need to perform a 2D scan
                 prior to the line scan to locate the feature that is line-scanned.
+                <img {reference_image_path}> 
+                
+                You will see a reference 2D scan image in this message. 
+                This image is acquired in the region of interest that
+                contains the thin feature to be line-scanned. The line scan path
+                across that feature is indicated by a marker. {feat_text_description}
                 
                 Follow the procedure below to focus the microscope:
                 
-                1. {step_1_prompt}
+                1. First, perform a 2D scan of the region of interest using the
+                   "acquire_image" tool and the following arguments:
+                   {suggested_2d_scan_kwargs}. 
+                   The image should look similar to the reference image.
+                   Determine the coordinates of the line scan path across the feature,
+                   and use the "scan_line" tool to perform a line scan across the feature.
                 2. The line scan tool will return a plot along the scan line. You should
                    see a peak in the plot. A Gaussian fit will be included in the plot
                    and the FWHM of the Gaussian fit will be shown.
@@ -195,7 +224,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                    image acquired may have drifted compared to the last one you saw,
                    but you should still see the line-scanned feature there. If not,
                    try adjusting the image acquisition tool's parameters to locate that
-                   feature.
+                   feature. Along with this image, you will also be given the offset of
+                   this image compared to the previous image found through phase correlation.
+                   Use this offset to adjust the line scan positions. Note that the offset
+                   is just a suggestion. If the new image does not appear to have any overlap
+                   with the previous one, the offset won't be reliable. In that case, try
+                   adjusting the image acquisition tool's parameters to move the field of view
+                   closer to the previous image.
                 5. Once you find the line-scanned feature, perform a new line scan across
                    it again. Due to the drift, the start/end points' coordinates may need to
                    be changed. Read the coordinates from the axis ticks.
@@ -242,6 +277,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             n_first_images_to_keep=1,
             n_past_images_to_keep=n_past_images_to_keep,
             max_rounds=max_iters,
+            hook_functions={
+                "image_path_tool_response": self.run_registration_and_send_image
+            },
             *args, **kwargs
         )
 
