@@ -103,6 +103,9 @@ async def on_chat_start():
     create_message_db_conn(_message_db_path)
     
     await cl.Message("Chat started. Listening for external messages...").send()
+    
+    await cl.ElementSidebar.set_elements([])
+    await cl.ElementSidebar.set_title("Image seen by agent")
 
     # Async polling loop to check for new messages
     async def poll_new_messages():
@@ -121,6 +124,12 @@ async def on_chat_start():
                         image_base64=image_base64
                     )
                     await cl_message.send()
+                    
+                    # Update sidebar elements
+                    if cl_message.elements is not None and len(cl_message.elements) > 0:
+                        await cl.ElementSidebar.set_elements([])
+                        await cl.ElementSidebar.set_elements(cl_message.elements)
+                        await cl.ElementSidebar.set_title("Image seen by agent")
                 last_index = len(messages)
             await asyncio.sleep(1)
 
