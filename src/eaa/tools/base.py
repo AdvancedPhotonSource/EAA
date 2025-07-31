@@ -76,8 +76,8 @@ class BaseTool:
             If True, the y-axis is inverted.
         """
         fig, ax = plt.subplots(1, 1)
+        ax.imshow(image, cmap='gray')
         if add_axis_ticks:
-            ax.imshow(image, cmap='gray')
             ax.set_xticks(np.linspace(0, len(x_ticks) - 1, 5, dtype=int))
             ax.set_yticks(np.linspace(0, len(y_ticks) - 1, 5, dtype=int))
             ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
