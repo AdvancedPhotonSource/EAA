@@ -102,7 +102,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         
         if (
             image_km1 is None 
-            or self.acquisition_tool.counter == self.last_acquisition_count_registered
+            or self.acquisition_tool.counter_acquire_image == self.last_acquisition_count_registered
         ):
             response, outgoing = self.agent.receive(
                 "Here is the new image.",
@@ -126,7 +126,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 context=self.context,
                 return_outgoing_message=True
             )
-            self.last_acquisition_count_registered = self.acquisition_tool.counter
+            self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
         return response, outgoing
         
     def run(

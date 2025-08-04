@@ -12,19 +12,7 @@ import eaa.comms
 import eaa.util
 import eaa.maths
 
-
 logger = logging.getLogger(__name__)
-
-
-def post_image_acquisition(func):
-    """A decorator to be used to decorate the `acquire_image` method.
-    The decorated function will be called after the image is acquired.
-    """
-    def wrapper(self, *args, **kwargs):
-        ret = func(self, *args, **kwargs)
-        self.counter += 1
-        return ret
-    return wrapper
 
 
 class AcquireImage(BaseTool):
@@ -57,7 +45,7 @@ class AcquireImage(BaseTool):
         self.psize_km1 = None
         self.psize_k = None
         
-        self.counter = 0
+        self.counter_acquire_image = 0
         
     def update_real_time_view(self, image: np.ndarray):
         if self.rt_fig is None:
@@ -79,7 +67,7 @@ class AcquireImage(BaseTool):
         psize : float, optional
             The pixel size (or scan step) of the new image.
         """
-        if self.counter == 0:
+        if self.counter_acquire_image == 0:
             self.image_0 = new_image
             self.psize_0 = psize
         self.image_km1 = self.image_k
@@ -87,9 +75,8 @@ class AcquireImage(BaseTool):
         self.image_k = new_image
         self.psize_k = psize
 
-    @post_image_acquisition
     def acquire_image(self, *args, **kwargs):
-        raise NotImplementedError
+        self.counter_acquire_image += 1
 
 
 class SimulatedAcquireImage(AcquireImage):
@@ -264,7 +251,6 @@ class SimulatedAcquireImage(AcquireImage):
         ax.set_ylim(ylim)
         return fig
 
-    @post_image_acquisition
     def acquire_image(
         self, 
         loc_y: float, 
@@ -289,6 +275,8 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
+        super().acquire_image(loc_y, loc_x, size_y, size_x)
+        
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
