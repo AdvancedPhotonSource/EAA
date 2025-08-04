@@ -170,9 +170,13 @@ class BlueSkyAcquireImage(AcquireImage):
                     os.path.join(parent_dir, "img.dat"),
                     f"{current_mda_file}.h50")
 
-                img_path = save_xrfdata(img_h5_path, png_output_dir, elms=self.xrf_elms)
+                img_path, img_arr = save_xrfdata(
+                    img_h5_path, png_output_dir, elms=self.xrf_elms, return_image_array=True
+                )
                 wait_for_file(img_path, duration=5)
 
+                self.update_image_buffers(img_arr, psize=stepsize_x)
+                self.update_image_acquisition_counter()
                 if img_path:
                     return img_path
                 else:

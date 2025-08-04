@@ -196,7 +196,13 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
 
 
 def save_xrfdata(
-    img_h5_path, output_dir, cmap="inferno", elms=None, vmax_th=99, vmin=0
+    img_h5_path: str, 
+    output_dir: str, 
+    cmap: str = "inferno", 
+    elms: list[str] = None, 
+    vmax_th: float = 99, 
+    vmin: float = 0,
+    return_image_array: bool = False
 ) -> str | None:
     """
     Save the XRF data in png format.
@@ -215,6 +221,9 @@ def save_xrfdata(
         The threshold for the maximum percentile of the colorbar.
     vmin : float
         The minimum value of the colorbar.
+    return_image_array : bool
+        If True, an numpy array of the image will be returned
+        in addition to the path to the saved image.
 
     Returns
     -------
@@ -240,7 +249,13 @@ def save_xrfdata(
             fig.savefig(fname)
             plt.close(fig)
             logger.info(f"Image saved to {fname}")
-            return fname
+            if return_image_array:
+                return fname, plotarr
+            else:
+                return fname
     else:
         logger.error(f"The XRF h5 file {img_h5_path} not found")
-        return None
+        if return_image_array:
+            return None, None
+        else:
+            return None
