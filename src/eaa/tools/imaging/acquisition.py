@@ -76,6 +76,9 @@ class AcquireImage(BaseTool):
         self.psize_k = psize
 
     def acquire_image(self, *args, **kwargs):
+        raise NotImplementedError
+    
+    def update_image_acquisition_counter(self):
         self.counter_acquire_image += 1
 
 
@@ -275,8 +278,6 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
-        super().acquire_image(loc_y, loc_x, size_y, size_x)
-        
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
@@ -291,6 +292,7 @@ class SimulatedAcquireImage(AcquireImage):
             self.update_real_time_view(arr)
             
         self.update_image_buffers(arr, psize=1)
+        self.update_image_acquisition_counter()
             
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
