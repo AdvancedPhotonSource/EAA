@@ -136,6 +136,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         suggested_2d_scan_kwargs: dict = None,
         suggested_parameter_step_size: Optional[float] = None,
         line_scan_step_size: float = None,
+        use_registration_in_workflow: bool = True,
         initial_prompt: Optional[str] = None,
         max_iters: int = 20,
         n_past_images_to_keep: Optional[int] = None,
@@ -149,11 +150,11 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         reference_image_path : Optional[str]
             The path to the reference image, which should show a 2D scan
             of the ROI with the desired line scan path indicated by a
-            marker. `reference_feature_description` will be ignored if
+            marker. ``reference_feature_description`` will be ignored if
             this argument is provided.
         reference_feature_description : Optional[str]
             The description of the feature across which line scans should
-            be done. Ignored if `reference_image_path` is provided.
+            be done. Ignored if ``reference_image_path`` is provided.
         suggested_2d_scan_kwargs : dict
             The suggested kwargs for the 2D scan. The argument should match
             the arguments of the 2D image acquisition tool.
@@ -161,6 +162,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             The suggested step size for the parameter adjustment.
         line_scan_step_size : float
             The step size for the line scan.
+        use_registration_in_workflow : bool
+            If True, image registration will be performed when the 2D image
+            acquisition tool is called, and the offset found will be given 
+            to the agent along with the acquired image. Note that this is done
+            with Python logic instead of agent tool call; if a registration
+            tool is available for the agent to call, it should be provided through
+            ``tools`` and you may want to set this argument to False.
         initial_prompt : Optional[str]
             If provided, this prompt will override the default initial prompt.
         max_iters : int, optional
@@ -189,6 +197,38 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                       to a smaller value if you want to fine-tune the parameter.
                     """
                 )
+                
+            line_scan_step_size_prompt = ""
+            if line_scan_step_size is not None:
+                line_scan_step_size_prompt = dedent(
+                    f"""The suggested step size for the line scan is {line_scan_step_size}.\
+                    """
+                )
+                
+            if use_registration_in_workflow:
+                registration_prompt = dedent(
+                    """\
+                    Along with this image, you will also be given the offset of
+                    this image compared to the previous image found through image registration.
+                    Use this offset to adjust the line scan positions. Note that the offset
+                    is just a suggestion. If the new image does not appear to have any overlap
+                    with the previous one, the offset won't be reliable. In that case, try
+                    adjusting the image acquisition tool's parameters to move the field of view
+                    closer to the previous image.\
+                    """
+                )
+                line_scan_positioning_prompt = dedent(
+                    """\
+                    Use the offset given by image registration to adjust the line scan positions.\
+                    """
+                )
+            else:
+                registration_prompt = ""
+                line_scan_positioning_prompt = dedent(
+                    """\
+                    Read the coordinates of the line scan path from the axis ticks.
+                    """
+                )
             
             initial_prompt = dedent(
                 f"""\
@@ -214,6 +254,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                    The image should look similar to the reference image.
                    Determine the coordinates of the line scan path across the feature,
                    and use the "scan_line" tool to perform a line scan across the feature.
+                   {line_scan_step_size_prompt}
                 2. The line scan tool will return a plot along the scan line. You should
                    see a peak in the plot. A Gaussian fit will be included in the plot
                    and the FWHM of the Gaussian fit will be shown.
@@ -224,16 +265,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                    image acquired may have drifted compared to the last one you saw,
                    but you should still see the line-scanned feature there. If not,
                    try adjusting the image acquisition tool's parameters to locate that
-                   feature. Along with this image, you will also be given the offset of
-                   this image compared to the previous image found through phase correlation.
-                   Use this offset to adjust the line scan positions. Note that the offset
-                   is just a suggestion. If the new image does not appear to have any overlap
-                   with the previous one, the offset won't be reliable. In that case, try
-                   adjusting the image acquisition tool's parameters to move the field of view
-                   closer to the previous image.
+                   feature. {registration_prompt}
                 5. Once you find the line-scanned feature, perform a new line scan across
                    it again. Due to the drift, the start/end points' coordinates may need to
-                   be changed. Read the coordinates from the axis ticks.
+                   be changed. {line_scan_positioning_prompt}
                 6. You will be presented with the new line scan plot and the FWHM of the
                    Gaussian fit.
                 7. Compare the new FWHM with the last one. If it is smaller, you are on the
@@ -279,7 +314,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             max_rounds=max_iters,
             hook_functions={
                 "image_path_tool_response": self.run_registration_and_send_image
-            },
+            } if use_registration_in_workflow else None,
             *args, **kwargs
         )
 
