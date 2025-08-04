@@ -253,10 +253,10 @@ class SimulatedAcquireImage(AcquireImage):
 
     def acquire_image(
         self, 
-        loc_y: float, 
-        loc_x: float, 
-        size_y: int, 
-        size_x: int, 
+        loc_y: Annotated[float, "The y-coordinate of the top-left corner of the image to acquire."], 
+        loc_x: Annotated[float, "The x-coordinate of the top-left corner of the image to acquire."], 
+        size_y: Annotated[int, "The height of the image to acquire."], 
+        size_x: Annotated[int, "The width of the image to acquire."], 
     ) -> Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given size from the whole image at a given
         location.
@@ -311,10 +311,10 @@ class SimulatedAcquireImage(AcquireImage):
 
     def scan_line(
         self,
-        start_x: float,
-        start_y: float,
-        end_x: float,
-        end_y: float,
+        start_x: Annotated[float, "The x-coordinate of the starting point of the line scan."],
+        start_y: Annotated[float, "The y-coordinate of the starting point of the line scan."],
+        end_x: Annotated[float, "The x-coordinate of the ending point of the line scan."],
+        end_y: Annotated[float, "The y-coordinate of the ending point of the line scan."],
         scan_step: float,
     ) -> Annotated[str, "The path to the plot of the line scan."]:
         """Scan along a line in the sample. This function
@@ -383,8 +383,8 @@ class SimulatedAcquireImage(AcquireImage):
 
     def scan_line_by_choice(
         self, 
-        choice: int,
-        scan_step: float = 1.0,
+        choice: Annotated[int, "The index of the line scan candidate to use."],
+        scan_step: Annotated[float, "The step size of the line scan."] = 1.0,
     ) -> Annotated[str, "The path to the plot of the line scan."]:
         """Conduct a line scan along a chosen path. To use this tool,
         you must call the tool "acquire_image" first, examine the image

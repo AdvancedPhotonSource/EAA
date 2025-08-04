@@ -82,12 +82,12 @@ class BlueSkyAcquireImage(AcquireImage):
         
     def acquire_image(
         self,
-        width: float = 0,
-        height: float = 0,
-        x_center: float = None,
-        y_center: float = None,
-        stepsize_x: float = 0,
-        stepsize_y: float = 0,
+        width: Annotated[float, "The width of the scan area in microns"] = 0,
+        height: Annotated[float, "The height of the scan area in microns"] = 0,
+        x_center: Annotated[float, "The center of the scan area in the x direction in microns"] = None,
+        y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
+        stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
+        stepsize_y: Annotated[float, "The scan step size in the y direction, i.e., the distance between two adjacent pixels in the y direction in microns"] = 0,
     )->Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given scan area with the scanning x-ray microscope.
         

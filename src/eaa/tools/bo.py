@@ -412,8 +412,8 @@ class BayesianOptimizationTool(BaseTool):
 
     def update(
         self,
-        x: torch.Tensor | np.ndarray,
-        y: torch.Tensor | np.ndarray,
+        x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
+        y: Annotated[torch.Tensor | np.ndarray, "The observations of the objective function."],
     ) -> None:
         """Update the Bayesian optimization tool with new observation.
 
@@ -466,7 +466,8 @@ class BayesianOptimizationTool(BaseTool):
             )
 
     def suggest(
-        self, n_suggestions: int = 1
+        self, 
+        n_suggestions: Annotated[int, "The number of suggestions to make."] = 1
     ) -> Annotated[torch.Tensor, "suggested_points"]:
         """Suggest a new point to observe.
 

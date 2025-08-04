@@ -173,7 +173,7 @@ class SimulatedSetParameters(SetParameters):
         
     def set_parameters(
         self, 
-        parameters: list[float],
+        parameters: Annotated[list[float], "The parameters to set the optics to"],
     ) -> Annotated[str, "A confirmation message."]:
         """Set the optics parameters of the imaging system to given values.
         

@@ -83,7 +83,15 @@ which contains a list of `message` objects. We assume there is only one choice.
 
 import typing
 from typing import (
-    Any, Callable, Dict, List, Tuple, Optional, Literal, get_type_hints
+    Any, 
+    Callable, 
+    Dict, 
+    List, 
+    Tuple, 
+    Optional, 
+    Literal, 
+    get_type_hints, 
+    get_args
 )
 import inspect
 import json
@@ -639,6 +647,8 @@ def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any
             continue
         json_type = resolve_json_type(type_hints[name])
         description = f"{name} parameter"
+        if len(get_args(sig.parameters[name].annotation)) > 0:
+            description = get_args(sig.parameters[name].annotation)[1]
         properties[name] = {**json_type, "description": description}
         if param.default == inspect.Parameter.empty:
             required.append(name)
