@@ -6,7 +6,7 @@ methods from BaseTool subclasses as standardized MCP tools.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from mcp.server.fastmcp import FastMCP
