@@ -45,7 +45,7 @@ def main():
         logger.info("Starting MCP server...")
         run_mcp_server_from_tools(
             tools=calculator,
-            server_name="Calculator MCP Server"
+            server_name="Calculator MCP Server",
         )
         
     except KeyboardInterrupt:
@@ -53,61 +53,6 @@ def main():
     except Exception as e:
         logger.error(f"Error running MCP server: {e}")
         raise
-
-
-def create_server_only():
-    """
-    Example function showing how to create the server without running it.
-    
-    This can be useful for testing or when you want more control over
-    the server lifecycle.
-    """
-    from eaa.mcp import create_mcp_server_from_tools
-    
-    # Create the calculator tool
-    calculator = CalculatorTool()
-    
-    # Create the MCP server (but don't run it yet)
-    server = create_mcp_server_from_tools(
-        tools=calculator,
-        server_name="Calculator MCP Server"
-    )
-    
-    # Get tool schemas (useful for debugging)
-    schemas = server.get_tool_schemas()
-    logger.info(f"Created server with {len(schemas)} tool schemas:")
-    for schema in schemas:
-        logger.info(f"  - {schema['function']['name']}: {schema['function']['description']}")
-    
-    # List available tools
-    tools = server.list_tools()
-    logger.info(f"Available tools: {', '.join(tools)}")
-    
-    return server
-
-
-def demonstrate_multiple_tools():
-    """
-    Example showing how to create an MCP server with multiple BaseTool instances.
-    """
-    from eaa.mcp import MCPToolServer
-    
-    # Create multiple tool instances
-    calculator1 = CalculatorTool()
-    calculator2 = CalculatorTool()  # Different instance with separate history
-    
-    # Create server and register tools
-    server = MCPToolServer(name="Multi-Calculator MCP Server")
-    
-    # Note: This would cause naming conflicts since both tools have the same method names
-    # In practice, you'd want tools with different method names or use namespacing
-    try:
-        server.register_tools([calculator1, calculator2])
-    except ValueError as e:
-        logger.warning(f"Expected naming conflict: {e}")
-        logger.info("In practice, use tools with different method names or implement namespacing")
-    
-    return server
 
 
 if __name__ == "__main__":

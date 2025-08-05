@@ -179,11 +179,11 @@ def run_all_tests():
         
         # Print summary
         logger.info("Test Summary:")
-        logger.info(f"  - Tool creation: ✓")
-        logger.info(f"  - Server creation: ✓")
-        logger.info(f"  - Schema generation: ✓ ({len(schemas)} schemas)")
-        logger.info(f"  - Tool execution: ✓")
-        logger.info(f"  - Error handling: ✓")
+        logger.info("  - Tool creation: ✓")
+        logger.info("  - Server creation: ✓")
+        logger.info("  - Schema generation: ✓ ({len(schemas)} schemas)")
+        logger.info("  - Tool execution: ✓")
+        logger.info("  - Error handling: ✓")
         
         return True
         

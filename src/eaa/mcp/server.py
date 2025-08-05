@@ -5,11 +5,8 @@ This module provides functionality to create and run MCP servers that expose
 methods from BaseTool subclasses as standardized MCP tools.
 """
 
-import inspect
-import json
 import logging
 from typing import Any, Dict, List, Optional, Union, Callable
-import asyncio
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -19,7 +16,7 @@ except ImportError:
         "Install it with: pip install mcp"
     )
 
-from eaa.tools.base import BaseTool, ToolReturnType
+from eaa.tools.base import BaseTool
 from eaa.agents.base import generate_openai_tool_schema
 
 logger = logging.getLogger(__name__)
@@ -50,14 +47,13 @@ class MCPToolServer:
             List of BaseTool instances to expose via MCP.
         """
         self.name = name
-        self.tools: List[BaseTool] = tools or []
         self.mcp_server = FastMCP(name)
         self._tool_instances: Dict[str, BaseTool] = {}
         self._registered_tools: Dict[str, Dict[str, Any]] = {}
         
         # Register tools if provided
-        if self.tools:
-            self.register_tools(self.tools)
+        if tools:
+            self.register_tools(tools)
     
     def register_tools(self, tools: Union[BaseTool, List[BaseTool]]) -> None:
         """
@@ -85,7 +81,7 @@ class MCPToolServer:
     
     def _register_tool_instance(self, tool: BaseTool) -> None:
         """
-        Register a single BaseTool instance.
+        Register all exposed tool methods of a BaseTool instance.
         
         Parameters
         ----------
@@ -95,7 +91,6 @@ class MCPToolServer:
         for tool_dict in tool.exposed_tools:
             tool_name = tool_dict["name"]
             tool_function = tool_dict["function"]
-            return_type = tool_dict["return_type"]
             
             if tool_name in self._registered_tools:
                 raise ValueError(f"Tool '{tool_name}' is already registered")
@@ -104,77 +99,18 @@ class MCPToolServer:
             self._tool_instances[tool_name] = tool
             self._registered_tools[tool_name] = tool_dict
             
-            # Create the MCP tool wrapper
-            self._create_mcp_tool(tool_name, tool_function, return_type)
-    
-    def _create_mcp_tool(
-        self, 
-        tool_name: str, 
-        tool_function: Callable, 
-        return_type: ToolReturnType
-    ) -> None:
-        """
-        Create an MCP tool from a BaseTool method.
-        
-        Parameters
-        ----------
-        tool_name : str
-            Name of the tool.
-        tool_function : Callable
-            The callable method from the BaseTool.
-        return_type : ToolReturnType
-            Expected return type of the tool.
-        """
-        # Get function signature for parameter validation
-        sig = inspect.signature(tool_function)
-        
-        # Create wrapper function that handles tool execution
-        def mcp_tool_wrapper(**kwargs):
-            """Wrapper function for MCP tool execution."""
-            try:
-                # Filter kwargs to match function signature
-                filtered_kwargs = {}
-                for param_name, param in sig.parameters.items():
-                    if param_name in kwargs:
-                        filtered_kwargs[param_name] = kwargs[param_name]
-                    elif param.default == inspect.Parameter.empty:
-                        raise ValueError(f"Required parameter '{param_name}' is missing")
-                
-                # Execute the tool function
-                result = tool_function(**filtered_kwargs)
-                
-                # Handle different return types
-                if return_type == ToolReturnType.TEXT:
-                    return str(result)
-                elif return_type == ToolReturnType.IMAGE_PATH:
-                    return str(result)
-                elif return_type == ToolReturnType.NUMBER:
-                    return float(result) if result is not None else None
-                elif return_type == ToolReturnType.BOOL:
-                    return bool(result)
-                elif return_type in [ToolReturnType.LIST, ToolReturnType.DICT]:
-                    return result
-                else:
-                    return str(result)
-                    
-            except Exception as e:
-                logger.error(f"Error executing tool '{tool_name}': {str(e)}")
-                return f"Error: {str(e)}"
-        
-        # Set the docstring from the original function
-        mcp_tool_wrapper.__doc__ = tool_function.__doc__ or f"Execute {tool_name}"
-        
-        # Set the function name to match the tool name for proper registration
-        mcp_tool_wrapper.__name__ = tool_name
-        
-        # Register the tool with the MCP server using the decorator
-        decorated_wrapper = self.mcp_server.tool()(mcp_tool_wrapper)
-        
-        logger.info(f"Registered MCP tool: {tool_name}")
+            # Create the MCP tool
+            # This is equivalent to adding @self.mcp_server.tool()
+            # to the definition of the tool function.
+            self.mcp_server.tool()(tool_function)
     
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """
         Get OpenAI-compatible tool schemas for all registered tools.
+        
+        Note that the schemas returned are NOT what's used by the MCP server.
+        The MCP SDK creates the schemas itself using annotations and docstrings
+        in the tool functions. Only use this function for reference.
         
         Returns
         -------
@@ -209,12 +145,14 @@ class MCPToolServer:
         """
         return self.mcp_server
     
-    def run(self, **kwargs) -> None:
+    def run(self) -> None:
         """
         Run the MCP server.
         
         Parameters
         ----------
+        port : int, optional
+            The port to listen on.
         **kwargs
             Additional arguments passed to the FastMCP server.
         """
@@ -223,7 +161,7 @@ class MCPToolServer:
             logger.info(f"  - {tool_name}")
         
         # Run the server
-        self.mcp_server.run(**kwargs)
+        self.mcp_server.run()
 
 
 def create_mcp_server_from_tools(
@@ -265,7 +203,7 @@ def run_mcp_server_from_tools(
     server_name : str, optional
         Name of the MCP server.
     **server_kwargs
-        Additional arguments passed to the server run method.
+        Additional arguments passed to the FastMCP.run method.
     """
     server = create_mcp_server_from_tools(tools, server_name)
     server.run(**server_kwargs) 
