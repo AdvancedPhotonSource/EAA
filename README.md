@@ -158,5 +158,20 @@ Refer to the documentations of the client on where this config file is located.
   }
 }
 ```
+If EAA is installed in a virtual environment, you will need to ask the MCP client
+to activate the environment before launching the tool. Below is an example:
+```json
+{
+  "mcpServers": {
+    "calculator": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /path/to/.venv/bin/activate && python path/to/mcp_calculator_server.py"
+      ]
+    }
+  }
+}
+```
 Now the MCP client should be able to run and connect to the MCP server and use the
 tool.
