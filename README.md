@@ -1,5 +1,15 @@
 # Experiment Automation Agents (EAA)
 
+## Table of Contents
+
+- [Installation](#installation)
+  - [Option 1: install via pip](#option-1-install-via-pip)
+  - [Option 2: install via uv](#option-2-install-via-uv)
+- [Quickstart guide](#quickstart-guide)
+- [WebUI](#webui)
+- [MCP tool wrapper](#mcp-tool-wrapper)
+
+
 ## Installation
 
 ### Option 1: install via pip
@@ -143,7 +153,7 @@ Claude Code and Gemini CLI.
 We will illustrate how an MCP server can be set up using a simple example. A
 calculator tool, subclassing `BaseTool`, is created in 
 `src/eaa/tools/example_calculator.py`. To turn it into an MCP server, we
-use `eaa.mcp.un_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
+use `eaa.mcp.run_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
 for an example.
 
 After the server script is created, add it to the config JSON of your MCP client.
