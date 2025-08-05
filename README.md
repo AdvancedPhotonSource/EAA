@@ -132,3 +132,46 @@ Launch the webUI using
 ```
 chainlit run start_webui.py
 ```
+
+## MCP tool wrapper
+
+EAA's MCP tool wrapper allows you to convert any tools that are subclasses of
+`BaseTool` into an MCP tool and launch an MCP server offering these tools. 
+This allows you to use the tools in EAA with other MCP clients such as
+Claude Code and Gemini CLI.
+
+We will illustrate how an MCP server can be set up using a simple example. A
+calculator tool, subclassing `BaseTool`, is created in 
+`src/eaa/tools/example_calculator.py`. To turn it into an MCP server, we
+use `eaa.mcp.un_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
+for an example.
+
+After the server script is created, add it to the config JSON of your MCP client.
+Refer to the documentations of the client on where this config file is located.
+```json
+{
+  "mcpServers": {
+    "calculator": {
+      "command": "python",
+      "args": ["path/to/mcp_calculator_server.py"]
+    }
+  }
+}
+```
+If EAA is installed in a virtual environment, you will need to ask the MCP client
+to activate the environment before launching the tool. Below is an example:
+```json
+{
+  "mcpServers": {
+    "calculator": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /path/to/.venv/bin/activate && python path/to/mcp_calculator_server.py"
+      ]
+    }
+  }
+}
+```
+Now the MCP client should be able to run and connect to the MCP server and use the
+tool.
