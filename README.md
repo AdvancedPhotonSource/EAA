@@ -54,3 +54,81 @@ Finally, install the package itself:
 ```
 uv pip install -e .
 ```
+
+## Quickstart guide
+
+First, choose a task manager that contains the workflow you need. In this example,
+we use `FeatureTrackingTaskManager` for a field-of-view search task.
+```
+from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.api.llm_config import OpenAIConfig
+```
+
+This task manager needs an image acquisition tool. We use a simulated one:
+```
+from eaa.tools.imaging.acquisition import SimulatedAcquireImage
+acquisition_tool = SimulatedAcquireImage(whole_image=<ndarray of simulation image>)
+```
+
+Create the task manager:
+```
+task_manager = FeatureTrackingTaskManager(
+    llm_config=OpenAIConfig(
+        model=<name of the model to use>,
+        base_url=<base URL of the inference host>,
+        api_key=<your API key>,
+    ),
+    tools=[acquisition_tool],
+)
+```
+The model name, base URL and API key should be provided by the LLM provider.
+The type of the object passed to `llm_config` determines the API to use. For
+most LLM providers that offer an OpenAI-compatible API, `OpenAIConfig` will work.
+AskSage is also supported through `AskSageConfig`, but there are currently some
+limitations in the support.
+
+With the task manager created, you can either run the workflow defined in the logic:
+```
+task_manager.run_fov_search(
+    feature_description="the center of a Siemens star",
+    y_range=(0, 600),
+    x_range=(0, 600),
+    fov_size=(200, 200),
+    step_size=(200, 200),
+)
+```
+or just start a chat with the agent:
+```
+task_manager.run_conversation()
+```
+The tool will be available during the chat, so you can still instruct it to perform
+certain experiment tasks during the chat. 
+
+To add an image to a message during the chat, append the image path to your message
+as `<img path/to/img.png>`.
+
+## WebUI
+
+EAA has a webUI built with Chainlit. The webUI runs in a separate process,
+and communicate with the agent process through a SQL database. Agent messages
+are written into the database, which is polled by the webUI process and displayed;
+user inputs in the webUI is also written into the database and read in the
+agent process. 
+
+To use this feature, specify the path of the SQL database to append or create
+when creating the task manager by adding the following argument:
+```
+TaskManager(
+    ...
+    message_db_path="messages.db"
+)
+```
+Then create a Python script `start_webui.py` with just the following two lines:
+```
+from eaa.gui.chat import *
+set_message_db_path("messages.db")
+```
+Launch the webUI using
+```
+chainlit run start_webui.py
+```
