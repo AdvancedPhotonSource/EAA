@@ -26,6 +26,7 @@ from eaa.util import get_timestamp
 
 _message_db_path = None
 _message_db_conn = None
+_historical_image_elements = []
 
 
 def set_message_db_path(path: str):
@@ -127,8 +128,9 @@ async def on_chat_start():
                     
                     # Update sidebar elements
                     if cl_message.elements is not None and len(cl_message.elements) > 0:
+                        _historical_image_elements.append(cl_message.elements[0])
                         await cl.ElementSidebar.set_elements([])
-                        await cl.ElementSidebar.set_elements(cl_message.elements)
+                        await cl.ElementSidebar.set_elements(_historical_image_elements)
                         await cl.ElementSidebar.set_title("Image seen by agent")
                 last_index = len(messages)
             await asyncio.sleep(1)
