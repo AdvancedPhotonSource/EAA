@@ -1,6 +1,9 @@
-from typing import Optional
+from typing import Optional, Callable
 from textwrap import dedent
 import logging
+
+from PIL import Image
+import numpy as np
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
@@ -77,7 +80,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         """
         self.acquisition_tool = acquisition_tool
         
-        self.last_acquisition_count_registered = -1
+        self.last_acquisition_count_registered = 0
+        self.last_acquisition_count_stitched = 0
         
         super().__init__(
             llm_config=llm_config,
@@ -90,45 +94,89 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             *args, **kwargs
         )
         
-    def run_registration_and_send_image(self, image_path: str) -> None:
-        """Register the new image with the previous one and
-        send the offset and the new image to the agent.
-        
-        This routine assumes `self.image_km1` and `self.image_k` of
-        `self.acquisition_tool` are already set.
+    def image_path_tool_response_hook_factory(
+        self,
+        use_registration_in_workflow: bool,
+        add_reference_image_to_images_acquired: bool,
+        reference_image_path: str
+    ) -> Callable:
+        """Factory function that returns a hook function for the image path tool response.
+        If none of the two flags are True, it returns None.
         """
-        image_k = self.acquisition_tool.image_k
-        image_km1 = self.acquisition_tool.image_km1
-        
-        if (
-            image_km1 is None 
-            or self.acquisition_tool.counter_acquire_image == self.last_acquisition_count_registered
-        ):
-            response, outgoing = self.agent.receive(
-                "Here is the new image.",
-                image_path=image_path,
-                context=self.context,
-                return_outgoing_message=True
-            )
-        else:
-            # Run registration.
-            image_k = image_k if image_k.ndim == 2 else image_k.mean(-1)
-            image_km1 = image_km1 if image_km1.ndim == 2 else image_km1.mean(-1)
-            shift = windowed_phase_cross_correlation(image_k, image_km1)
-            shift = shift * self.acquisition_tool.psize_k
+        def hook_function(image_path: str) -> None:
+            message = ""
+            if (
+                add_reference_image_to_images_acquired
+                and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_stitched
+            ):
+                image_path = self.add_reference_image_to_images_acquired(
+                    image_path, reference_image_path
+                )
+                self.last_acquisition_count_stitched = self.acquisition_tool.counter_acquire_image
+                message = (
+                    "Here is the new image (left). "
+                    "The reference image (right) is also shown for your reference."
+                )
             
+            if use_registration_in_workflow:
+                image_k = self.acquisition_tool.image_k
+                image_km1 = self.acquisition_tool.image_km1
+                if (
+                    image_km1 is not None
+                    and image_k is not None
+                    and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
+                ):
+                    shift = self.register_images(image_k, image_km1)
+                    
+                    if len(message) == 0:
+                        message = "Here is the new image. "
+                    message += (
+                        f"Phase correlation has found the offset between "
+                        f"the new image and the previous one to be {shift.tolist()} (y, x). Use "
+                        f"this offset to adjust the line scan positions by **adding** it to both "
+                        f"the x and y coordinates of the start and end points of the previous line scan."
+                    )
+                    self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
             response, outgoing = self.agent.receive(
-                f"Here is the new image. Phase correlation has found the offset between "
-                f"the new image and the previous one to be {shift.tolist()} (y, x). Use "
-                f"this offset to adjust the line scan positions by **adding** it to both "
-                f"the x and y coordinates of the start and end points of the previous line scan.",
+                message,
                 image_path=image_path,
                 context=self.context,
                 return_outgoing_message=True
             )
-            self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
-        return response, outgoing
+            return response, outgoing
         
+        if not use_registration_in_workflow and not add_reference_image_to_images_acquired:
+            return None
+        else:
+            return hook_function
+    
+    def add_reference_image_to_images_acquired(
+        self, new_image_path: str, reference_image_path: str
+    ) -> str:
+        """Add the reference image to the images acquired side-by-side, and return
+        the path to the new image.
+        """
+        new_image = Image.open(new_image_path)
+        reference_image = Image.open(reference_image_path)
+        stitched_image = Image.new(
+            "RGB", 
+            (new_image.width + reference_image.width, max(new_image.height, reference_image.height))
+        )
+        stitched_image.paste(new_image, (0, 0))
+        stitched_image.paste(reference_image, (new_image.width, 0))
+        stitched_image.save(new_image_path)
+        return new_image_path
+        
+    def register_images(self, image_k: np.ndarray, image_km1: np.ndarray) -> np.ndarray:
+        """Register the two images and return the offset.
+        """
+        # Take the average of channels for RGB images.
+        image_k = image_k if image_k.ndim == 2 else image_k.mean(-1)
+        image_km1 = image_km1 if image_km1.ndim == 2 else image_km1.mean(-1)
+        shift = windowed_phase_cross_correlation(image_k, image_km1)
+        shift = shift * self.acquisition_tool.psize_k
+        return shift
+    
     def run(
         self,
         reference_image_path: str,
@@ -137,6 +185,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         suggested_parameter_step_size: Optional[float] = None,
         line_scan_step_size: float = None,
         use_registration_in_workflow: bool = True,
+        add_reference_image_to_images_acquired: bool = False,
         initial_prompt: Optional[str] = None,
         max_iters: int = 20,
         n_past_images_to_keep: Optional[int] = None,
@@ -169,6 +218,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             with Python logic instead of agent tool call; if a registration
             tool is available for the agent to call, it should be provided through
             ``tools`` and you may want to set this argument to False.
+        add_reference_image_to_images_acquired : bool
+            If True, the reference image will be stitched side-by-side with
+            2D microscopy images acquired. This allows the agent to always see
+            the reference image in new messages when needed, instead of having
+            the reference image only in the first message in the context. This
+            may be particularly useful for inference endpoint providers that do
+            not support images in the context.
         initial_prompt : Optional[str]
             If provided, this prompt will override the default initial prompt.
         max_iters : int, optional
@@ -313,8 +369,12 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             n_past_images_to_keep=n_past_images_to_keep,
             max_rounds=max_iters,
             hook_functions={
-                "image_path_tool_response": self.run_registration_and_send_image
-            } if use_registration_in_workflow else None,
+                "image_path_tool_response": self.image_path_tool_response_hook_factory(
+                    use_registration_in_workflow,
+                    add_reference_image_to_images_acquired,
+                    reference_image_path
+                )
+            },
             *args, **kwargs
         )
 

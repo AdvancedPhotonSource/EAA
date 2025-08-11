@@ -419,7 +419,7 @@ class BaseTaskManager:
                 
                 if tool_response_type == ToolReturnType.IMAGE_PATH:
                     image_path = tool_response["content"]
-                    if "image_path_tool_response" in hook_functions:
+                    if hook_functions.get("image_path_tool_response", None) is not None:
                         response, outgoing = hook_functions["image_path_tool_response"](image_path)
                     else:
                         response, outgoing = self.agent.receive(
