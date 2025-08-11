@@ -143,10 +143,19 @@ Then create a Python script `start_webui.py` with just the following two lines:
 from eaa.gui.chat import *
 set_message_db_path("messages.db")
 ```
-Launch the webUI using
+Launch the WebUI using
 ```
 chainlit run start_webui.py
 ```
+
+### Auto-scrolling
+
+Since the WebUI polls for messages from a SQL database, the native feature of
+auto-scrolling (where the chat window automatically scrolls to the bottom to
+show the latest message when a new message is received) does not work. To bring
+auto-scrolling back, copy everything under `examples/webui/` (including the hidden
+folder `.config`) into the working directory where `start_webui.py` is located.
+Now the JS scroller will be injected into the WebUI to enable auto-scrolling.
 
 ## MCP tool wrapper
 

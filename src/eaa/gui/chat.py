@@ -125,6 +125,7 @@ async def on_chat_start():
                         image_base64=image_base64
                     )
                     await cl_message.send()
+                    await cl.send_window_message("scrollBottom")
                     
                     # Update sidebar elements
                     if cl_message.elements is not None and len(cl_message.elements) > 0:
