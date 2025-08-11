@@ -3,8 +3,8 @@
 ## Table of Contents
 
 - [Installation](#installation)
-  - [Option 1: install via pip](#option-1-install-via-pip)
-  - [Option 2: install via uv](#option-2-install-via-uv)
+  - [Option 1: install via uv](#option-1-install-via-uv-recommended)
+  - [Option 2: install via pip](#option-2-install-via-pip)
 - [Quickstart guide](#quickstart-guide)
 - [WebUI](#webui)
 - [MCP tool wrapper](#mcp-tool-wrapper)
