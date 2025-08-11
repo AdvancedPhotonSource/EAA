@@ -12,7 +12,40 @@
 
 ## Installation
 
-### Option 1: install via pip
+### Option 1: install via uv (recommended)
+
+uv is a Python environment and package manager that is fast and dependency-deterministic, 
+offering better reproducibility guarantee. Unlike a conda environment, a uv
+virtual environment is installed at the root directory of a project instead of
+in a centralized location, making it more portable. 
+
+If you haven't installed uv yet, follow the [official documentation](https://docs.astral.sh/uv/#installation) to install it.
+
+Then clone the repostiroy, CD into the respository's root, and install the
+package and its dependencies using 
+```
+uv sync
+```
+To install extra dependencies, which are usually needed by some specific tools used by
+certain beamlines, use the `--extra` flag:
+```
+uv sync --extra name_of_extra_dependency_set
+```
+You can find the names of extra dependency sets in the `[project.optional-dependencies]`
+section of `pyproject.toml`.
+
+`uv sync` creates an environment in `/path/to/eaa/.venv`. 
+To activate it, do
+```
+source .venv/bin/activate
+```
+If you are running a script located inside the repository, you can also directly
+do it with `uv run` without activating the environment first:
+```
+uv run myscript.py
+```
+
+### Option 2: install via pip
 
 First, create a conda environment with Python 3.11:
 ```
@@ -35,39 +68,6 @@ pip install -e .[name_of_extra_dependency_set]
 ```
 You can find the names of extra dependency sets in the `[project.optional-dependencies]`
 section of `pyproject.toml`.
-
-### Option 2: install via uv
-
-uv is a Python environment and package manager that is fast and dependency-deterministic, 
-offering better reproducibility guarantee. Unlike a conda environment, a uv
-virtual environment is installed at the root directory of a project instead of
-in a centralized location, making it more portable. 
-
-If you haven't installed uv yet, follow the [official documentation](https://docs.astral.sh/uv/#installation) to install it.
-
-Then clone the repostiroy, CD into the respository's root, and install the
-package and its dependencies using 
-```
-uv sync
-```
-To install extra dependencies, which are usually needed by some specific tools used by
-certain beamlines, use the `--extra` flag:
-```
-uv sync --extra <name of extra dependency set>
-```
-You can find the names of extra dependency sets in the `[project.optional-dependencies]`
-section of `pyproject.toml`.
-
-`uv sync` creates an environment in `/path/to/eaa/.venv`. 
-To activate it, do
-```
-source .venv/bin/activate
-```
-If you are running a script located inside the repository, you can also directly
-do it with `uv run` without activating the environment first:
-```
-uv run myscript.py
-```
 
 
 ## Quickstart guide
