@@ -31,7 +31,11 @@ def windowed_phase_cross_correlation(
     moving: np.ndarray, 
     ref: np.ndarray, 
 ) -> np.ndarray:
-    """Phase correlation with windowing.
+    """Phase correlation with windowing. The result gives
+    the offset of the moving image with respect to the reference image.
+    If the moving image is shifted to the right, the result will have a
+    positive x-component; if the moving image is shifted to the bottom,
+    the result will have a positive y-component.
 
     Parameters
     ----------
