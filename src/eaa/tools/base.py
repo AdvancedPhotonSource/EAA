@@ -55,6 +55,7 @@ class BaseTool:
         add_axis_ticks: bool = False,
         x_ticks: Optional[List[float]] = None,
         y_ticks: Optional[List[float]] = None,
+        n_ticks: int = 10,
         add_grid_lines: bool = False,
         invert_yaxis: bool = False,
     ) -> plt.Figure:
@@ -70,6 +71,8 @@ class BaseTool:
             The x-axis ticks to add to the image. Required when `add_axis_ticks` is True.
         y_ticks : List[float], optional
             The y-axis ticks to add to the image. Required when `add_axis_ticks` is True.
+        n_ticks : int, optional
+            The number of ticks in each axis..
         add_grid_lines : bool, optional
             If True, grid lines are added to the image.
         invert_yaxis : bool, optional
@@ -78,8 +81,8 @@ class BaseTool:
         fig, ax = plt.subplots(1, 1)
         ax.imshow(image, cmap='gray')
         if add_axis_ticks:
-            ax.set_xticks(np.linspace(0, len(x_ticks) - 1, 5, dtype=int))
-            ax.set_yticks(np.linspace(0, len(y_ticks) - 1, 5, dtype=int))
+            ax.set_xticks(np.linspace(0, len(x_ticks) - 1, n_ticks, dtype=int))
+            ax.set_yticks(np.linspace(0, len(y_ticks) - 1, n_ticks, dtype=int))
             ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
             ax.set_yticklabels([np.round(y_ticks[i], 2) for i in ax.get_yticks()])
         ax.grid(add_grid_lines)

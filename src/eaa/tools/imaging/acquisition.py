@@ -91,6 +91,7 @@ class SimulatedAcquireImage(AcquireImage):
         whole_image: np.ndarray, 
         return_message: bool = True,
         add_axis_ticks: bool = False,
+        n_ticks: int = 10,
         add_grid_lines: bool = False,
         invert_yaxis: bool = False,
         line_scan_gaussian_fit_y_threshold: float = 0,
@@ -134,6 +135,7 @@ class SimulatedAcquireImage(AcquireImage):
         
         self.return_message = return_message
         self.add_axis_ticks = add_axis_ticks
+        self.n_ticks = n_ticks
         self.add_grid_lines = add_grid_lines
         self.invert_yaxis = invert_yaxis
         self.add_line_scan_candidates_to_image = add_line_scan_candidates_to_image
@@ -301,6 +303,7 @@ class SimulatedAcquireImage(AcquireImage):
                 add_axis_ticks=self.add_axis_ticks,
                 x_ticks=x,
                 y_ticks=y,
+                n_ticks=self.n_ticks,
                 add_grid_lines=self.add_grid_lines,
                 invert_yaxis=self.invert_yaxis
             )
