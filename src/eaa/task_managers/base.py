@@ -259,6 +259,7 @@ class BaseTaskManager:
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
             if len(tool_responses) >= 1:        
                 for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                    print_message(tool_response)
                     self.update_message_history(tool_response, update_context=True, update_full_history=True)
                     # If the tool returns an image path, load the image and send it to 
                     # the assistant in a follow-up message as user.
