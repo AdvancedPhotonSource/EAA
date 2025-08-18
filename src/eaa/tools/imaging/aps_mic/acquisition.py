@@ -113,6 +113,8 @@ class BlueSkyAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
+        
+        self.update_call_history(x_center, y_center, width, height, stepsize_x, stepsize_y)
         try:
             if self.allowable_x_range:
                 if x_center < self.allowable_x_range[0] or x_center > self.allowable_x_range[1]:
@@ -176,7 +178,6 @@ class BlueSkyAcquireImage(AcquireImage):
                 wait_for_file(img_path, duration=5)
 
                 self.update_image_buffers(img_arr, psize=stepsize_x)
-                self.update_image_acquisition_counter()
                 if img_path:
                     return img_path
                 else:

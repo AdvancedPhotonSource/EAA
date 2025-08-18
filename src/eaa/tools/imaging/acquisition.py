@@ -45,8 +45,30 @@ class AcquireImage(BaseTool):
         self.psize_km1 = None
         self.psize_k = None
         
-        self.counter_acquire_image = 0
+        self.call_history: List[Dict[str, Any]] = []
+                
+    @property
+    def counter_acquire_image(self):
+        return len(self.call_history)
         
+    def update_call_history(
+        self, 
+        loc_x: float, 
+        loc_y: float, 
+        size_x: float, 
+        size_y: float,
+        psize_x: float,
+        psize_y: float
+    ):
+        self.call_history.append({
+            "loc_x": loc_x,
+            "loc_y": loc_y,
+            "size_x": size_x,
+            "size_y": size_y,
+            "psize_x": psize_x,
+            "psize_y": psize_y,
+        })
+
     def update_real_time_view(self, image: np.ndarray):
         if self.rt_fig is None:
             self.rt_fig, ax = plt.subplots(1, 1, squeeze=True)
@@ -77,9 +99,6 @@ class AcquireImage(BaseTool):
 
     def acquire_image(self, *args, **kwargs):
         raise NotImplementedError
-    
-    def update_image_acquisition_counter(self):
-        self.counter_acquire_image += 1
 
 
 class SimulatedAcquireImage(AcquireImage):
@@ -280,6 +299,8 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
+        self.update_call_history(loc_x, loc_y, size_x, size_y, psize_x=1, psize_y=1)
+        
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
@@ -294,7 +315,6 @@ class SimulatedAcquireImage(AcquireImage):
             self.update_real_time_view(arr)
             
         self.update_image_buffers(arr, psize=1)
-        self.update_image_acquisition_counter()
             
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
