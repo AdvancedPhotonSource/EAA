@@ -334,13 +334,15 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 9. When you find the FWHM is minimized, you are done. Add "TERMINATE" to 
                    your response to hand over control back to the user.
                    
-                Other notes:
+                Important notes:
                 
                 - Your line scan should cross only one line feature, and you should see
                   **exactly one peak** in the line scan plot. If there isn't one, or if there
                   are multiple peaks, or if the Gaussian fit looks bad, check your arguments
                   to the line scan tool and run it again. Make sure your line scan strictly
-                  follow the marker in the reference image.
+                  follow the marker in the reference image. Do not trust the FWHM value
+                  in the line plot if there is no peak, if the peak is incomplete, or if
+                  there are multiple peaks!
                 - The line scan plot should show a complete peak. If the peak is incomplete,
                   adjust the line scan tool's arguments to make it complete.
                 - The minimal point of the FWHM is indicated by an inflection of the trend
@@ -352,6 +354,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 - When calling a tool, explain what you are doing.
                 - When making a tool call, only call one tool at a time. Do not call multiple
                   tools in one response.
+                - Remember that when coordinates are given in (y, x) order, the first coordinate
+                  is the row index (vertical) and the second is the column index (horizontal).
+                  When you write coordinates in your response, do not just write two numbers;
+                  instead, explicitly specify y/x axis and write them as (y = <y>, x = <x>).
                 
                 When you finish or when you need human input, add "TERMINATE" to your response.\
                 """
