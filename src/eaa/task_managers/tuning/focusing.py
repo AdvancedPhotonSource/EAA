@@ -135,7 +135,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                         f"Phase correlation has found the offset between "
                         f"the new image and the previous one to be {shift.tolist()} (y, x). Use "
                         f"this offset to adjust the line scan positions by **adding** it to both "
-                        f"the x and y coordinates of the start and end points of the previous line scan."
+                        f"the x and y coordinates of the start and end points of the previous line scan. "
+                        f"For your reference, the last line scan tool call is {self.acquisition_tool.line_scan_call_history[-1]}."
                     )
                     self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
             response, outgoing = self.agent.receive(

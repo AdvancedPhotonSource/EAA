@@ -45,13 +45,14 @@ class AcquireImage(BaseTool):
         self.psize_km1 = None
         self.psize_k = None
         
-        self.call_history: List[Dict[str, Any]] = []
+        self.image_acquisition_call_history: List[Dict[str, Any]] = []
+        self.line_scan_call_history: List[Dict[str, Any]] = []
                 
     @property
     def counter_acquire_image(self):
-        return len(self.call_history)
+        return len(self.image_acquisition_call_history)
         
-    def update_call_history(
+    def update_image_acquisition_call_history(
         self, 
         loc_x: float, 
         loc_y: float, 
@@ -60,7 +61,7 @@ class AcquireImage(BaseTool):
         psize_x: float,
         psize_y: float
     ):
-        self.call_history.append({
+        self.image_acquisition_call_history.append({
             "loc_x": loc_x,
             "loc_y": loc_y,
             "size_x": size_x,
@@ -68,6 +69,23 @@ class AcquireImage(BaseTool):
             "psize_x": psize_x,
             "psize_y": psize_y,
         })
+        
+    def update_line_scan_call_history(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        step: float
+    ):
+        self.line_scan_call_history.append({
+            "start_x": start_x,
+            "start_y": start_y,
+            "end_x": end_x,
+            "end_y": end_y,
+            "step": step
+        })
+    
 
     def update_real_time_view(self, image: np.ndarray):
         if self.rt_fig is None:
@@ -299,7 +317,7 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
-        self.update_call_history(loc_x, loc_y, size_x, size_y, psize_x=1, psize_y=1)
+        self.update_image_acquisition_call_history(loc_x, loc_y, size_x, size_y, psize_x=1, psize_y=1)
         
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
@@ -360,6 +378,8 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the plot of the line scan saved in hard drive.
         """
+        self.update_line_scan_call_history(start_x, start_y, end_x, end_y, scan_step)
+        
         pt_start = np.array([start_y, start_x])
         pt_end = np.array([end_y, end_x])
         d_tot = np.linalg.norm(pt_end - pt_start)
@@ -430,4 +450,5 @@ class SimulatedAcquireImage(AcquireImage):
             The path of the plot of the line scan saved in hard drive.
         """
         start_x, start_y, end_x, end_y = self.line_scan_candidates[choice]
+        self.update_line_scan_call_history(start_x, start_y, end_x, end_y, scan_step)
         return self.scan_line(start_x, start_y, end_x, end_y, scan_step=scan_step)
