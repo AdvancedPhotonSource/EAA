@@ -16,8 +16,8 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
     def __init__(
         self,
         llm_config: LLMConfig = None,
-        tools: list[BaseTool] = (),
         bayesian_optimization_tool: BayesianOptimizationTool = None,
+        additional_tools: list[BaseTool] = (),
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
         objective_function: Callable = None,
@@ -31,9 +31,9 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         ----------
         llm_config : LLMConfig, optional
             The configuration for the LLM.
-        tools : list[BaseTool], optional
-            A list of tools for the agent. This should NOT include the
-            `BayesianOptimizationTool`.
+        additional_tools : list[BaseTool], optional
+            A list of tools for the agent (not including the
+            `BayesianOptimizationTool`).
         bayesian_optimization_tool : BayesianOptimizationTool
             The Bayesian optimization tool to use.
         initial_points : torch.Tensor, optional
@@ -66,7 +66,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         
         self.bayesian_optimization_tool = bayesian_optimization_tool
         
-        for tool in tools:
+        for tool in additional_tools:
             if isinstance(tool, BayesianOptimizationTool):
                 raise ValueError(
                     "`BayesianOptimizationTool` should not be included in `tools`. "
@@ -80,7 +80,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         
         super().__init__(
             llm_config=llm_config,
-            tools=tools,
+            tools=additional_tools,
             message_db_path=message_db_path,
             build=build,
             *args, **kwargs

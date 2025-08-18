@@ -23,7 +23,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         llm_config: LLMConfig = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
-        tools: list[BaseTool] = (),
+        additional_tools: list[BaseTool] = (),
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
         message_db_path: Optional[str] = None,
@@ -61,7 +61,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             The BaseTool object used to acquire data. It should contain a 2D
             image acquisition tool and a line scan tool.
         tools : list[BaseTool], optional
-            Other tools provided to the agent.
+            Additional tools provided to the agent (not including the
+            parameter setting tool and the acquisition tool).
         initial_parameters : dict[str, float], optional
             The initial parameters given as a dictionary of 
             parameter names and values.
@@ -86,7 +87,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         super().__init__(
             llm_config=llm_config,
             param_setting_tool=param_setting_tool,
-            tools=[acquisition_tool, *tools],
+            additional_tools=[acquisition_tool, *additional_tools],
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
             message_db_path=message_db_path,
@@ -436,7 +437,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
         super().__init__(
             llm_config=llm_config,
             param_setting_tool=param_setting_tool,
-            tools=[param_setting_tool],
+            additional_tools=[param_setting_tool],
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
             message_db_path=message_db_path,

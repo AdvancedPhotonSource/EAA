@@ -24,6 +24,7 @@ class MicroscopyOpticsTuningBOTaskManager(
         image_acquisition_tool: BaseTool = None,
         parameter_setting_tool: BaseTool = None,
         bayesian_optimization_tool: BayesianOptimizationTool = None,
+        additional_tools: list[BaseTool] = (),
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
         image_acquisition_kwargs: dict = {},
@@ -39,6 +40,13 @@ class MicroscopyOpticsTuningBOTaskManager(
             The configuration for the LLM.
         bayesian_optimization_tool : BayesianOptimizationTool
             The Bayesian optimization tool to use.
+        image_acquisition_tool : BaseTool
+            The tool to use to acquire images.
+        parameter_setting_tool : BaseTool
+            The tool to use to set the parameters.
+        additional_tools : list[BaseTool], optional
+            Additional tools provided to the agent (not including the
+            tools passed through explicit arguments).
         initial_points : torch.Tensor, optional
             A (n_points, n_features) tensor giving the initial points where
             the objective function should be evaluated to initialize the
@@ -83,7 +91,6 @@ class MicroscopyOpticsTuningBOTaskManager(
         BayesianOptimizationTaskManager.__init__(
             self,
             llm_config=llm_config,
-            tools=[],
             bayesian_optimization_tool=bayesian_optimization_tool,
             initial_points=initial_points,
             n_initial_points=n_initial_points,
@@ -95,7 +102,8 @@ class MicroscopyOpticsTuningBOTaskManager(
         FeatureTrackingTaskManager.__init__(
             self, 
             llm_config=llm_config,
-            tools=[image_acquisition_tool],
+            image_acquisition_tool=image_acquisition_tool,
+            additional_tools=additional_tools,
             build=True,
             *args, **kwargs
         )

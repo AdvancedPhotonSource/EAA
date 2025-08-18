@@ -2,6 +2,8 @@ from typing import Optional
 from textwrap import dedent
 
 from eaa.tools.base import BaseTool
+from eaa.tools.imaging.acquisition import AcquireImage
+from eaa.tools.imaging.registration import ImageRegistration
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.api.llm_config import LLMConfig
 
@@ -11,7 +13,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        tools: list[BaseTool] = (), 
+        image_acquisition_tool: AcquireImage = None,
+        image_registration_tool: ImageRegistration = None,
+        additional_tools: list[BaseTool] = (), 
         message_db_path: Optional[str] = None,
         build: bool = True,
         *args, **kwargs
@@ -23,8 +27,13 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
-        tools : list[BaseTool]
-            A list of tools provided to the agent.
+        image_acquisition_tool : AcquireImage
+            The tool to use to acquire images.
+        image_registration_tool : ImageRegistration
+            The tool to use to register images.
+        additional_tools : list[BaseTool]
+            Additional tools provided to the agent (not including the
+            image acquisition tool and the image registration tool).
         message_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
@@ -32,7 +41,14 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             for new messages.
         build : bool
             Whether to build the internal state of the task manager.
-        """        
+        """
+        if image_acquisition_tool is None:
+            raise ValueError("image_acquisition_tool must be provided.")
+        
+        tools = []
+        for t in [image_acquisition_tool, image_registration_tool, *additional_tools]:
+            if t is not None:
+                tools.append(t)
         super().__init__(
             llm_config=llm_config,
             tools=tools, 

@@ -15,7 +15,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         self, 
         llm_config: LLMConfig = None,
         param_setting_tool: SetParameters = None,
-        tools: list[BaseTool] = (),
+        additional_tools: list[BaseTool] = (),
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
         message_db_path: Optional[str] = None,
@@ -39,14 +39,18 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
             2 tuples, where the first tuple gives the lower bounds and the
             second tuple gives the upper bounds. The order of the parameters
             should match the order of the initial parameters.
-        tools : list[BaseTool], optional
-            Other tools provided to the agent.
+        additional_tools : list[BaseTool], optional
+            Additional tools provided to the agent (not including the
+            parameter setting tool).
         message_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
             for new messages.
         """
+        if param_setting_tool is None:
+            raise ValueError("param_setting_tool must be provided.")
+        
         self.param_setting_tool: SetParameters = param_setting_tool
         self.initial_parameters: dict[str, float] = initial_parameters
         self.parameter_names = list(initial_parameters.keys())
@@ -54,7 +58,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         
         super().__init__(
             llm_config=llm_config,
-            tools=[param_setting_tool, *tools],
+            tools=[param_setting_tool, *additional_tools],
             message_db_path=message_db_path,
             build=build,
             *args, **kwargs
