@@ -117,7 +117,7 @@ class ImageRegistration(BaseTool):
     ]:
         """
         Register the latest image collected by the image acquisition tool
-        and a reference image.
+        and the reference image.
         """
         # Get the latest image:
         image_t = self.process_image(self.image_acquisition_tool.image_k)
