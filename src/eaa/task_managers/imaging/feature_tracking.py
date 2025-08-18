@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Callable
 from textwrap import dedent
 
 from eaa.tools.base import BaseTool
@@ -45,6 +45,11 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         if image_acquisition_tool is None:
             raise ValueError("image_acquisition_tool must be provided.")
         
+        self.image_acquisition_tool = image_acquisition_tool
+        self.registration_tool = image_registration_tool
+        
+        self.last_acquisition_count_stitched = 0
+        
         tools = []
         for t in [image_acquisition_tool, image_registration_tool, *additional_tools]:
             if t is not None:
@@ -56,6 +61,41 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             build=build,
             *args, **kwargs
         )
+        
+    def image_path_tool_response_hook_factory(
+        self,
+        add_reference_image_to_images_acquired: bool,
+        reference_image_path: str
+    ) -> Callable:
+        """Factory function that returns a hook function for the image path tool response.
+        """
+        def hook_function(image_path: str) -> None:
+            message = ""
+            if (
+                add_reference_image_to_images_acquired
+                and self.image_acquisition_tool.counter_acquire_image > self.last_acquisition_count_stitched
+                ):
+                image_path = self.add_reference_image_to_images_acquired(
+                    image_path, reference_image_path
+                )
+                self.last_acquisition_count_stitched = self.image_acquisition_tool.counter_acquire_image
+                message = (
+                    "Here is the new image (left). "
+                    "The reference image (right) is also shown for your reference."
+                )
+            
+            response, outgoing = self.agent.receive(
+                message,
+                image_path=image_path,
+                context=self.context,
+                return_outgoing_message=True
+            )
+            return response, outgoing
+        
+        if not add_reference_image_to_images_acquired:
+            return None
+        else:
+            return hook_function
         
     def run_fov_search(
         self,
@@ -158,6 +198,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         initial_fov_size: Optional[tuple[float, float]] = None,
         y_range: Optional[tuple[float, float]] = None,
         x_range: Optional[tuple[float, float]] = None,
+        add_reference_image_to_images_acquired: bool = False,
         max_rounds: int = 99,
         initial_prompt: Optional[str] = None,
         additional_prompt: Optional[str] = None
@@ -179,6 +220,13 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             The range of y coordinates to search for the feature.
         x_range : tuple[float, float], optional
             The range of x coordinates to search for the feature.
+        add_reference_image_to_images_acquired : bool, optional
+            If True, the reference image will be stitched side-by-side with
+            2D microscopy images acquired. This allows the agent to always see
+            the reference image in new messages when needed, instead of having
+            the reference image only in the first message in the context. This
+            may be particularly useful for inference endpoint providers that do
+            not support images in the context.
         max_rounds : int, optional
             The maximum number of rounds to search for the feature.
         initial_prompt : str, optional
@@ -229,5 +277,11 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,
             store_all_images_in_context=False,
-            max_rounds=max_rounds
+            max_rounds=max_rounds,
+            hook_functions={
+                "image_path_tool_response": self.image_path_tool_response_hook_factory(
+                    add_reference_image_to_images_acquired,
+                    reference_image_path
+                )
+            },
         )

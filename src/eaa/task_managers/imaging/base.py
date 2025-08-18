@@ -2,9 +2,12 @@ from textwrap import dedent
 import logging
 from typing import Optional
 
+from PIL import Image
+
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.api.llm_config import LLMConfig
+from eaa.image_proc import stitch_images
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,19 @@ class ImagingBaseTaskManager(BaseTaskManager):
         if len(self.agent.tool_manager.tools) == 0:
             logger.warning("No tools registered for the main agent.")
         return super().prerun_check(*args, **kwargs)
+    
+    @staticmethod
+    def add_reference_image_to_images_acquired(
+        new_image_path: str, reference_image_path: str
+    ) -> str:
+        """Add the reference image to the images acquired side-by-side, and return
+        the path to the new image.
+        """
+        new_image = Image.open(new_image_path)
+        reference_image = Image.open(reference_image_path)
+        stitched_image = stitch_images([new_image, reference_image], gap=0)
+        stitched_image.save(new_image_path)
+        return new_image_path
         
     def run(self, *args, **kwargs) -> None:
         """Run the task manager."""

@@ -1,29 +1,48 @@
 import numpy as np
+from PIL import Image
 
-
-def stitch_images(images: list[np.ndarray], gap: int = 0) -> np.ndarray:
+def stitch_images(
+    images: list[np.ndarray | Image.Image], 
+    gap: int = 0
+) -> np.ndarray | Image.Image:
     """Stitch a list of images together.
     
     Parameters
     ----------
-    images : list[np.ndarray]
+    images : list[np.ndarray | Image.Image]
         A list of images to stitch together.
+    gap : int, optional
+        The horizontal gap between the images.
         
     Returns
     -------
-    stitched_image : np.ndarray
+    stitched_image : np.ndarray | Image.Image
         The stitched image.
     """
-    max_shape = (
-        max([img.shape[0] for img in images]),
-        np.sum([img.shape[1] for img in images]) + gap * (len(images) - 1),
-    )
-    buffer = np.zeros(max_shape, dtype=images[0].dtype)
-    
-    x = 0
-    for img in images:
-        buffer[:img.shape[0], x : x + img.shape[1]] = img
-        x += img.shape[1] + gap
+    if isinstance(images[0], np.ndarray):
+        max_shape = (
+            max([img.shape[0] for img in images]),
+            np.sum([img.shape[1] for img in images]) + gap * (len(images) - 1),
+        )
+        buffer = np.zeros(max_shape, dtype=images[0].dtype)
+        
+        x = 0
+        for img in images:
+            buffer[:img.shape[0], x : x + img.shape[1]] = img
+            x += img.shape[1] + gap
+    elif isinstance(images[0], Image.Image):
+        max_shape = (
+            sum([img.width for img in images]) + gap * (len(images) - 1),
+            max([img.height for img in images]),
+        )
+        buffer = Image.new("RGB", max_shape)
+        x = 0
+        for img in images:
+            buffer.paste(img, (x, 0))
+            x += img.width + gap
+    else:
+        raise ValueError("The images must be either numpy arrays or PIL images.")
+        
     return buffer
 
 

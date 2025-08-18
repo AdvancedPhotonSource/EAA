@@ -2,12 +2,12 @@ from typing import Optional, Callable
 from textwrap import dedent
 import logging
 
-from PIL import Image
 import numpy as np
 
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.tuning.base import BaseParameterTuningTaskManager
+from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
@@ -110,7 +110,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 add_reference_image_to_images_acquired
                 and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_stitched
             ):
-                image_path = self.add_reference_image_to_images_acquired(
+                image_path = ImagingBaseTaskManager.add_reference_image_to_images_acquired(
                     image_path, reference_image_path
                 )
                 self.last_acquisition_count_stitched = self.acquisition_tool.counter_acquire_image
@@ -150,23 +150,6 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             return None
         else:
             return hook_function
-    
-    def add_reference_image_to_images_acquired(
-        self, new_image_path: str, reference_image_path: str
-    ) -> str:
-        """Add the reference image to the images acquired side-by-side, and return
-        the path to the new image.
-        """
-        new_image = Image.open(new_image_path)
-        reference_image = Image.open(reference_image_path)
-        stitched_image = Image.new(
-            "RGB", 
-            (new_image.width + reference_image.width, max(new_image.height, reference_image.height))
-        )
-        stitched_image.paste(new_image, (0, 0))
-        stitched_image.paste(reference_image, (new_image.width, 0))
-        stitched_image.save(new_image_path)
-        return new_image_path
         
     def register_images(self, image_k: np.ndarray, image_km1: np.ndarray) -> np.ndarray:
         """Register the two images and return the offset.
