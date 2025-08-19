@@ -48,9 +48,9 @@ class BaseTool:
         # Convert to base64
         img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
         return img_base64
-    
+
+    @staticmethod
     def plot_2d_image(
-        self, 
         image: np.ndarray, 
         add_axis_ticks: bool = False,
         x_ticks: Optional[List[float]] = None,
@@ -85,6 +85,9 @@ class BaseTool:
             ax.set_yticks(np.linspace(0, len(y_ticks) - 1, n_ticks, dtype=int))
             ax.set_xticklabels([np.round(x_ticks[i], 2) for i in ax.get_xticks()])
             ax.set_yticklabels([np.round(y_ticks[i], 2) for i in ax.get_yticks()])
+        else:
+            ax.set_xticks([])
+            ax.set_yticks([])
         ax.grid(add_grid_lines)
         if invert_yaxis:
             ax.invert_yaxis()
@@ -92,9 +95,9 @@ class BaseTool:
         ax.set_ylabel("y")
         plt.tight_layout()
         return fig
-    
+
+    @staticmethod
     def save_image_to_temp_dir(
-        self, 
         fig: plt.Figure, 
         filename: Optional[str] = None, 
         add_timestamp: bool = False
@@ -110,6 +113,11 @@ class BaseTool:
             saved as "image.png".
         add_timestamp : bool, optional
             If True, the timestamp is added to the filename.
+            
+        Returns
+        -------
+        str
+            The path to the saved image.
         """
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")

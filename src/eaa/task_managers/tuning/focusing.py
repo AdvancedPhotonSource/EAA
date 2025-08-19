@@ -1,6 +1,7 @@
 from typing import Optional, Callable
 from textwrap import dedent
 import logging
+import copy
 
 import numpy as np
 
@@ -8,7 +9,9 @@ from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.tuning.base import BaseParameterTuningTaskManager
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
+from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa.tools.base import ToolReturnType, BaseTool
+from eaa.tools.imaging.registration import ImageRegistration
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
 from eaa.image_proc import windowed_phase_cross_correlation
@@ -23,9 +26,12 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         llm_config: LLMConfig = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
+        image_registration_tool: Optional[ImageRegistration] = None,
         additional_tools: list[BaseTool] = (),
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
+        use_feature_tracking_subtask: bool = False,
+        feature_tracking_kwargs: Optional[dict] = None,
         message_db_path: Optional[str] = None,
         build: bool = True,
         *args, **kwargs
@@ -60,7 +66,12 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         acquisition_tool : AcquireImage
             The BaseTool object used to acquire data. It should contain a 2D
             image acquisition tool and a line scan tool.
-        tools : list[BaseTool], optional
+        image_registration_tool : ImageRegistration, optional
+            The image registration tool. This tool is optional and is only
+            used for the feature tracking sub-task if `use_feature_tracking_subtask`
+            is True. To use registration in the focusing task manager, refer to
+            ``use_registration_in_workflow`` in the ``run`` method.
+        additional_tools : list[BaseTool], optional
             Additional tools provided to the agent (not including the
             parameter setting tool and the acquisition tool).
         initial_parameters : dict[str, float], optional
@@ -71,6 +82,18 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             2 tuples, where the first tuple gives the lower bounds and the
             second tuple gives the upper bounds. The order of the parameters
             should match the order of the initial parameters.
+        use_feature_tracking_subtask : bool, optional
+            If True, a feature tracking sub-task manager will be created and
+            runs when a 2D image is acquired to restore drifted FOV.
+        feature_tracking_kwargs : dict, optional
+            The kwargs for the feature tracking sub-task manager. Required
+            if `use_feature_tracking_subtask` is True. The dictionary should
+            contain:
+            - `y_range`: Tuple[float, float] The range of the y-coordinate of the feature.
+            - `x_range`: Tuple[float, float] The range of the x-coordinate of the feature.
+
+            Initial positions should not be included in the dictionary because
+            they will be determined by the logic.
         message_db_path : Optional[str], optional
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
@@ -80,9 +103,14 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             Whether to build the internal state of the task manager.
         """
         self.acquisition_tool = acquisition_tool
+        self.image_registration_tool = image_registration_tool
         
         self.last_acquisition_count_registered = 0
         self.last_acquisition_count_stitched = 0
+        
+        self.use_feature_tracking_subtask = use_feature_tracking_subtask
+        self.feature_tracking_task_manager: Optional[FeatureTrackingTaskManager] = None
+        self.feature_tracking_kwargs = feature_tracking_kwargs
         
         super().__init__(
             llm_config=llm_config,
@@ -99,10 +127,11 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         self,
         use_registration_in_workflow: bool,
         add_reference_image_to_images_acquired: bool,
+        use_feature_tracking_subtask: bool,
         reference_image_path: str
     ) -> Callable:
         """Factory function that returns a hook function for the image path tool response.
-        If none of the two flags are True, it returns None.
+        If none of the flags are True, it returns None.
         """
         def hook_function(image_path: str) -> None:
             message = ""
@@ -116,10 +145,50 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 self.last_acquisition_count_stitched = self.acquisition_tool.counter_acquire_image
                 message = (
                     "Here is the new image (left). "
-                    "The reference image (right) is also shown for your reference."
+                    "The reference image (right) is also shown for your reference. "
                 )
             
-            if use_registration_in_workflow:
+            run_feature_tracking = use_feature_tracking_subtask
+            if use_feature_tracking_subtask:
+                # Let agent decide whether feature tracking is needed.
+                if (
+                    self.acquisition_tool.image_km1 is not None
+                    and self.acquisition_tool.image_k is not None
+                    and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
+                ):
+                    response, outgoing = self.agent.receive(
+                        "Here is the collected image. Does it have any overlap with the reference image? "
+                        "Just answer with 'yes' or 'no'.",
+                        image_path=image_path,
+                        context=self.context,
+                        return_outgoing_message=True
+                    )
+                    self.update_message_history(outgoing, update_context=False, update_full_history=True)
+                    self.update_message_history(response, update_context=True, update_full_history=True)
+                    
+                    if "no" in response["content"].lower():
+                        # If there is no overlap, run feature tracking to restore the FOV.
+                        run_feature_tracking = True
+                        feature_tracking_response = self.restore_fov(
+                            self.acquisition_tool.image_km1,
+                            add_target_image_to_images_acquired=add_reference_image_to_images_acquired
+                        )
+                        self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
+                        
+                        if len(message) == 0:
+                            message = ""
+                        message += (
+                            f"Here is the image you just acquired. Since there is no overlap "
+                            f"with the last image, feature tracking has been performed. Here "
+                            f"is the result: \n{feature_tracking_response}\n"
+                            f"Use the result to adjust the line scan positions."
+                        )
+                    else:
+                        run_feature_tracking = False
+                else:
+                    run_feature_tracking = False
+            
+            if use_registration_in_workflow and not run_feature_tracking:
                 image_k = self.acquisition_tool.image_k
                 image_km1 = self.acquisition_tool.image_km1
                 if (
@@ -156,10 +225,48 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             )
             return response, outgoing
         
-        if not use_registration_in_workflow and not add_reference_image_to_images_acquired:
+        if (
+            (not use_registration_in_workflow)
+            and (not add_reference_image_to_images_acquired)
+            and (not use_feature_tracking_subtask)
+        ):
             return None
         else:
             return hook_function
+        
+    def restore_fov(
+        self, 
+        target_image: np.ndarray, 
+        add_target_image_to_images_acquired: bool = False
+    ) -> str:
+        """Run the feature tracking sub-task to make the FOV aligned with the target image.
+        """
+        fig = BaseTool.plot_2d_image(target_image, add_axis_ticks=False)
+        target_image_path = BaseTool.save_image_to_temp_dir(fig, "target_image.png", add_timestamp=True)
+        
+        self.feature_tracking_task_manager = FeatureTrackingTaskManager(
+            llm_config=self.llm_config,
+            image_acquisition_tool=copy.deepcopy(self.acquisition_tool),
+            image_registration_tool=copy.deepcopy(self.image_registration_tool),
+            message_db_path=self.message_db_path,
+        )
+        
+        self.feature_tracking_task_manager.run_feature_tracking(
+            reference_image_path=target_image_path,
+            initial_position=(
+                self.acquisition_tool.image_acquisition_call_history[-1]["loc_y"], 
+                self.acquisition_tool.image_acquisition_call_history[-1]["loc_x"]
+            ),
+            initial_fov_size=(
+                self.acquisition_tool.image_acquisition_call_history[-1]["size_y"], 
+                self.acquisition_tool.image_acquisition_call_history[-1]["size_x"]
+            ),
+            add_reference_image_to_images_acquired=add_target_image_to_images_acquired,
+            **self.feature_tracking_kwargs,
+            termination_behavior="return"
+        )
+        feature_tracking_response = self.feature_tracking_task_manager.context[-1]["content"]
+        feature_tracking_response = feature_tracking_response.replace("TERMINATE", "")
         
     def register_images(self, image_k: np.ndarray, image_km1: np.ndarray) -> np.ndarray:
         """Register the two images and return the offset.
@@ -371,9 +478,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             max_rounds=max_iters,
             hook_functions={
                 "image_path_tool_response": self.image_path_tool_response_hook_factory(
-                    use_registration_in_workflow,
-                    add_reference_image_to_images_acquired,
-                    reference_image_path
+                    use_registration_in_workflow=use_registration_in_workflow,
+                    add_reference_image_to_images_acquired=add_reference_image_to_images_acquired,
+                    use_feature_tracking_subtask=self.use_feature_tracking_subtask,
+                    reference_image_path=reference_image_path
                 )
             },
             *args, **kwargs
