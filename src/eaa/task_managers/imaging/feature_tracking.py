@@ -1,4 +1,4 @@
-from typing import Optional, Callable
+from typing import Optional, Callable, Literal
 from textwrap import dedent
 
 from eaa.tools.base import BaseTool
@@ -201,7 +201,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         add_reference_image_to_images_acquired: bool = False,
         max_rounds: int = 99,
         initial_prompt: Optional[str] = None,
-        additional_prompt: Optional[str] = None
+        additional_prompt: Optional[str] = None,
+        termination_behavior: Literal["ask", "return"] = "ask"
     ):
         """Search for a feature that drifted out of the field of view
         given a reference image of it, and bring the feature back into
@@ -234,6 +235,12 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             be used as the initial message to the agent.
             `initial_position`, `initial_fov_size`, `y_range`, and `x_range`
             should not be provided if this is given.
+        additional_prompt : str, optional
+            Additional instructions to the agent.
+        termination_behavior : Literal["ask", "return"], optional
+            Decides what to do when the agent sends termination signal ("TERMINATE")
+            in the response. If "ask", the user will be asked to provide further
+            instructions. If "return", the function will return directly.
         """
         if initial_prompt is None:
             initial_prompt = dedent(f"""\
@@ -329,4 +336,5 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                     reference_image_path
                 )
             },
+            termination_behavior=termination_behavior
         )

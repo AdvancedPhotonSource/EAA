@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional, Callable, Literal
 import sqlite3
 import logging
 import time
@@ -329,6 +329,7 @@ class BaseTaskManager:
         n_past_images_to_keep: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
         hook_functions: Optional[dict[str, Callable]] = None,
+        termination_behavior: Literal["ask", "return"] = "ask",
         *args, **kwargs
     ) -> None:
         """Run an agent-involving feedback loop.
@@ -379,6 +380,10 @@ class BaseTaskManager:
               sent to the agent. When this function is given, it **replaces** the
               `agent.receive` call so be sure to send the image to the agent in
               the hook if this is intended.
+        termination_behavior : Literal["ask", "return"], optional
+            Decides what to do when the agent sends termination signal ("TERMINATE")
+            in the response. If "ask", the user will be asked to provide further
+            instructions. If "return", the function will return directly.
         """
         hook_functions = hook_functions or {}
         round = 0
@@ -393,6 +398,8 @@ class BaseTaskManager:
         self.update_message_history(response, update_context=True, update_full_history=True)
         while round < max_rounds:
             if response["content"] is not None and "TERMINATE" in response["content"]:
+                if termination_behavior == "return":
+                    return
                 message = self.get_user_input(
                     "Termination condition triggered. What to do next? Type \"exit\" to exit. "
                 )
