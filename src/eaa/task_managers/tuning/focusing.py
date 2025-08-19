@@ -131,12 +131,21 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     
                     if len(message) == 0:
                         message = "Here is the new image. "
+                    scan_pos_diff = [
+                        float(self.acquisition_tool.image_acquisition_call_history[-1][f"loc_{dir}"])
+                        - float(self.acquisition_tool.image_acquisition_call_history[-2][f"loc_{dir}"])
+                        for dir in ["y", "x"]
+                    ]
                     message += (
                         f"Phase correlation has found the offset between "
-                        f"the new image and the previous one to be {shift.tolist()} (y, x). Use "
-                        f"this offset to adjust the line scan positions by **adding** it to both "
+                        f"the new image and the previous one to be {shift.tolist()} (y, x). Taking "
+                        f"into account the difference in scan positions ({scan_pos_diff}), the net "
+                        f"drift is {[float(shift[i] + scan_pos_diff[i]) for i in [0, 1]]} (y, x). Use this offset to "
+                        f"to adjust the line scan positions by **adding** it to both "
                         f"the x and y coordinates of the start and end points of the previous line scan. "
                         f"For your reference, the last line scan tool call is {self.acquisition_tool.line_scan_call_history[-1]}."
+                        f"Also use this offset to update the argument when you perform 2D image acquisition "
+                        f"next time. The last 2D image acquisition call is {self.acquisition_tool.image_acquisition_call_history[-1]}."
                     )
                     self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
             response, outgoing = self.agent.receive(
@@ -251,7 +260,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     """\
                     Along with this image, you will also be given the offset of
                     this image compared to the previous image found through image registration.
-                    Use this offset to adjust the line scan positions. Note that the offset
+                    Use this offset to adjust the line scan positions. Also use this offset to
+                    update the positions of your next 2D image acquisition. Note that the offset
                     is just a suggestion. If the new image does not appear to have any overlap
                     with the previous one, the offset won't be reliable. In that case, try
                     adjusting the image acquisition tool's parameters to move the field of view
