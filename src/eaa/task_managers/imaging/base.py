@@ -79,5 +79,3 @@ class ImagingBaseTaskManager(BaseTaskManager):
     def run(self, *args, **kwargs) -> None:
         """Run the task manager."""
         super().run(*args, **kwargs)
-        
-        self.run_fov_search(*args, **kwargs)
