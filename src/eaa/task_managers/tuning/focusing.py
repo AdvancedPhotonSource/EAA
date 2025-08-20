@@ -14,7 +14,6 @@ from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
-from eaa.image_proc import windowed_phase_cross_correlation
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +101,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         build : bool, optional
             Whether to build the internal state of the task manager.
         """
+        if acquisition_tool is None:
+            raise ValueError("`acquisition_tool` must be provided.")
+        
         self.acquisition_tool = acquisition_tool
         self.image_registration_tool = image_registration_tool
         
@@ -271,11 +273,19 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
     def register_images(self, image_k: np.ndarray, image_km1: np.ndarray) -> np.ndarray:
         """Register the two images and return the offset.
         """
-        # Take the average of channels for RGB images.
-        image_k = image_k if image_k.ndim == 2 else image_k.mean(-1)
-        image_km1 = image_km1 if image_km1.ndim == 2 else image_km1.mean(-1)
-        shift = windowed_phase_cross_correlation(image_k, image_km1)
-        shift = shift * self.acquisition_tool.psize_k
+        # Recreate another object of the registration tool here instead of reusing
+        # the one provided to avoid perturbing the internal state of the tool.
+        if self.image_registration_tool is None:
+            raise ValueError(
+                "`image_registration_tool` should be provided in the class constructor."
+            )
+        registration_tool = copy.deepcopy(self.image_registration_tool)
+        shift = registration_tool.register_images(
+            image_t=registration_tool.process_image(image_k),
+            image_r=registration_tool.process_image(image_km1),
+            psize_t=self.acquisition_tool.psize_k,
+            psize_r=self.acquisition_tool.psize_km1
+        )
         return shift
     
     def run(
@@ -339,6 +349,12 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         if reference_image_path is None and reference_feature_description is None:
             raise ValueError(
                 "Either `reference_image_path` or `reference_feature_description` must be provided."
+            )
+            
+        if use_registration_in_workflow and self.image_registration_tool is None:
+            raise ValueError(
+                "`image_registration_tool` should be provided in the class constructor "
+                "if `use_registration_in_workflow` is True."
             )
 
         if initial_prompt is None:
