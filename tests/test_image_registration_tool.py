@@ -33,7 +33,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             loc_y=100, loc_x=100, size_y=128, size_x=128
         )
         
-        offset = registration_tool.register_images(register_with="previous")
+        offset = registration_tool.get_offset_of_latest_image(register_with="previous")
         
         if self.debug:
             print("Offset: ", offset)
@@ -69,7 +69,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             loc_y=100, loc_x=100, size_y=150, size_x=150
         )
         
-        offset = registration_tool.register_images(register_with="previous")
+        offset = registration_tool.get_offset_of_latest_image(register_with="previous")
         
         if self.debug:
             print("Offset: ", offset)

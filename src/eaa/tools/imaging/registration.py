@@ -62,8 +62,8 @@ class ImageRegistration(BaseTool):
 
         self.exposed_tools: List[Dict[str, Any]] = [
             {
-                "name": "register_images",
-                "function": self.register_images,
+                "name": "get_offset_of_latest_image",
+                "function": self.get_offset_of_latest_image,
                 "return_type": ToolReturnType.LIST,
             }
         ]
@@ -77,6 +77,7 @@ class ImageRegistration(BaseTool):
         """
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
+    
     def process_image(self, image: np.ndarray) -> np.ndarray:
         """
         Process the image to prepare it for registration.
@@ -97,7 +98,7 @@ class ImageRegistration(BaseTool):
             image = np.mean(image, axis=-1)
         return image
 
-    def register_images(
+    def get_offset_of_latest_image(
         self,
         register_with: Annotated[
             Literal["previous", "first", "reference"],
@@ -137,6 +138,39 @@ class ImageRegistration(BaseTool):
         else:
             raise ValueError(f"Invalid value for register_with: {register_with}")
         
+        offset = self.register_images(image_t, image_r, psize_t, psize_r)
+        return offset
+
+    def register_images(
+        self, 
+        image_t: np.ndarray, 
+        image_r: np.ndarray, 
+        psize_t: float, 
+        psize_r: float
+    ) -> np.ndarray:
+        """
+        Register the target image with the reference image.
+        
+        Parameters
+        ----------
+        image_t : np.ndarray
+            The target image.
+        image_r : np.ndarray
+            The reference image.
+        psize_t : float
+            The pixel size of the target image.
+        psize_r : float
+            The pixel size of the reference image.
+
+        Returns
+        -------
+        np.ndarray
+            The offset of the target image with respect to the reference image. If the
+            target image is shifted to the right compared to the reference image, the
+            result will have a positive x-component; if the target image is shifted
+            to the bottom, the result will have a positive y-component. The returned
+            values are in physical units, i.e., pixel size is already accounted for.
+        """
         # Handle pixel size and image size differences
         if psize_t != psize_r:
             # Resize the target image to have the same pixel size as the reference image
