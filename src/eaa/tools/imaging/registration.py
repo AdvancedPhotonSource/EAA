@@ -139,7 +139,7 @@ class ImageRegistration(BaseTool):
         
         # Handle pixel size and image size differences
         if psize_t != psize_r:
-            # Resize the reference image to the pixel size of the target image
+            # Resize the target image to have the same pixel size as the reference image
             image_t = ndi.zoom(image_t, psize_t / psize_r)
         
         # Crop or pad the test image to match reference image size
@@ -171,4 +171,10 @@ class ImageRegistration(BaseTool):
                     )
         
         offset = windowed_phase_cross_correlation(image_t, image_r)
+        
+        # Convert the offset from pixel units to physical units. We use psize_r here
+        # since the target image has already been resized to have the same pixel size
+        # as the reference image.
+        if psize_t != psize_r:
+            offset = offset * psize_r
         return offset
