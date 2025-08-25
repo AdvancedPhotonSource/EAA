@@ -299,7 +299,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         add_reference_image_to_images_acquired: bool = False,
         initial_prompt: Optional[str] = None,
         max_iters: int = 20,
-        n_past_images_to_keep: Optional[int] = None,
+        n_past_images_to_keep_in_context: Optional[int] = None,
         additional_prompt: Optional[str] = None,
         *args, **kwargs
     ):
@@ -340,7 +340,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             If provided, this prompt will override the default initial prompt.
         max_iters : int, optional
             The maximum number of iterations to run.
-        n_past_images_to_keep : int, optional
+        n_past_images_to_keep_in_context : int, optional
             The number of past images to keep in the context. If None, all images
             will be kept.
         additional_prompt : Optional[str]
@@ -487,10 +487,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,
-            store_all_images_in_context=True,
             allow_non_image_tool_responses=True,
-            n_first_images_to_keep=1,
-            n_past_images_to_keep=n_past_images_to_keep,
+            n_first_images_to_keep_in_context=1,
+            n_past_images_to_keep_in_context=n_past_images_to_keep_in_context,
             max_rounds=max_iters,
             hook_functions={
                 "image_path_tool_response": self.image_path_tool_response_hook_factory(

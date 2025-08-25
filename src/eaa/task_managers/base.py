@@ -281,22 +281,36 @@ class BaseTaskManager:
                 )
                 self.update_message_history(response, update_context=True, update_full_history=True)
 
-    def purge_context_images(self, keep_first_n: Optional[int] = 0, keep_last_n: Optional[int] = 0) -> None:
+    def purge_context_images(
+        self, 
+        keep_first_n: Optional[int] = None,
+        keep_last_n: Optional[int] = None,
+        keep_text: bool = True
+    ) -> None:
         """Remove image-containing messages from the context, only keeping
         the ones in the first `keep_fist_n` and last `keep_last_n`.
 
         Parameters
         ----------
         keep_first_n, keep_last_n : int, optional
-            The first and last n image-containing messages to keep. If any of them
-            is None, no images will be removed. If there is an overlap between the
+            The first and last n image-containing messages to keep. If both them
+            is None, no images will be removed. If one and only one of them is None,
+            it will be set to 0. If there is an overlap between the
             ranges given by `keep_first_n` and `keep_last_n`, the overlap will be
             kept. For example, if `keep_first_n` is 3 and `keep_last_n` is 3 and there
             are 5 image-containing messages in the context, all the 5 images will be
             kept.
+        keep_text : bool, optional
+            Whether to keep the text in image-containing messages. If True,
+            these messages will be preserved with only the images removed.
+            Otherwise, these messages will be removed completely.
         """
-        if keep_first_n is None or keep_last_n is None:
+        if keep_first_n is None and keep_last_n is None:
             return
+        if keep_first_n is None and keep_last_n is not None:
+            keep_first_n = 0
+        if keep_first_n is not None and keep_last_n is None:
+            keep_last_n = 0
         if keep_first_n < 0 or keep_last_n < 0:
             raise ValueError("`keep_fist_n` and `keep_last_n` must be non-negative.")
         n_image_messages = 0
@@ -313,6 +327,15 @@ class BaseTaskManager:
             if i in image_message_indices:
                 if i_img_msg < ind_range_to_remove[0] or i_img_msg > ind_range_to_remove[1]:
                     new_context.append(message)
+                else:
+                    if keep_text:
+                        elements = get_message_elements(message)
+                        new_context.append(
+                            generate_openai_message(
+                                content=elements["content"],
+                                role=elements["role"],
+                            )
+                        )
                 i_img_msg += 1
             else:
                 new_context.append(message)
@@ -324,9 +347,8 @@ class BaseTaskManager:
         initial_image_path: Optional[str] = None,
         message_with_acquired_image: str = "Here is the image the tool returned.",
         max_rounds: int = 99,
-        store_all_images_in_context: bool = False,
-        n_first_images_to_keep: Optional[int] = None,
-        n_past_images_to_keep: Optional[int] = None,
+        n_first_images_to_keep_in_context: Optional[int] = None,
+        n_past_images_to_keep_in_context: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
         hook_functions: Optional[dict[str, Callable]] = None,
         termination_behavior: Literal["ask", "return"] = "ask",
@@ -357,14 +379,9 @@ class BaseTaskManager:
             The message to send to the agent along with the acquired image.
         max_rounds : int, optional
             The maximum number of rounds to run.
-        store_all_images_in_context : bool, optional
-            Whether to store all images in the context. If False, only the image
-            in the initial prompt, if any, is stored in the context. Keep this
-            False to reduce the context size and save costs.
         n_first_images_to_keep, n_past_images_to_keep : int, optional
-            The number of first and last images to keep in the context. If any of
-            them is None, all images will be kept. To use this feature, it is
-            recommended to set `store_all_images_in_context` to True.
+            The number of first and last images to keep in the context. If both of
+            them are None, all images will be kept.
         allow_non_image_tool_responses : bool, optional
             If False, the agent will be asked to redo the tool call if it returns
             anything that is not an image path.
@@ -461,7 +478,7 @@ class BaseTaskManager:
                             return_outgoing_message=True
                         )
                 if outgoing is not None:
-                    self.update_message_history(outgoing, update_context=store_all_images_in_context, update_full_history=True)
+                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:
                 response, outgoing = self.agent.receive(
@@ -485,11 +502,12 @@ class BaseTaskManager:
                 self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             
-            if n_past_images_to_keep is not None or n_first_images_to_keep is not None:
-                n_past_images_to_keep = n_past_images_to_keep if n_past_images_to_keep is not None else 0
-                n_first_images_to_keep = n_first_images_to_keep if n_first_images_to_keep is not None else 0
+            if n_past_images_to_keep_in_context is not None or n_first_images_to_keep_in_context is not None:
+                n_past_images_to_keep_in_context = n_past_images_to_keep_in_context if n_past_images_to_keep_in_context is not None else 0
+                n_first_images_to_keep_in_context = n_first_images_to_keep_in_context if n_first_images_to_keep_in_context is not None else 0
                 self.purge_context_images(
-                    keep_first_n=n_first_images_to_keep, 
-                    keep_last_n=n_past_images_to_keep - 1
+                    keep_first_n=n_first_images_to_keep_in_context, 
+                    keep_last_n=n_past_images_to_keep_in_context - 1,
+                    keep_text=True
                 )
             round += 1

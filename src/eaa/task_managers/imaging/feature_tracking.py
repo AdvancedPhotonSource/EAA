@@ -105,6 +105,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         fov_size: tuple[float, float] = None,
         step_size: tuple[float, float] = None,
         max_rounds: int = 99,
+        n_first_images_to_keep_in_context: Optional[int] = None,
+        n_past_images_to_keep_in_context: Optional[int] = None,
         initial_prompt: Optional[str] = None,
         additional_prompt: Optional[str] = None,
         *args, **kwargs
@@ -125,6 +127,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             The step size to move the field of view each time (dy, dx).
         max_rounds : int, optional
             The maximum number of rounds to search for the feature.
+        n_first_images_to_keep_in_context, n_past_images_to_keep_in_context : int, optional
+            The number of first and last images to keep in the context. If both of
+            them are None, all images will be kept.
         initial_prompt : str, optional
             If given, this prompt will override the default prompt to
             be used as the initial message to the agent. `feature_description`,
@@ -187,8 +192,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 Include a brief description of what you see in the image in your response.
                 """
             ),
-            store_all_images_in_context=False,
-            max_rounds=max_rounds
+            max_rounds=max_rounds,
+            n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
+            n_past_images_to_keep_in_context=n_past_images_to_keep_in_context
         )
 
     def run_feature_tracking(
@@ -200,6 +206,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         x_range: Optional[tuple[float, float]] = None,
         add_reference_image_to_images_acquired: bool = False,
         max_rounds: int = 99,
+        n_first_images_to_keep_in_context: Optional[int] = None,
+        n_past_images_to_keep_in_context: Optional[int] = None,
         initial_prompt: Optional[str] = None,
         additional_prompt: Optional[str] = None,
         termination_behavior: Literal["ask", "return"] = "ask"
@@ -230,6 +238,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             not support images in the context.
         max_rounds : int, optional
             The maximum number of rounds to search for the feature.
+        n_first_images_to_keep_in_context, n_past_images_to_keep_in_context : int, optional
+            The number of first and last images to keep in the context. If both of
+            them are None, all images will be kept.
         initial_prompt : str, optional
             If given, this prompt will override the default prompt to
             be used as the initial message to the agent.
@@ -327,8 +338,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,
-            store_all_images_in_context=False,
             max_rounds=max_rounds,
+            n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
+            n_past_images_to_keep_in_context=n_past_images_to_keep_in_context,
             allow_non_image_tool_responses=True,
             hook_functions={
                 "image_path_tool_response": self.image_path_tool_response_hook_factory(

@@ -560,6 +560,8 @@ def generate_openai_message(
     """
     if sum([image is not None, encoded_image is not None, image_path is not None]) > 1:
         raise ValueError("Only one of `image`, `encoded_image`, or `image_path` should be provided.")
+    if role not in ["user", "system", "tool"]:
+        raise ValueError("Invalid role. Must be one of `user`, `system`, or `tool`.")
 
     if image is not None or image_path is not None:
         encoded_image = encode_image_base64(image=image, image_path=image_path)
