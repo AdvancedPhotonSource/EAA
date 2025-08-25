@@ -53,7 +53,7 @@ def numpy_to_base64_image(arr: np.ndarray, format: str = "PNG") -> str:
     """
     # Normalize and convert to uint8 if needed
     if arr.dtype != np.uint8:
-        arr = ((arr - arr.min()) / (arr.ptp() + 1e-5) * 255).astype(np.uint8)
+        arr = ((arr - arr.min()) / (np.ptp(arr) + 1e-5) * 255).astype(np.uint8)
 
     if arr.ndim == 2:  # grayscale
         mode = "L"
