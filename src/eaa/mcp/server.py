@@ -6,14 +6,14 @@ methods from BaseTool subclasses as standardized MCP tools.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from fastmcp import FastMCP
 except ImportError:
     raise ImportError(
-        "The 'mcp' package is required to use the MCP server. "
-        "Install it with: pip install mcp"
+        "The 'fastmcp' package is required to use the MCP server. "
+        "Install it with: pip install fastmcp"
     )
 
 from eaa.tools.base import BaseTool
@@ -99,10 +99,9 @@ class MCPToolServer:
             self._tool_instances[tool_name] = tool
             self._registered_tools[tool_name] = tool_dict
             
-            # Create the MCP tool
-            # This is equivalent to adding @self.mcp_server.tool()
-            # to the definition of the tool function.
-            self.mcp_server.tool()(tool_function)
+            # Register the tool with the FastMCP server using the @tool decorator
+            # The FastMCP 2.x API uses the @server.tool() decorator
+            self.mcp_server.tool(name=tool_name)(tool_function)
     
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """
@@ -145,23 +144,28 @@ class MCPToolServer:
         """
         return self.mcp_server
     
-    def run(self) -> None:
+    def run(
+        self, 
+        transport: Optional[Literal["stdio", "http", "sse", "streamable-http"]] = "stdio", 
+        **server_kwargs
+    ) -> None:
         """
         Run the MCP server.
         
         Parameters
         ----------
-        port : int, optional
-            The port to listen on.
-        **kwargs
-            Additional arguments passed to the FastMCP server.
+        transport : str, optional
+            Transport protocol to use ("stdio", "http", "sse", or "streamable-http").
+            Defaults to "stdio" for compatibility with MCP clients like Cursor.
+        **server_kwargs
+            Additional arguments passed to the FastMCP server run method.
         """
         logger.info(f"Starting MCP server '{self.name}' with {len(self._registered_tools)} tools")
         for tool_name in self.list_tools():
             logger.info(f"  - {tool_name}")
         
-        # Run the server
-        self.mcp_server.run()
+        # Run the server with the specified transport
+        self.mcp_server.run(transport=transport, **server_kwargs)
 
 
 def create_mcp_server_from_tools(
@@ -191,6 +195,7 @@ def create_mcp_server_from_tools(
 def run_mcp_server_from_tools(
     tools: Union[BaseTool, List[BaseTool]], 
     server_name: str = "BaseTool MCP Server",
+    transport: Optional[Literal["stdio", "http", "sse", "streamable-http"]] = "stdio",
     **server_kwargs
 ) -> None:
     """
@@ -200,10 +205,13 @@ def run_mcp_server_from_tools(
     ----------
     tools : Union[BaseTool, List[BaseTool]]
         BaseTool instance(s) to expose via MCP.
+    transport : str, optional
+        Transport protocol to use ("stdio", "http", "sse", or "streamable-http").
+        Defaults to "stdio" for compatibility with MCP clients like Cursor.
     server_name : str, optional
         Name of the MCP server.
     **server_kwargs
         Additional arguments passed to the FastMCP.run method.
     """
     server = create_mcp_server_from_tools(tools, server_name)
-    server.run(**server_kwargs) 
+    server.run(transport=transport, **server_kwargs) 
