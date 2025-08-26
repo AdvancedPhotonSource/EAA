@@ -9,6 +9,7 @@ from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
 from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
+from eaa.tools.mcp import MCPTool
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -122,9 +123,11 @@ class BaseTaskManager:
     ) -> None:
         if not isinstance(tools, (list, tuple)):
             tools = [tools]
-        self.agent.register_tools(
-            self.create_tool_list(tools)
-        )
+        for tool in tools:
+            if isinstance(tool, MCPTool):
+                self.agent.register_mcp_tools([tool])
+            else:
+                self.agent.register_function_tools(self.create_tool_list([tool]))
         
     def create_tool_list(self, tools: list[BaseTool]) -> list[dict]:
         """Create a list of tool dictionaries by concatenating the exposed_tools

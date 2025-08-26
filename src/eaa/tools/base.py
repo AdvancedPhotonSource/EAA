@@ -1,8 +1,10 @@
-from typing import Optional, Dict, Callable, List, Any
+import typing
+from typing import Optional, Dict, Callable, List, Any, get_args, get_type_hints
 import base64
 import os
 import io
 from enum import StrEnum, auto
+import inspect
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -167,3 +169,73 @@ def check(init_method: Callable):
             )
         return return_value
     return wrapper
+
+
+def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any]:
+    """
+    Generates an OpenAI-compatible tool schema from a Python function
+    with type annotations and a docstring.
+
+    Parameters
+    ----------
+    tool_name : str
+        The name of the tool.
+    func : Callable
+        The function to generate the tool schema from.
+
+    Returns
+    -------
+    dict
+        The OpenAI-compatible tool schema.
+    """
+    sig = inspect.signature(func)
+    type_hints = get_type_hints(func)
+    doc = inspect.getdoc(func) or ""
+
+    # JSON schema type mapping
+    python_type_to_json = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        tuple: "array",
+        dict: "object"
+    }
+
+    def resolve_json_type(py_type):
+        origin = typing.get_origin(py_type)
+        args = typing.get_args(py_type)
+        if origin is list or origin is typing.List:
+            return {
+                "type": "array",
+                "items": {"type": python_type_to_json.get(args[0], "string")}
+            }
+        return {"type": python_type_to_json.get(py_type, "string")}
+
+    properties = {}
+    required = []
+
+    for name, param in sig.parameters.items():
+        if name not in type_hints:
+            continue
+        json_type = resolve_json_type(type_hints[name])
+        description = f"{name} parameter"
+        if len(get_args(sig.parameters[name].annotation)) > 0:
+            description = get_args(sig.parameters[name].annotation)[1]
+        properties[name] = {**json_type, "description": description}
+        if param.default == inspect.Parameter.empty:
+            required.append(name)
+
+    return {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": doc,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        }
+    }
