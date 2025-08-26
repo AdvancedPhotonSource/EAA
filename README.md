@@ -7,7 +7,7 @@
   - [Option 2: install via pip](#option-2-install-via-pip)
 - [Quickstart guide](#quickstart-guide)
 - [WebUI](#webui)
-- [MCP tool wrapper](#mcp-tool-wrapper)
+- [Model context protocol (MCP)](#model-context-protocol-mcp)
 
 
 ## Installation
@@ -157,7 +157,9 @@ auto-scrolling back, copy everything under `examples/webui/` (including the hidd
 folder `.config`) into the working directory where `start_webui.py` is located.
 Now the JS scroller will be injected into the WebUI to enable auto-scrolling.
 
-## MCP tool wrapper
+## Model context protocol (MCP)
+
+### MCP tool wrapper
 
 EAA's MCP tool wrapper allows you to convert any tools that are subclasses of
 `BaseTool` into an MCP tool and launch an MCP server offering these tools. 
@@ -199,3 +201,38 @@ to activate the environment before launching the tool. Below is an example:
 ```
 Now the MCP client should be able to run and connect to the MCP server and use the
 tool.
+
+### Using MCP tools (experimental)
+
+EAA itself can also use MCP tools. While we still recommend using the built-in
+`BaseTool` classes as function-calling tools if possible, using external MCP 
+tools allows you to extend the agent's capability beyond what's in the built-in tools.
+
+To use an external MCP tool, first create a config dictionary. This dictionary should
+follow the [FastMCP format](https://gofastmcp.com/clients/client#configuration-format), 
+which is the same format as the `settings.json` files used by many MCP clients such as
+Claude, Gemini CLI and Cursor. The dictionary should be wrapped in an `MCPTool` object.
+The object should then be passed to the task manager in the same way as other `BaseTool`
+objects.
+
+```python
+from eaa.tools.mcp import MCPTool
+
+config = {
+    "mcpServers": {
+        "image_acquisition": {
+            "command": "python", 
+            "args": ["./image_acquisition_mcp_server.py"]
+        }
+    }
+}
+
+mcp_tool = MCPTool(config)
+```
+
+Known issues:
+- EAA currently cannot tell if an MCP tool returns an image path, and as such,
+  routines in task managers that handle images will not work properly. 
+- The MCP server restarts every time a query is made, resulting in additional
+  overhead and loss of internal state. We are working on finding a way to keep
+  the MCP client connection alive across queries. 

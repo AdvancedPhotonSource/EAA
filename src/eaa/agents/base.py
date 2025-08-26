@@ -81,7 +81,6 @@ which contains a list of `message` objects. We assume there is only one choice.
 }
 """
 
-import typing
 from typing import (
     Any, 
     Callable, 
@@ -89,18 +88,17 @@ from typing import (
     List, 
     Tuple, 
     Optional, 
-    Literal, 
-    get_type_hints, 
-    get_args
+    Literal
 )
-import inspect
 import json
 import logging
+import asyncio
 
 import numpy as np
 from openai.types.chat import ChatCompletionMessage
 
-from eaa.tools.base import ToolReturnType
+from eaa.tools.base import ToolReturnType, generate_openai_tool_schema
+from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
 
@@ -110,15 +108,24 @@ logger = logging.getLogger(__name__)
 class ToolManager:
 
     def __init__(self):
-        self.tools: List[Dict[str, Any]] = []
+        self.function_tools: List[Dict[str, Any]] = []
+        self.mcp_tools: List[MCPTool] = []
 
     def get_all_schema(self) -> Dict[str, Any]:
-        """Get the schema for the tool.
+        """Get the schema for the tool. MCP tools' schemas are generated
+        as if they are function tools, so that all tool schemas have the
+        same format.
         """
-        return [generate_openai_tool_schema(tool["name"], tool["function"]) for tool in self.tools]
+        schemas = []
+        schemas += [generate_openai_tool_schema(tool["name"], tool["function"]) for tool in self.function_tools]
+        mcp_schemas = []
+        for tool in self.mcp_tools:
+            mcp_schemas += tool.get_all_schema()
+        schemas += mcp_schemas
+        return schemas
 
-    def add_tool(self, name: str, tool_function: Callable, return_type: ToolReturnType) -> None:
-        """Add a tool to the tool manager.
+    def add_function_tool(self, name: str, tool_function: Callable, return_type: ToolReturnType) -> None:
+        """Add a function tool to the tool manager.
 
         Parameters
         ----------
@@ -130,7 +137,7 @@ class ToolManager:
         return_type : ToolReturnType
             The type of the return value of the tool.
         """
-        self.tools.append(
+        self.function_tools.append(
             {
                 "name": name,
                 "function": tool_function,
@@ -138,6 +145,11 @@ class ToolManager:
                 "schema": generate_openai_tool_schema(name, tool_function)
             }
         )
+        
+    def add_mcp_tool(self, tool: MCPTool):
+        """Add an MCP tool to the tool manager.
+        """
+        self.mcp_tools.append(tool)
 
     def execute_tool(
         self,
@@ -153,30 +165,49 @@ class ToolManager:
         tool_kwargs : Dict[str, Any]
             The arguments to be passed to the tool.
         """
-        return self.get_tool_callable(tool_name)(**tool_kwargs)
+        callable = self.get_tool_callable(tool_name)
+        if isinstance(callable, MCPTool):
+            return asyncio.run(callable.call_tool(tool_name, tool_kwargs))
+        else:
+            return callable(**tool_kwargs)
 
-    def get_tool_dict(self, tool_name: str) -> Dict[str, Any]:
-        """Get the tool dictionary for a given tool name.
+    def get_tool(self, tool_name: str) -> Dict[str, Any] | MCPTool:
+        """Get the tool dictionary or MCPTool object for a given tool name.
         """
-        for tool in self.tools:
+        for tool in self.function_tools:
             if tool["name"] == tool_name:
+                return tool
+        for tool in self.mcp_tools:
+            if tool_name in tool.get_all_tool_names():
                 return tool
         raise ValueError(f"Tool {tool_name} not found.")
 
     def get_tool_return_type(self, tool_name: str) -> ToolReturnType:
         """Get the return type of a tool.
         """
-        return self.get_tool_dict(tool_name)["return_type"]
+        tool = self.get_tool(tool_name)
+        if isinstance(tool, MCPTool):
+            return ToolReturnType.TEXT
+        else:
+            return tool["return_type"]
 
-    def get_tool_callable(self, tool_name: str) -> Callable:
-        """Get the callable function for a given tool name.
+    def get_tool_callable(self, tool_name: str) -> Callable | MCPTool:
+        """Get the callable function or MCPTool object for a given tool name.
         """
-        return self.get_tool_dict(tool_name)["function"]
+        tool = self.get_tool(tool_name)
+        if isinstance(tool, MCPTool):
+            return tool
+        else:
+            return tool["function"]
 
     def get_tool_schema(self, tool_name: str) -> Dict[str, Any]:
         """Get the schema for a given tool name.
         """
-        return self.get_tool_dict(tool_name)["schema"]
+        tool = self.get_tool(tool_name)
+        if isinstance(tool, MCPTool):
+            return tool.get_all_schema()
+        else:
+            return tool["schema"]
     
     
 class BaseAgent:
@@ -243,7 +274,7 @@ class BaseAgent:
     def create_client(self) -> Any:
         raise NotImplementedError
         
-    def register_tools(self, tools: List[Dict[str, Any]]) -> None:
+    def register_function_tools(self, tools: List[Dict[str, Any]]) -> None:
         """Register tools with the OpenAI-compatible API.
         
         Parameters
@@ -259,11 +290,21 @@ class BaseAgent:
             )
         
         for tool_dict in tools:
-            self.tool_manager.add_tool(
+            self.tool_manager.add_function_tool(
                 name=tool_dict["name"],
                 tool_function=tool_dict["function"],
                 return_type=tool_dict["return_type"]
             )
+            
+    def register_mcp_tools(self, tools: List[MCPTool]) -> None:
+        """Register MCP tools with the OpenAI-compatible API.
+        """
+        if not isinstance(tools, List):
+            raise ValueError(
+                "tools must be a list of MCPTool objects."
+            )
+        for tool in tools:
+            self.tool_manager.add_mcp_tool(tool)
         
     def receive(
         self,
@@ -597,76 +638,6 @@ def generate_openai_message(
             }
         ]
     return message
-
-
-def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any]:
-    """
-    Generates an OpenAI-compatible tool schema from a Python function
-    with type annotations and a docstring.
-
-    Parameters
-    ----------
-    tool_name : str
-        The name of the tool.
-    func : Callable
-        The function to generate the tool schema from.
-
-    Returns
-    -------
-    dict
-        The OpenAI-compatible tool schema.
-    """
-    sig = inspect.signature(func)
-    type_hints = get_type_hints(func)
-    doc = inspect.getdoc(func) or ""
-
-    # JSON schema type mapping
-    python_type_to_json = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        list: "array",
-        tuple: "array",
-        dict: "object"
-    }
-
-    def resolve_json_type(py_type):
-        origin = typing.get_origin(py_type)
-        args = typing.get_args(py_type)
-        if origin is list or origin is typing.List:
-            return {
-                "type": "array",
-                "items": {"type": python_type_to_json.get(args[0], "string")}
-            }
-        return {"type": python_type_to_json.get(py_type, "string")}
-
-    properties = {}
-    required = []
-
-    for name, param in sig.parameters.items():
-        if name not in type_hints:
-            continue
-        json_type = resolve_json_type(type_hints[name])
-        description = f"{name} parameter"
-        if len(get_args(sig.parameters[name].annotation)) > 0:
-            description = get_args(sig.parameters[name].annotation)[1]
-        properties[name] = {**json_type, "description": description}
-        if param.default == inspect.Parameter.empty:
-            required.append(name)
-
-    return {
-        "type": "function",
-        "function": {
-            "name": tool_name,
-            "description": doc,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required
-            }
-        }
-    }
 
 
 def has_tool_call(message: dict | ChatCompletionMessage) -> bool:

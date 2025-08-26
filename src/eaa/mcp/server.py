@@ -16,8 +16,7 @@ except ImportError:
         "Install it with: pip install fastmcp"
     )
 
-from eaa.tools.base import BaseTool
-from eaa.agents.base import generate_openai_tool_schema
+from eaa.tools.base import BaseTool, generate_openai_tool_schema
 
 logger = logging.getLogger(__name__)
 

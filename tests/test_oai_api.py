@@ -49,7 +49,7 @@ class TestOpenAIAPI(tutils.BaseTester):
             system_message="You are a helpful assistant."
         )
         
-        agent.register_tools(
+        agent.register_function_tools(
             [
                 {
                     "name": "list_sum",
@@ -95,7 +95,7 @@ class TestOpenAIAPI(tutils.BaseTester):
             system_message="You are a helpful assistant."
         )
         
-        agent.register_tools(
+        agent.register_function_tools(
             [
                 {
                     "name": "get_image",
