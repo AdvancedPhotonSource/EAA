@@ -230,9 +230,7 @@ config = {
 mcp_tool = MCPTool(config)
 ```
 
-Known issues:
+Known issue(s):
 - EAA currently cannot tell if an MCP tool returns an image path, and as such,
   routines in task managers that handle images will not work properly. 
-- The MCP server restarts every time a query is made, resulting in additional
-  overhead and loss of internal state. We are working on finding a way to keep
-  the MCP client connection alive across queries. 
+

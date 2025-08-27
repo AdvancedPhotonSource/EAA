@@ -167,7 +167,8 @@ class ToolManager:
         """
         callable = self.get_tool_callable(tool_name)
         if isinstance(callable, MCPTool):
-            return asyncio.run(callable.call_tool(tool_name, tool_kwargs))
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(callable.call_tool(tool_name, tool_kwargs))
         else:
             return callable(**tool_kwargs)
 

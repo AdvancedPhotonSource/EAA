@@ -53,31 +53,52 @@ class MCPTool(BaseTool):
         """
         super().__init__(*args, **kwargs)
         self.config = config
+        self._client = None
+        self._connected = False
+        self._loop = asyncio.get_event_loop()
+
+    async def _ensure_connected(self):
+        """Ensure the MCP client is connected."""
+        if not self._connected or self._client is None:
+            await self.connect()
+
+    async def connect(self):
+        """Connect to the MCP server."""
+        if self._client is not None:
+            await self.disconnect()
+        
+        self._client = fastmcp.Client(self.config)
+        await self._client.__aenter__()
+        self._connected = True
+
+    async def disconnect(self):
+        """Disconnect from the MCP server."""
+        if self._client is not None and self._connected:
+            await self._client.__aexit__(None, None, None)
+            self._connected = False
+            self._client = None
 
     async def list_tools(self):
         """List the tools available on the MCP server."""
-        fastmcp_client = fastmcp.Client(self.config)
-        async with fastmcp_client:
-            return await fastmcp_client.list_tools()
+        await self._ensure_connected()
+        return await self._client.list_tools()
     
     async def list_resources(self):
         """List the resources available on the MCP server."""
-        fastmcp_client = fastmcp.Client(self.config)
-        async with fastmcp_client:
-            return await fastmcp_client.list_resources()
+        await self._ensure_connected()
+        return await self._client.list_resources()
     
     async def call_tool(self, tool_name: str, arguments: dict):
         """Call a tool on the MCP server."""
-        fastmcp_client = fastmcp.Client(self.config)
-        async with fastmcp_client:
-            result = await fastmcp_client.call_tool(tool_name, arguments)
-            return result.structured_content["result"]
+        await self._ensure_connected()
+        result = await self._client.call_tool(tool_name, arguments)
+        return result.structured_content["result"]
         
     def get_all_schema(self):
         """Get the function call-like schema for all the tools
         available on the MCP server.
         """
-        tools = asyncio.run(self.list_tools())
+        tools = self._loop.run_until_complete(self.list_tools())
         schemas = []
         for tool in tools:
             schema = {
@@ -97,5 +118,30 @@ class MCPTool(BaseTool):
     
     def get_all_tool_names(self):
         """Get the names of all the tools available on the MCP server."""
-        tools = asyncio.run(self.list_tools())
+        tools = self._loop.run_until_complete(self.list_tools())
         return [tool.name for tool in tools]
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.disconnect()
+
+    def __del__(self):
+        """Cleanup when the object is destroyed."""
+        if self._connected and self._client is not None:
+            # Try to clean up the connection, but don't fail if event loop is closed
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, schedule cleanup
+                    loop.create_task(self.disconnect())
+                else:
+                    # If loop is not running, run cleanup synchronously
+                    loop.run_until_complete(self.disconnect())
+            except RuntimeError:
+                # Event loop might be closed, ignore cleanup
+                pass
