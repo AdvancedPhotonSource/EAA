@@ -407,6 +407,11 @@ class BaseTaskManager:
         
         Each time the agent calls a tool, only one tool call is allowed. If multiple
         tool calls are made, the agent will be asked to redo the tool calls.
+        
+        Termination signals: "TERMINATE" and "NEED HUMAN". When "TERMINATE" is
+        present, the function either returns or asks for user input depending on
+        the setting of `termination_behavior`. When "NEED HUMAN" is present, the
+        function always asks for user input.
 
         Parameters
         ----------
@@ -436,11 +441,14 @@ class BaseTaskManager:
               sent to the agent. When this function is given, it **replaces** the
               `agent.receive` call so be sure to send the image to the agent in
               the hook if this is intended.
-        termination_behavior : Literal["ask", "return"], optional
+        termination_behavior : Literal["ask", "return"]
             Decides what to do when the agent sends termination signal ("TERMINATE")
             in the response. If "ask", the user will be asked to provide further
             instructions. If "return", the function will return directly.
         """
+        if termination_behavior not in ["ask", "return"]:
+            raise ValueError("`termination_behavior` must be either 'ask' or 'return'.")
+        
         hook_functions = hook_functions or {}
         round = 0
         image_path = None
@@ -453,33 +461,37 @@ class BaseTaskManager:
         self.update_message_history(outgoing, update_context=True, update_full_history=True)
         self.update_message_history(response, update_context=True, update_full_history=True)
         while round < max_rounds:
-            if response["content"] is not None and "TERMINATE" in response["content"]:
-                if termination_behavior == "return":
+            if response["content"] is not None:
+                if "TERMINATE" in response["content"] and termination_behavior == "return":
                     return
-                message = self.get_user_input(
-                    prompt=(
-                        "Termination condition triggered. What to do next? "
-                        "(\\exit: exit; \\chat: chat mode; \\help: show command help): "
-                    ),
-                    display_prompt_in_webui=True
-                )
-                if message.lower() == "\\exit":
-                    return
-                elif message.lower() == "\\chat":
-                    self.run_conversation(store_all_images_in_context=True)
-                elif message.lower() == "\\help":
-                    self.display_command_help()
-                    continue
-                else:
-                    response, outgoing = self.agent.receive(
-                        message,
-                        context=self.context,
-                        image_path=None,
-                        return_outgoing_message=True
+                if (
+                    ("TERMINATE" in response["content"] and termination_behavior == "ask") 
+                    or "NEED HUMAN" in response["content"]
+                ):
+                    message = self.get_user_input(
+                        prompt=(
+                            "Termination condition triggered. What to do next? "
+                            "(\\exit: exit; \\chat: chat mode; \\help: show command help): "
+                        ),
+                        display_prompt_in_webui=True
                     )
-                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
-                    self.update_message_history(response, update_context=True, update_full_history=True)
-                    continue
+                    if message.lower() == "\\exit":
+                        return
+                    elif message.lower() == "\\chat":
+                        self.run_conversation(store_all_images_in_context=True)
+                    elif message.lower() == "\\help":
+                        self.display_command_help()
+                        continue
+                    else:
+                        response, outgoing = self.agent.receive(
+                            message,
+                            context=self.context,
+                            image_path=None,
+                            return_outgoing_message=True
+                        )
+                        self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                        self.update_message_history(response, update_context=True, update_full_history=True)
+                        continue
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
             if len(tool_responses) == 1:
