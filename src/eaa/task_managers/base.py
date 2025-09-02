@@ -371,6 +371,11 @@ class BaseTaskManager:
         
         Each time the agent calls a tool, only one tool call is allowed. If multiple
         tool calls are made, the agent will be asked to redo the tool calls.
+        
+        Termination signals: "TERMINATE" and "NEED HUMAN". When "TERMINATE" is
+        present, the function either returns or asks for user input depending on
+        the setting of `termination_behavior`. When "NEED HUMAN" is present, the
+        function always asks for user input.
 
         Parameters
         ----------
@@ -418,23 +423,28 @@ class BaseTaskManager:
         self.update_message_history(response, update_context=True, update_full_history=True)
         while round < max_rounds:
             if response["content"] is not None and "TERMINATE" in response["content"]:
-                if termination_behavior == "return":
+                if "TERMINATE" in response["content"] and termination_behavior == "return":
                     return
-                message = self.get_user_input(
-                    "Termination condition triggered. What to do next? Type \"exit\" to exit. "
-                )
-                if message.lower() == "exit":
-                    return
-                else:
-                    response, outgoing = self.agent.receive(
-                        message,
-                        context=self.context,
-                        image_path=None,
-                        return_outgoing_message=True
+                if (
+                    ("TERMINATE" in response["content"] and termination_behavior == "ask") 
+                    or "NEED HUMAN" in response["content"]
+                ):
+                    message = self.get_user_input(
+                        "Agent is requesting human input. Type \"exit\" to exit. "
                     )
-                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
-                    self.update_message_history(response, update_context=True, update_full_history=True)
-                    continue
+                    if message.lower() == "exit":
+                        return
+                    else:
+                        # Send user input to agent.
+                        response, outgoing = self.agent.receive(
+                            message,
+                            context=self.context,
+                            image_path=None,
+                            return_outgoing_message=True
+                        )
+                        self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                        self.update_message_history(response, update_context=True, update_full_history=True)
+                        continue
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
             if len(tool_responses) == 1:

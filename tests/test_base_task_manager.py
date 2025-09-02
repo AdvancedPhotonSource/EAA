@@ -141,7 +141,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         
         # Verify user was prompted when TERMINATE condition triggered
         self.task_manager.get_user_input.assert_called_once_with(
-            "Termination condition triggered. What to do next? Type \"exit\" to exit. "
+            "Agent is requesting human input. Type \"exit\" to exit. "
         )
         
     def test_run_feedback_loop_with_exception_tool_response(self):
@@ -478,7 +478,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         
         # Verify user was prompted for continuation
         self.task_manager.get_user_input.assert_any_call(
-            "Termination condition triggered. What to do next? Type \"exit\" to exit. "
+            "Agent is requesting human input. Type \"exit\" to exit. "
         )
         
         # Verify agent received the user continuation
