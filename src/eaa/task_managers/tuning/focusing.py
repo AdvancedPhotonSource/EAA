@@ -14,6 +14,7 @@ from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
+import eaa.image_proc as ip
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +244,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
     ) -> str:
         """Run the feature tracking sub-task to make the FOV aligned with the target image.
         """
-        fig = BaseTool.plot_2d_image(target_image, add_axis_ticks=False)
+        fig = ip.plot_2d_image(target_image, add_axis_ticks=False)
         target_image_path = BaseTool.save_image_to_temp_dir(fig, "target_image.png", add_timestamp=True)
         
         self.feature_tracking_task_manager = FeatureTrackingTaskManager(

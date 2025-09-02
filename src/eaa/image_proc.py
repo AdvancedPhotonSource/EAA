@@ -1,5 +1,9 @@
+from typing import Literal, Optional, List
+
 import numpy as np
 from PIL import Image
+import matplotlib.pyplot as plt
+
 
 def stitch_images(
     images: list[np.ndarray | Image.Image], 
@@ -87,3 +91,57 @@ def windowed_phase_cross_correlation(
         if shift[i] > map.shape[i] / 2:
             shift[i] -= map.shape[i]
     return shift
+
+
+def plot_2d_image(
+    image: np.ndarray, 
+    add_axis_ticks: bool = False,
+    x_coords: Optional[List[float]] = None,
+    y_coords: Optional[List[float]] = None,
+    n_ticks: int = 10,
+    add_grid_lines: bool = False,
+    invert_yaxis: bool = False,
+) -> plt.Figure:
+    """Save an image to the temporary directory.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        The image to save.
+    add_axis_ticks : bool, optional
+        If True, axis ticks are added to the image to indicate positions.
+    x_coords : List[float], optional
+        The x-coordinates to add to the image. Required when `add_axis_ticks` is True.
+        The length of this list must be the same as the number of columns in the image.
+    y_coords : List[float], optional
+        The y-coordinates to add to the image. Required when `add_axis_ticks` is True.
+        The length of this list must be the same as the number of rows in the image.
+    n_ticks : int, optional
+        The number of ticks in each axis..
+    add_grid_lines : bool, optional
+        If True, grid lines are added to the image.
+    invert_yaxis : bool, optional
+        If True, the y-axis is inverted.
+    """
+    fig, ax = plt.subplots(1, 1)
+    ax.imshow(image, cmap='gray')
+    if add_axis_ticks:
+        if x_coords is None:
+            x_coords = np.arange(image.shape[1])
+        if y_coords is None:
+            y_coords = np.arange(image.shape[0])
+        ax.set_xticks(np.linspace(0, len(x_coords) - 1, n_ticks, dtype=int))
+        ax.set_yticks(np.linspace(0, len(y_coords) - 1, n_ticks, dtype=int))
+        ax.set_xticklabels([np.round(x_coords[i], 2) for i in ax.get_xticks()])
+        ax.set_yticklabels([np.round(y_coords[i], 2) for i in ax.get_yticks()])
+    else:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    ax.grid(add_grid_lines)
+    if invert_yaxis:
+        ax.invert_yaxis()
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    plt.tight_layout()
+    return fig
+
