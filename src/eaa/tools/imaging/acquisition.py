@@ -11,6 +11,7 @@ from eaa.tools.base import BaseTool, check, ToolReturnType
 import eaa.comms
 import eaa.util
 import eaa.maths
+import eaa.image_proc as ip
 
 logger = logging.getLogger(__name__)
 
@@ -336,11 +337,11 @@ class SimulatedAcquireImage(AcquireImage):
             
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
-            fig = self.plot_2d_image(
+            fig = ip.plot_2d_image(
                 arr if not self.plot_image_in_log_scale else np.log10(arr + 1),
                 add_axis_ticks=self.add_axis_ticks,
-                x_ticks=x,
-                y_ticks=y,
+                x_coords=x,
+                y_coords=y,
                 n_ticks=self.n_ticks,
                 add_grid_lines=self.add_grid_lines,
                 invert_yaxis=self.invert_yaxis
