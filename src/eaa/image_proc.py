@@ -93,6 +93,30 @@ def windowed_phase_cross_correlation(
     return shift
 
 
+def physical_pos_to_pixel(
+    physical_x: float | np.ndarray,
+    physical_range: tuple[float, float],
+    size: int
+) -> float:
+    """Convert a physical x-coordinate to a pixel coordinate.
+    """
+    return np.round(
+        (physical_x - physical_range[0]) / (physical_range[1] - physical_range[0]) * size
+    )
+    
+
+def physical_length_to_pixel(
+    physical_length: float | np.ndarray,
+    physical_range: tuple[float, float],
+    size: int
+) -> float:
+    """Convert a physical length to a pixel length.
+    """
+    return np.round(
+        physical_length / (physical_range[1] - physical_range[0]) * size
+    )
+
+
 def plot_2d_image(
     image: np.ndarray, 
     add_axis_ticks: bool = False,
@@ -145,3 +169,89 @@ def plot_2d_image(
     plt.tight_layout()
     return fig
 
+
+def add_marker_to_imgae(
+    image: Optional[np.ndarray | Image.Image] = None,
+    ax: Optional[plt.Figure] = None,
+    x_range: Optional[tuple[float, float]] = None,
+    y_range: Optional[tuple[float, float]] = None,
+    marker_type: Literal["line", "rectangle"] = None,
+    marker_params: dict = None,
+) -> plt.Figure:
+    """Add a marker to an image and plot it.
+
+    Parameters
+    ----------
+    image : np.ndarray | Image.Image, optional
+        The image array or PIL object. If this, instead of `ax`, is provided,
+        a new figure will be created and the marker will be plotted on it.
+    ax : plt.Figure, optional
+        This axis that already has the image plotted on it. This should not
+        be given simultaneously with `image`.
+    x_range, y_range : tuple[float, float], optional
+        The x- and y- physical range of the image. If not given, all
+        coordinates will be assumed to be pixels.
+        The x- and y- physical coordinates of the image. If not given, all
+        coordinates will be assumed to be pixels.
+    marker_type : Literal["line", "rectangle"], optional
+        The type of marker to add.
+    marker_params : dict, optional
+        The parameters of the marker. Depending on `marker_type`, this
+        argument expects different inputs:
+        - "line":
+            - `x`: tuple[float, float]. The starting and ending x-coordinates of the line.
+            - `y`: tuple[float, float]. The starting and ending y-coordinates of the line.
+        - "rectangle":
+            - `x`: float. The x-coordinate of the top-left corner of the rectangle.
+            - `y`: float. The y-coordinate of the top-left corner of the rectangle.
+            - `width`: float. The width of the rectangle.
+            - `height`: float. The height of the rectangle.
+            - `fill`: bool. Whether to fill the rectangle.
+        - common to all:
+            - `color`: str. The color of the marker.
+            - `linewidth`: float. The width of the marker.
+            - `linestyle`: str. The style of the marker.
+            - `alpha`: float. The transparency of the marker.
+
+    Returns
+    -------
+    plt.Figure
+        The figure object.
+    """
+    if (image is None and ax is None) or (image is not None and ax is not None):
+        raise ValueError("Exactly one of `image` or `ax` must be provided.")
+
+    if marker_type is None:
+        raise ValueError("`marker_type` must be given.")
+
+    if image is not None:
+        if isinstance(image, Image.Image):
+            image = np.array(image)
+            
+        fig = plot_2d_image(image)
+        ax = fig.axes[0]
+
+    if marker_type == "line":
+        if x_range is not None and y_range is not None:
+            marker_params["x"] = physical_pos_to_pixel(np.array(marker_params["x"]), x_range, image.shape[1])
+            marker_params["y"] = physical_pos_to_pixel(np.array(marker_params["y"]), y_range, image.shape[0])
+        ax.plot(
+            marker_params["x"], marker_params["y"], 
+            **{k: v for k, v in marker_params.items() if k != "x" and k != "y"}
+        )
+    elif marker_type == "rectangle":
+        if x_range is not None and y_range is not None:
+            marker_params["x"] = physical_pos_to_pixel(np.array(marker_params["x"]), x_range, image.shape[1])
+            marker_params["y"] = physical_pos_to_pixel(np.array(marker_params["y"]), y_range, image.shape[0])
+            marker_params["width"] = physical_length_to_pixel(marker_params["width"], x_range, image.shape[1])
+            marker_params["height"] = physical_length_to_pixel(marker_params["height"], y_range, image.shape[0])
+        ax.add_patch(
+            plt.Rectangle(
+                xy=(marker_params["x"], marker_params["y"]),
+                **{k: v for k, v in marker_params.items() if k != "x" and k != "y"}
+            )
+        )
+    else:
+        raise ValueError(f"Invalid marker type: {marker_type}")
+        
+    return ax.get_figure()
