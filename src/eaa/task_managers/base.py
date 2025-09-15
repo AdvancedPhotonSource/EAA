@@ -172,13 +172,14 @@ class BaseTaskManager:
         self,
         message: Dict[str, Any],
         update_context: bool = True,
-        update_full_history: bool = True
+        update_full_history: bool = True,
+        update_db: bool = True
     ) -> None:
         if update_context:
             self.context.append(message)
         if update_full_history:
             self.full_history.append(message)
-        if self.message_db_conn:
+        if self.message_db_conn and update_db:
             self.add_message_to_db(message)
             
     def add_message_to_db(self, message: Dict[str, Any]) -> None:
@@ -255,7 +256,14 @@ class BaseTaskManager:
                 context=self.context, 
                 return_outgoing_message=True
             )
-            self.update_message_history(outgoing_message, update_context=True, update_full_history=True)
+            # If message DB is used, user input should come from WebUI which writes
+            # to the DB, so we don't update DB again.
+            self.update_message_history(
+                outgoing_message, 
+                update_context=True, 
+                update_full_history=True, 
+                update_db=(self.message_db_conn is None)
+            )
             self.update_message_history(response, update_context=True, update_full_history=True)
             
             # Handle tool calls
