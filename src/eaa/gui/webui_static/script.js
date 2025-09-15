@@ -148,7 +148,18 @@
 
     const content = document.createElement("div");
     content.className = "content";
-    content.innerHTML = renderMarkdown(String(msg.content || ""));
+    
+    // Build the full content including tool calls
+    let fullContent = String(msg.content || "");
+    
+    if (msg.tool_calls) {
+      if (fullContent) {
+        fullContent += "\n\n";
+      }
+      fullContent += `**[Tool calls]**\n${msg.tool_calls}`;
+    }
+    
+    content.innerHTML = renderMarkdown(fullContent);
 
     container.appendChild(meta);
     container.appendChild(content);

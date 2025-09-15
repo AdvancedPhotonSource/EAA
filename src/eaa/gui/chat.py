@@ -17,7 +17,6 @@ run_webui(host="127.0.0.1", port=8008)
 Then open your browser at http://127.0.0.1:8008
 """
 
-import json
 import os
 import re
 import sqlite3
@@ -25,7 +24,7 @@ from typing import Any
 import base64
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
