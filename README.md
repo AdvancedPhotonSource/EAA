@@ -16,8 +16,7 @@
 
 uv is a Python environment and package manager that is fast and dependency-deterministic, 
 offering better reproducibility guarantee. Unlike a conda environment, a uv
-virtual environment is installed at the root directory of a project instead of
-in a centralized location, making it more portable. 
+virtual environment is installed at the root directory of a project instead of in a centralized location, making it more portable. 
 
 If you haven't installed uv yet, follow the [official documentation](https://docs.astral.sh/uv/#installation) to install it.
 
@@ -124,38 +123,37 @@ as `<img path/to/img.png>`.
 
 ## WebUI
 
-EAA has a webUI built with Chainlit. The webUI runs in a separate process,
-and communicate with the agent process through a SQL database. Agent messages
-are written into the database, which is polled by the webUI process and displayed;
-user inputs in the webUI is also written into the database and read in the
-agent process. 
+EAA provides a lightweight standalone WebUI that runs as a separate process
+and communicates with the agent process through a SQLite database. Agent messages
+are written into the database, which is polled by the WebUI and displayed; user inputs
+in the WebUI are written into the database and read by the agent process.
 
-To use this feature, specify the path of the SQL database to append or create
-when creating the task manager by adding the following argument:
+### Configure the task manager
+
+When creating the task manager, set the path of the SQLite database using `message_db_path`:
 ```
 TaskManager(
     ...
-    message_db_path="messages.db"
+    message_db_path="/absolute/path/to/messages.db"
 )
 ```
-Then create a Python script `start_webui.py` with just the following two lines:
-```
-from eaa.gui.chat import *
-set_message_db_path("messages.db")
-```
-Launch the WebUI using
-```
-chainlit run start_webui.py
-```
 
-### Auto-scrolling
+### Launch the WebUI
 
-Since the WebUI polls for messages from a SQL database, the native feature of
-auto-scrolling (where the chat window automatically scrolls to the bottom to
-show the latest message when a new message is received) does not work. To bring
-auto-scrolling back, copy everything under `examples/webui/` (including the hidden
-folder `.config`) into the working directory where `start_webui.py` is located.
-Now the JS scroller will be injected into the WebUI to enable auto-scrolling.
+Create a `start_webui.py` (you can copy the example under `examples/webui/start_webui.py`):
+```
+from eaa.gui.chat import set_message_db_path, run_webui
+
+set_message_db_path("/absolute/path/to/messages.db")
+
+if __name__ == "__main__":
+    run_webui(host="127.0.0.1", port=8008)
+```
+Run it with Python:
+```
+python start_webui.py
+```
+Then open `http://127.0.0.1:8008` in your browser.
 
 ## Model context protocol (MCP)
 

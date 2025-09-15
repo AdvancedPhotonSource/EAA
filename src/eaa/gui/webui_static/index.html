@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EAA WebUI</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="title">EAA WebUI</div>
+      <div class="status" id="status">Connected</div>
+    </header>
+    <main class="app-main">
+      <section class="messages-panel">
+        <div id="messages" class="messages" aria-live="polite"></div>
+      </section>
+      <aside class="images-panel">
+        <div class="panel-title">Images</div>
+        <div id="imagesSidebar" class="images-list"></div>
+      </aside>
+    </main>
+    <footer class="app-footer">
+      <div class="input-row">
+        <button id="attachBtn" class="btn attach" title="Attach image">📎</button>
+        <input id="fileInput" type="file" accept="image/*" hidden />
+        <textarea id="inputBox" class="input-box" rows="2" placeholder="Type a message... (Shift+Enter for newline)"></textarea>
+        <button id="sendBtn" class="btn primary">Send</button>
+      </div>
+      <div id="hint" class="hint">Attach images to message as: &lt;img /absolute/path/to/image.png&gt; or paste image from clipboard</div>
+    </footer>
+  </div>
+
+  <script src="/script.js"></script>
+</body>
+</html> 
