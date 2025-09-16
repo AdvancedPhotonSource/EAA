@@ -151,15 +151,19 @@
     
     // Build the full content including tool calls
     let fullContent = String(msg.content || "");
-    
+
     if (msg.tool_calls) {
       if (fullContent) {
         fullContent += "\n\n";
       }
       fullContent += `**[Tool calls]**\n${msg.tool_calls}`;
     }
-    
-    content.innerHTML = renderMarkdown(fullContent);
+
+    if (msg.role === "system") {
+      content.innerHTML = escapeHtml(fullContent).replace(/\n/g, '<br>');
+    } else {
+      content.innerHTML = renderMarkdown(fullContent);
+    }
 
     container.appendChild(meta);
     container.appendChild(content);
@@ -174,7 +178,8 @@
     }
 
     // Inline image from <img path>
-    const pathInText = parseImageTagFromContent(msg.content || "");
+    const shouldParseContentImage = msg.role !== "system";
+    const pathInText = shouldParseContentImage ? parseImageTagFromContent(msg.content || "") : null;
     if (pathInText) {
       const url = `/api/image?path=${encodeURIComponent(pathInText)}`;
       const img = document.createElement("img");
