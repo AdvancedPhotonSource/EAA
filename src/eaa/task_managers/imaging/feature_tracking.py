@@ -6,6 +6,7 @@ from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.api.llm_config import LLMConfig
+from eaa.util import get_image_path_from_text
 
 
 class FeatureTrackingTaskManager(ImagingBaseTaskManager):
@@ -199,7 +200,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
 
     def run_feature_tracking(
         self,
-        reference_image_path: str,
+        reference_image_path: Optional[str] = None,
         initial_position: Optional[tuple[float, float]] = None,
         initial_fov_size: Optional[tuple[float, float]] = None,
         y_range: Optional[tuple[float, float]] = None,
@@ -220,7 +221,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         ----------
         reference_image_path : str
             The path to the reference image containing the feature
-            to look for.
+            to look for. You can also leave this argument as None and
+            provide the reference image in terminal or WebUI when prompted.
         initial_position : tuple[float, float], optional
             The initial position of the field of view.
         initial_fov_size : tuple[float, float], optional
@@ -253,6 +255,13 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             in the response. If "ask", the user will be asked to provide further
             instructions. If "return", the function will return directly.
         """
+        if reference_image_path is None:
+            user_image_input = self.get_user_input(
+                prompt="Please provide the reference image as: <img /path/to/image.png>.",
+                display_prompt_in_webui=True
+            )
+            reference_image_path = get_image_path_from_text(user_image_input)
+        
         if initial_prompt is None:
             initial_prompt = dedent(f"""\
                 You are given a reference image of a field of view (FOV) of a

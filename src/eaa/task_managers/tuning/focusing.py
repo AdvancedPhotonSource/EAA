@@ -14,6 +14,7 @@ from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
+from eaa.util import get_image_path_from_text
 import eaa.image_proc as ip
 
 logger = logging.getLogger(__name__)
@@ -291,7 +292,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
     
     def run(
         self,
-        reference_image_path: str,
+        reference_image_path: Optional[str] = None,
         reference_feature_description: Optional[str] = None,
         suggested_2d_scan_kwargs: dict = None,
         suggested_parameter_step_size: Optional[float] = None,
@@ -312,7 +313,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             The path to the reference image, which should show a 2D scan
             of the ROI with the desired line scan path indicated by a
             marker. ``reference_feature_description`` will be ignored if
-            this argument is provided.
+            this argument is provided. You can also leave this argument 
+            as None and provide the reference image in terminal or WebUI
+            when prompted.
         reference_feature_description : Optional[str]
             The description of the feature across which line scans should
             be done. Ignored if ``reference_image_path`` is provided.
@@ -347,6 +350,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         additional_prompt : Optional[str]
             If provided, this prompt will be added to the initial prompt.
         """
+        if reference_image_path is None:
+            user_image_input = self.get_user_input(
+                prompt="Please provide the reference image as: <img /path/to/image.png>.",
+                display_prompt_in_webui=True
+            )
+            reference_image_path = get_image_path_from_text(user_image_input)
+        
         if reference_image_path is None and reference_feature_description is None:
             raise ValueError(
                 "Either `reference_image_path` or `reference_feature_description` must be provided."

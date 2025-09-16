@@ -196,7 +196,12 @@ class BaseTaskManager:
         )
         self.message_db_conn.commit()
         
-    def get_user_input(self, prompt: Optional[str] = None, *args, **kwargs) -> str:
+    def get_user_input(
+        self, 
+        prompt: str = "Enter a message: ",
+        display_prompt_in_webui: bool = False,
+        *args, **kwargs
+    ) -> str:
         """Get user input. If the task manager has a SQL message database connection,
         it will be assumed that the user input is coming from the WebUI and is relayed
         by the database. Otherwise, the user will be prompted to enter a message from
@@ -206,6 +211,8 @@ class BaseTaskManager:
         ----------
         prompt : Optional[str], optional
             The prompt to display to the user in the terminal.
+        display_prompt_in_webui : bool, optional
+            If True, the prompt will be displayed in the WebUI.
 
         Returns
         -------
@@ -215,6 +222,8 @@ class BaseTaskManager:
         if self.message_db_conn:
             logger.info("Getting user input from relay database. Please enter your message in the WebUI.")
             cursor = self.message_db_conn.cursor()
+            if display_prompt_in_webui:
+                self.add_message_to_db({"role": "system", "content": prompt})
             while True:
                 cursor.execute("SELECT timestamp, role, content, tool_calls, image FROM messages WHERE role = 'user_webui' ORDER BY rowid")
                 messages = cursor.fetchall()
@@ -223,8 +232,6 @@ class BaseTaskManager:
                     return messages[-1][2]
                 time.sleep(1)
         else:
-            if prompt is None:
-                prompt = "Enter a message: "
             message = input(prompt)
             return message
 
