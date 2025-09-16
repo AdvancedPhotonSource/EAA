@@ -91,6 +91,30 @@
     return raw;
   }
 
+  function formatTimestamp(raw) {
+    if (!raw) return "";
+    const str = String(raw).trim();
+    const digits = str.replace(/\D/g, "");
+    if (digits.length < 14) {
+      return str;
+    }
+
+    const year = digits.slice(0, 4);
+    const month = digits.slice(4, 6);
+    const day = digits.slice(6, 8);
+    const hour = digits.slice(8, 10);
+    const minute = digits.slice(10, 12);
+    const second = digits.slice(12, 14);
+    let formatted = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+
+    if (digits.length > 14) {
+      const micro = digits.slice(14, 20).padEnd(6, "0");
+      formatted += `.${micro}`;
+    }
+
+    return formatted;
+  }
+
   function isNearBottom(container = messagesEl) {
     const threshold = 50;
     const scrollTop = container.scrollTop;
@@ -140,7 +164,7 @@
     roleTag.textContent = msg.role;
 
     const timestamp = document.createElement("span");
-    timestamp.textContent = msg.timestamp;
+    timestamp.textContent = formatTimestamp(msg.timestamp);
     timestamp.style.color = "var(--muted)";
 
     meta.appendChild(roleTag);
