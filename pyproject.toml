@@ -36,6 +36,9 @@ docs = [
     "sphinx", 
     "sphinx-rtd-theme"
 ]
+dev = [
+    "pytest"
+]
 
 [tool.setuptools_scm]
 
