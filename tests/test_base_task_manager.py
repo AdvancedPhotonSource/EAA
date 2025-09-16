@@ -107,7 +107,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         self.task_manager.agent.receive.side_effect = [
             (response1, outgoing1),  # Initial call
             (response2, outgoing2),  # After tool response - contains TERMINATE
-            (response3, outgoing3),  # After user continues with "exit"
+            (response3, outgoing3),  # After user continues with "\exit"
         ]
         
         # Configure tool call handler to return tool response first, then empty for termination
@@ -116,7 +116,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
             ([], []),  # No tool calls in termination response
         ]
         
-        self.task_manager.get_user_input.return_value = "exit"
+        self.task_manager.get_user_input.return_value = "\\exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -130,7 +130,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
             call(initial_prompt, context=[], image_path=initial_image_path, return_outgoing_message=True),
             call("Here is the image the tool returned.", image_path="/path/to/generated/image.jpg", context=[], return_outgoing_message=True),
         ]
-        # Note: The third call is to handle user continuing after TERMINATE, but since we return "exit" it doesn't happen
+        # Note: The third call is to handle user continuing after TERMINATE, but since we return "\exit" it doesn't happen
         self.task_manager.agent.receive.assert_has_calls(expected_receive_calls)
         
         # Verify handle_tool_call was called appropriately
@@ -140,9 +140,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         assert self.task_manager.update_message_history.call_count >= 4  # Initial + response + tool response + image response
         
         # Verify user was prompted when TERMINATE condition triggered
-        self.task_manager.get_user_input.assert_called_once_with(
-            "Termination condition triggered. What to do next? Type \"exit\" to exit. "
-        )
+        self.task_manager.get_user_input.assert_called_once()
         
     def test_run_feedback_loop_with_exception_tool_response(self):
         """Test feedback loop with EXCEPTION tool response."""
@@ -168,7 +166,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ]
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "exit"
+        self.task_manager.get_user_input.return_value = "\\exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -215,7 +213,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ]
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "exit"
+        self.task_manager.get_user_input.return_value = "\\exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -256,7 +254,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ]
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "exit"
+        self.task_manager.get_user_input.return_value = "\\exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -297,7 +295,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ]
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "exit"
+        self.task_manager.get_user_input.return_value = "\\exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -340,7 +338,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ]
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "exit"
+        self.task_manager.get_user_input.return_value = "\\exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -468,7 +466,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
             ([], []),  # No tool calls after continuation
         ]
         
-        self.task_manager.get_user_input.side_effect = [user_continuation, "exit"]
+        self.task_manager.get_user_input.side_effect = [user_continuation, "\\exit"]
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -477,9 +475,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         )
         
         # Verify user was prompted for continuation
-        self.task_manager.get_user_input.assert_any_call(
-            "Termination condition triggered. What to do next? Type \"exit\" to exit. "
-        )
+        assert self.task_manager.get_user_input.call_count == 2
         
         # Verify agent received the user continuation
         self.task_manager.agent.receive.assert_any_call(

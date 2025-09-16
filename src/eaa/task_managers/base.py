@@ -237,10 +237,26 @@ class BaseTaskManager:
 
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()
+        
+    def display_command_help(self) -> str:            
+        s = (
+            "Below are supported commands. Note that not all commands are availble "
+            "in your current environment. Refer to the input prompt for available commands.\n"
+            "\\exit: exit the current loop\n"
+            "\\chat: enter chat mode. The task manager will always ask for you input "
+            "(instead of sending workflow-determined replies to the agent) when the "
+            "agent finishes its response.\n"
+            "\\return: return to upper level task"
+        )
+        if self.message_db_conn:
+            self.add_message_to_db({"role": "system", "content": s})
+        else:
+            print(s)
+        return s
 
     def run_conversation(
         self, 
-        store_all_images_in_context: bool = False, 
+        store_all_images_in_context: bool = True, 
         *args, **kwargs
     ) -> None:
         """Start a free-dtyle conversation with the assistant.
@@ -253,9 +269,19 @@ class BaseTaskManager:
             False to reduce the context size and save costs.
         """
         while True:
-            message = self.get_user_input(prompt="Enter a message: ")
-            if message.lower() == "exit":
+            message = self.get_user_input(
+                prompt=(
+                    "Enter a message (\\exit: exit; \\return: return to upper level task; "
+                    "\\help: show command help): "
+                )
+            )
+            if message.lower() == "\\exit":
                 break
+            elif message.lower() == "\\return":
+                return
+            elif message.lower() == "\\help":
+                self.display_command_help()
+                continue
             
             # Send message and get response
             response, outgoing_message = self.agent.receive(
@@ -436,10 +462,19 @@ class BaseTaskManager:
                 if termination_behavior == "return":
                     return
                 message = self.get_user_input(
-                    "Termination condition triggered. What to do next? Type \"exit\" to exit. "
+                    prompt=(
+                        "Termination condition triggered. What to do next? "
+                        "(\\exit: exit; \\chat: chat mode; \\help: show command help): "
+                    ),
+                    display_prompt_in_webui=True
                 )
-                if message.lower() == "exit":
+                if message.lower() == "\\exit":
                     return
+                elif message.lower() == "\\chat":
+                    self.run_conversation(store_all_images_in_context=True)
+                elif message.lower() == "\\help":
+                    self.display_command_help()
+                    continue
                 else:
                     response, outgoing = self.agent.receive(
                         message,
@@ -529,3 +564,4 @@ class BaseTaskManager:
                     keep_text=True
                 )
             round += 1
+        logger.warning(f"Maximum number of rounds ({max_rounds}) reached.")

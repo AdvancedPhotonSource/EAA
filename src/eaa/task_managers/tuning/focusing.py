@@ -670,9 +670,9 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
         while round < max_iters:
             if response["content"] is not None and "TERMINATE" in response["content"]:
                 message = self.get_user_input(
-                    "Termination condition triggered. What to do next? Type \"exit\" to exit. "
+                    "Termination condition triggered. What to do next? Type \"\\exit\" to exit. "
                 )
-                if message.lower() == "exit":
+                if message.lower() == "\\exit":
                     return
                 else:
                     response, outgoing = self.agent.receive(
