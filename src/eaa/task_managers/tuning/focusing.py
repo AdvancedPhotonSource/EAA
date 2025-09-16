@@ -1,5 +1,4 @@
 from typing import Optional, Callable
-from textwrap import dedent
 import logging
 import copy
 
@@ -371,125 +370,110 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         if initial_prompt is None:
             feat_text_description = ""
             if reference_feature_description is not None:
-                feat_text_description = f"Also, here is the description of the feature: {reference_feature_description}. "
+                feat_text_description = (
+                    f"Also, here is the description of the feature: **{reference_feature_description}**. "
+                )
             param_step_size_prompt = ""
             if suggested_parameter_step_size is not None:
-                param_step_size_prompt = dedent(
-                    f"""\
-                    - The suggested step size for adjusting the parameter is 
-                      {suggested_parameter_step_size}. You can adjust the step size
-                      to a smaller value if you want to fine-tune the parameter.
-                    """
+                param_step_size_prompt = (
+                    f"- The suggested step size for adjusting the parameter is "
+                    f"{suggested_parameter_step_size}. You can adjust the step size "
+                    f"to a smaller value if you want to fine-tune the parameter."
                 )
                 
             line_scan_step_size_prompt = ""
             if line_scan_step_size is not None:
-                line_scan_step_size_prompt = dedent(
-                    f"""The suggested step size for the line scan is {line_scan_step_size}.\
-                    """
+                line_scan_step_size_prompt = (
+                    f"The suggested step size for the line scan is {line_scan_step_size}."
                 )
                 
             if use_registration_in_workflow:
-                registration_prompt = dedent(
-                    """\
-                    Along with this image, you will also be given the offset of
-                    this image compared to the previous image found through image registration.
-                    Use this offset to adjust the line scan positions. Also use this offset to
-                    update the positions of your next 2D image acquisition. Note that the offset
-                    is just a suggestion. If the new image does not appear to have any overlap
-                    with the previous one, the offset won't be reliable. In that case, try
-                    adjusting the image acquisition tool's parameters to move the field of view
-                    closer to the previous image.\
-                    """
+                registration_prompt = (
+                    "Along with this image, you will also be given the offset of "
+                    "this image compared to the previous image found through image registration. "
+                    "Use this offset to adjust the line scan positions. Also use this offset to "
+                    "update the positions of your next 2D image acquisition. Note that the offset "
+                    "is just a suggestion. If the new image does not appear to have any overlap "
+                    "with the previous one, the offset won't be reliable. In that case, try "
+                    "adjusting the image acquisition tool's parameters to move the field of view "
+                    "closer to the previous image."
                 )
-                line_scan_positioning_prompt = dedent(
-                    """\
-                    Use the offset given by image registration to adjust the line scan positions.\
-                    """
+                line_scan_positioning_prompt = (
+                    "Use the offset given by image registration to adjust the line scan positions."
                 )
             else:
                 registration_prompt = ""
-                line_scan_positioning_prompt = dedent(
-                    """\
-                    Read the coordinates of the line scan path from the axis ticks.
-                    """
+                line_scan_positioning_prompt = (
+                    "Read the coordinates of the line scan path from the axis ticks."
                 )
             
-            initial_prompt = dedent(
-                f"""\
-                You will adjust the focus of a scanning microscope by adjusting
-                the parameters of its optics. The focusing quality can be evalutated
-                by performing a line scan across a thin feature and observe the FWHM
-                of its Gaussian fit. The smaller the FWHM, the sharper the image.
-                But each time you adjust the focus, the image may drift due to
-                the change of the optics. You will need to perform a 2D scan
-                prior to the line scan to locate the feature that is line-scanned.
-                <img {reference_image_path}> 
-                
-                You will see a reference 2D scan image in this message. 
-                This image is acquired in the region of interest that
-                contains the thin feature to be line-scanned. The line scan path
-                across that feature is indicated by a marker. {feat_text_description}
-                
-                Follow the procedure below to focus the microscope:
-                
-                1. First, perform a 2D scan of the region of interest using the
-                   "acquire_image" tool and the following arguments:
-                   {suggested_2d_scan_kwargs}. 
-                   The image should look similar to the reference image.
-                   Determine the coordinates of the line scan path across the feature,
-                   and use the "scan_line" tool to perform a line scan across the feature.
-                   {line_scan_step_size_prompt}
-                2. The line scan tool will return a plot along the scan line. You should
-                   see a peak in the plot. A Gaussian fit will be included in the plot
-                   and the FWHM of the Gaussian fit will be shown.
-                3. Adjust the optics parameters using the parameter setting tool.
-                   The initial parameter values are {self.initial_parameters}.
-                4. Acquire an image of the region using the image acquisition tool.
-                   Here are the suggested arguments: {suggested_2d_scan_kwargs}. The 
-                   image acquired may have drifted compared to the last one you saw,
-                   but you should still see the line-scanned feature there. If not,
-                   try adjusting the image acquisition tool's parameters to locate that
-                   feature. {registration_prompt}
-                5. Once you find the line-scanned feature, perform a new line scan across
-                   it again. Due to the drift, the start/end points' coordinates may need to
-                   be changed. {line_scan_positioning_prompt}
-                6. You will be presented with the new line scan plot and the FWHM of the
-                   Gaussian fit.
-                7. Compare the new FWHM with the last one. If it is smaller, you are on the
-                   right track. Keep adjusting the parameters to the same direction. Otherwise,
-                   adjust the parameters in the opposite direction.
-                8. Repeat the process from step 4.
-                9. When you find the FWHM is minimized, you are done. Add "TERMINATE" to 
-                   your response to hand over control back to the user.
-                   
-                Important notes:
-                
-                - Your line scan should cross only one line feature, and you should see
-                  **exactly one peak** in the line scan plot. If there isn't one, or if there
-                  are multiple peaks, or if the Gaussian fit looks bad, check your arguments
-                  to the line scan tool and run it again. Make sure your line scan strictly
-                  follow the marker in the reference image. Do not trust the FWHM value
-                  in the line plot if there is no peak, if the peak is incomplete, or if
-                  there are multiple peaks!
-                - The line scan plot should show a complete peak. If the peak is incomplete,
-                  adjust the line scan tool's arguments to make it complete.
-                - The minimal point of the FWHM is indicated by an inflection of the trend
-                  of the FWHM with regards to the optics parameters. For example, if the FWHM
-                  is 3 with a parameter value of 10, then 1 with a parameter value of 11, then
-                  3 with a parameter value of 12, this means the optimal parameter value is around
-                  11.
-                {param_step_size_prompt}
-                - When calling a tool, explain what you are doing.
-                - When making a tool call, only call one tool at a time. Do not call multiple
-                  tools in one response.
-                - Remember that when coordinates are given in (y, x) order, the first coordinate
-                  is the row index (vertical) and the second is the column index (horizontal).
-                  When you write coordinates in your response, do not just write two numbers;
-                  instead, explicitly specify y/x axis and write them as (y = <y>, x = <x>).
-                
-                When you finish or when you need human input, add "TERMINATE" to your response.\
-                """
+            initial_prompt = (
+                f"You will adjust the focus of a scanning microscope by adjusting "
+                f"the parameters of its optics. The focusing quality can be evalutated "
+                f"by performing a line scan across a thin feature and observe the FWHM "
+                f"of its Gaussian fit. The smaller the FWHM, the sharper the image. "
+                f"But each time you adjust the focus, the image may drift due to "
+                f"the change of the optics. You will need to perform a 2D scan "
+                f"prior to the line scan to locate the feature that is line-scanned.\n"
+                f"<img {reference_image_path}>\n"
+                f"You will see a reference 2D scan image in this message. "
+                f"This image is acquired in the region of interest that "
+                f"contains the thin feature to be line-scanned. The line scan path "
+                f"across that feature is indicated by a marker. {feat_text_description}\n\n"
+                f"Follow the procedure below to focus the microscope:\n\n"
+                f"1. First, perform a 2D scan of the region of interest using the "
+                f"\"acquire_image\" tool and the following arguments: "
+                f"{suggested_2d_scan_kwargs}. "
+                f"The image should look similar to the reference image. "
+                f"Determine the coordinates of the line scan path across the feature, "
+                f"and use the \"scan_line\" tool to perform a line scan across the feature. "
+                f"{line_scan_step_size_prompt}\n"
+                f"2. The line scan tool will return a plot along the scan line. You should "
+                f"see a peak in the plot. A Gaussian fit will be included in the plot "
+                f"and the FWHM of the Gaussian fit will be shown.\n"
+                f"3. Adjust the optics parameters using the parameter setting tool. "
+                f"The initial parameter values are {self.initial_parameters}.\n"
+                f"4. Acquire an image of the region using the image acquisition tool. "
+                f"Here are the suggested arguments: {suggested_2d_scan_kwargs}. The "
+                f"image acquired may have drifted compared to the last one you saw, "
+                f"but you should still see the line-scanned feature there. If not, "
+                f"try adjusting the image acquisition tool's parameters to locate that "
+                f"feature. {registration_prompt}\n"
+                f"5. Once you find the line-scanned feature, perform a new line scan across "
+                f"it again. Due to the drift, the start/end points' coordinates may need to "
+                f"be changed. {line_scan_positioning_prompt}\n"
+                f"6. You will be presented with the new line scan plot and the FWHM of the "
+                f"Gaussian fit.\n"
+                f"7. Compare the new FWHM with the last one. If it is smaller, you are on the "
+                f"right track. Keep adjusting the parameters to the same direction. Otherwise, "
+                f"adjust the parameters in the opposite direction.\n"
+                f"8. Repeat the process from step 4.\n"
+                f"9. When you find the FWHM is minimized, you are done. Add \"TERMINATE\" to "
+                f"your response to hand over control back to the user.\n\n"
+                f"Important notes:\n\n"
+                f"- Your line scan should cross only one line feature, and you should see "
+                f"**exactly one peak** in the line scan plot. If there isn't one, or if there "
+                f"are multiple peaks, or if the Gaussian fit looks bad, check your arguments "
+                f"to the line scan tool and run it again. Make sure your line scan strictly "
+                f"follow the marker in the reference image. Do not trust the FWHM value "
+                f"in the line plot if there is no peak, if the peak is incomplete, or if "
+                f"there are multiple peaks!\n"
+                f"- The line scan plot should show a complete peak. If the peak is incomplete, "
+                f"adjust the line scan tool's arguments to make it complete.\n"
+                f"- The minimal point of the FWHM is indicated by an inflection of the trend "
+                f"of the FWHM with regards to the optics parameters. For example, if the FWHM "
+                f"is 3 with a parameter value of 10, then 1 with a parameter value of 11, then "
+                f"3 with a parameter value of 12, this means the optimal parameter value is around "
+                f"11.\n"
+                f"{param_step_size_prompt}\n"
+                f"- When calling a tool, explain what you are doing.\n"
+                f"- When making a tool call, only call one tool at a time. Do not call multiple "
+                f"tools in one response.\n"
+                f"- Remember that when coordinates are given in (y, x) order, the first coordinate "
+                f"is the row index (vertical) and the second is the column index (horizontal). "
+                f"When you write coordinates in your response, do not just write two numbers; "
+                f"instead, explicitly specify y/x axis and write them as (y = <y>, x = <x>).\n\n"
+                f"When you finish or when you need human input, add \"TERMINATE\" to your response."
             )
         if additional_prompt is not None:
             initial_prompt += "\nAdditional instructions:\n" + additional_prompt
@@ -617,43 +601,36 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
             bounds_str += f"{param}: {self.parameter_ranges[0][i]} to {self.parameter_ranges[1][i]}\n"
         
         if initial_prompt is None:
-            initial_prompt = dedent(
-                f"""\
-                You are tuning the parameters of a microscope to attain the best
-                image sharpness. The parameters are {list(self.parameter_names)},
-                and their current values are {initial_parameter_values}. An image acquired
-                with the current parameters is shown below. 
-                
-                <img {last_img_path}>
-                
-                Here are the tunable ranges of the parameters:
-                {bounds_str}
-                
-                You can change the parameters using your parameter setting tool. 
-                An image acquired with the new parameters will be given to you
-                after each parameter change. Here are some detailed instructions:
-                
-                - Tune parameters one by one. Start with the first parameter, tweak it
-                to attain the sharpest possible image, then move on to the next parameter.
-                Do not change more than one parameter at a time.
-                - The sharpness of the image is convex with regards to the parameters. There
-                is only one optimal point; assume there is no local maximum. As such, if
-                you find the image comes more blurry when changing a parameter in a direction,
-                you should consider changing it the other way; if you find the image comes
-                sharper when changing a parameter in a direction, you are on the right track.
-                - For each parameter, first get a coarse estimate of the optimal value, then
-                fine-tune it. To get a coarse estimate, look for a peak in the sharpness. In
-                other words, find a parameter value that gives a sharper image than the value
-                immediately before and after it. For example, if the image becomes sharper when
-                you increase the parameter from 4 to 5, but becomes blurrier when you increase
-                it from 5 to 6, then the optimal value is around 5.
-                - Choose the step size for changing parameters wisely. For each parameter, start
-                with a large step size, and decrease it as you get closer to the optimal point.
-                - Only call the parameter setting tool one at a time. Do not call it multiple times
-                in one response.
-                
-                When you finish or when you need human input, add "TERMINATE" to your response.\
-                """
+            initial_prompt = (
+                f"You are tuning the parameters of a microscope to attain the best "
+                f"image sharpness. The parameters are {list(self.parameter_names)}, "
+                f"and their current values are {initial_parameter_values}. An image acquired "
+                f"with the current parameters is shown below.\n\n"
+                f"<img {last_img_path}>\n\n"
+                f"Here are the tunable ranges of the parameters:\n"
+                f"{bounds_str}\n"
+                f"You can change the parameters using your parameter setting tool. "
+                f"An image acquired with the new parameters will be given to you "
+                f"after each parameter change. Here are some detailed instructions:\n\n"
+                f"- Tune parameters one by one. Start with the first parameter, tweak it "
+                f"to attain the sharpest possible image, then move on to the next parameter. "
+                f"Do not change more than one parameter at a time.\n"
+                f"- The sharpness of the image is convex with regards to the parameters. There "
+                f"is only one optimal point; assume there is no local maximum. As such, if "
+                f"you find the image comes more blurry when changing a parameter in a direction, "
+                f"you should consider changing it the other way; if you find the image comes "
+                f"sharper when changing a parameter in a direction, you are on the right track.\n"
+                f"- For each parameter, first get a coarse estimate of the optimal value, then "
+                f"fine-tune it. To get a coarse estimate, look for a peak in the sharpness. In "
+                f"other words, find a parameter value that gives a sharper image than the value "
+                f"immediately before and after it. For example, if the image becomes sharper when "
+                f"you increase the parameter from 4 to 5, but becomes blurrier when you increase "
+                f"it from 5 to 6, then the optimal value is around 5.\n"
+                f"- Choose the step size for changing parameters wisely. For each parameter, start "
+                f"with a large step size, and decrease it as you get closer to the optimal point.\n"
+                f"- Only call the parameter setting tool one at a time. Do not call it multiple times "
+                f"in one response.\n\n"
+                f"When you finish or when you need human input, add \"TERMINATE\" to your response."
             )
         if additional_prompt is not None:
             initial_prompt += "\nAdditional instructions:\n" + additional_prompt

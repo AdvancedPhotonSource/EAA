@@ -1,4 +1,3 @@
-from textwrap import dedent
 import logging
 from typing import Optional
 
@@ -14,15 +13,13 @@ logger = logging.getLogger(__name__)
 
 class ImagingBaseTaskManager(BaseTaskManager):
         
-    assistant_system_message = dedent(
-        """\
-        You are helping scientists at a microscopy facility to
-        to calibrate their imaging system and set up their experiments.
-        You are given the tools that adjust the imaging system, move
-        the sample stage, and acquire images.
-        When using tools, only make one call at a time. Do not make 
-        multiple calls simultaneously.\
-        """
+    assistant_system_message = (
+        "You are helping scientists at a microscopy facility to "
+        "calibrate their imaging system and set up their experiments. "
+        "You are given the tools that adjust the imaging system, move "
+        "the sample stage, and acquire images. "
+        "When using tools, only make one call at a time. Do not make "
+        "multiple calls simultaneously."
     )
     
     def __init__(
