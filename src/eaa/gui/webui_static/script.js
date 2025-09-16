@@ -20,6 +20,18 @@
   }
 
   // Custom markdown renderer with precise control
+  //
+  // Workflow overview:
+  //   1. Temporarily replace markdown constructs (code blocks, inline code,
+  //      headers, bold, italics) with placeholders so we can treat the rest
+  //      of the message as raw text.
+  //   2. Normalize whitespace and list markers.
+  //   3. HTML-escape the remaining text wholesale, turning user-provided
+  //      angle brackets into entities (e.g. `<y>` -> `&lt;y&gt;`).
+  //   4. Rehydrate the placeholders into safe HTML snippets.
+  //
+  // This placeholder approach keeps markdown styling while ensuring literal
+  // angle brackets are displayed instead of being interpreted as tags.
   function renderMarkdown(text) {
     if (!text) return "";
     
@@ -41,16 +53,28 @@
       return `@@INLINECODE_${idx}@@`;
     });
     
-    // Step 3: Process headers (# ## ### etc.)
-    raw = raw.replace(/^(#{1,6})\s+(.+)$/gm, function (_m, hashes, text) {
-      const level = hashes.length;
-      return `<h${level}>${text.trim()}</h${level}>`;
+    // Step 3: Process headers (# ## ### etc.) using placeholders
+    const headers = [];
+    raw = raw.replace(/^(#{1,6})\s+(.+)$/gm, function (_m, hashes, headerText) {
+      const idx = headers.length;
+      headers.push({ level: hashes.length, text: headerText.trim() });
+      return `@@HEADER_${idx}@@`;
     });
     
-    // Step 4: Process bold (**text**) and italic (*text*)
-    // Bold first to avoid conflicts
-    raw = raw.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-    raw = raw.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+    // Step 4: Process bold (**text**) and italic (*text*) using placeholders
+    const bolds = [];
+    raw = raw.replace(/\*\*([^*\n]+)\*\*/g, function (_m, boldText) {
+      const idx = bolds.length;
+      bolds.push(boldText);
+      return `@@BOLD_${idx}@@`;
+    });
+    
+    const italics = [];
+    raw = raw.replace(/\*([^*\n]+)\*/g, function (_m, italicText) {
+      const idx = italics.length;
+      italics.push(italicText);
+      return `@@ITALIC_${idx}@@`;
+    });
     
     // Step 5: Aggressively remove leading whitespace and list formatting
     // Split into lines and process each one
@@ -70,17 +94,29 @@
     
     raw = processedLines.join('\n');
     
-    // Step 6: Escape remaining HTML and convert newlines to <br>
-    // Split by existing HTML tags to avoid double-escaping
-    let parts = raw.split(/(<[^>]+>)/);
-    for (let i = 0; i < parts.length; i++) {
-      if (i % 2 === 0) { // Text parts (not HTML tags)
-        parts[i] = escapeHtml(parts[i]).replace(/\n/g, '<br>');
-      }
-    }
-    raw = parts.join('');
+    // Step 6: Escape all HTML characters then convert newlines to <br>
+    raw = escapeHtml(raw).replace(/\n/g, '<br>');
     
-    // Step 7: Restore code blocks and inline codes
+    // Step 7: Restore placeholders and protected code blocks
+    raw = raw.replace(/@@HEADER_(\d+)@@/g, function (_m, i) {
+      const header = headers[Number(i)];
+      if (!header) return "";
+      const level = Math.min(Math.max(header.level, 1), 6);
+      return `<h${level}>${escapeHtml(header.text)}</h${level}>`;
+    });
+
+    raw = raw.replace(/@@BOLD_(\d+)@@/g, function (_m, i) {
+      const text = bolds[Number(i)];
+      if (text == null) return "";
+      return `<strong>${escapeHtml(text)}</strong>`;
+    });
+
+    raw = raw.replace(/@@ITALIC_(\d+)@@/g, function (_m, i) {
+      const text = italics[Number(i)];
+      if (text == null) return "";
+      return `<em>${escapeHtml(text)}</em>`;
+    });
+
     raw = raw.replace(/@@CODEBLOCK_(\d+)@@/g, function (_m, i) {
       return codeBlocks[Number(i)] || "";
     });
