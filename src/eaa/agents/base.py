@@ -215,7 +215,7 @@ class BaseAgent:
     def __init__(
         self,
         llm_config: dict,
-        system_message: str = None,
+        system_message: str = "",
     ) -> None:
         """The base agent class.
 
