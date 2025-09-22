@@ -8,7 +8,7 @@ import pytest
 sys.modules.setdefault("fastmcp", Mock())
 
 from eaa.agents.base import ToolManager
-from eaa.tools.base import BaseTool, ToolReturnType, check
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 from eaa.tools.mcp import MCPTool
 
 import test_utils as tutils
@@ -22,11 +22,11 @@ class DummyFunctionTool(BaseTool):
     def __init__(self):
         super().__init__(require_approval=True)
         self.exposed_tools = [
-            {
-                "name": "dummy_tool",
-                "function": self.dummy_tool,
-                "return_type": ToolReturnType.TEXT,
-            }
+            ExposedToolSpec(
+                name="dummy_tool",
+                function=self.dummy_tool,
+                return_type=ToolReturnType.TEXT,
+            )
         ]
 
     def dummy_tool(self) -> str:

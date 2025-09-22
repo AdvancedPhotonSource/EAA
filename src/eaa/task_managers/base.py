@@ -136,8 +136,7 @@ class BaseTaskManager:
                 )
             ):
                 raise ValueError(
-                    "A subclass of BaseTool that is not MCPTool must have a non-empty `exposed_tools` attribute "
-                    "containing a dictionary of tool names and their corresponding callable functions."
+                    "A subclass of BaseTool that is not MCPTool must provide at least one ExposedToolSpec in `exposed_tools`."
                 )
         self.agent.register_tools(list(tools))
 

@@ -7,7 +7,7 @@ This module provides a simple calculator tool that can be exposed via MCP.
 from typing import Dict, List, Any
 import logging
 
-from eaa.tools.base import BaseTool, ToolReturnType, check
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 
 logger = logging.getLogger(__name__)
 
@@ -34,37 +34,37 @@ class CalculatorTool(BaseTool):
         
         self.calculation_history: List[str] = []
         
-        self.exposed_tools: List[Dict[str, Any]] = [
-            {
-                "name": "add",
-                "function": self.add,
-                "return_type": ToolReturnType.NUMBER
-            },
-            {
-                "name": "subtract", 
-                "function": self.subtract,
-                "return_type": ToolReturnType.NUMBER
-            },
-            {
-                "name": "multiply",
-                "function": self.multiply,
-                "return_type": ToolReturnType.NUMBER
-            },
-            {
-                "name": "divide",
-                "function": self.divide,
-                "return_type": ToolReturnType.NUMBER
-            },
-            {
-                "name": "get_history",
-                "function": self.get_history,
-                "return_type": ToolReturnType.LIST
-            },
-            {
-                "name": "clear_history",
-                "function": self.clear_history,
-                "return_type": ToolReturnType.TEXT
-            }
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="add",
+                function=self.add,
+                return_type=ToolReturnType.NUMBER,
+            ),
+            ExposedToolSpec(
+                name="subtract",
+                function=self.subtract,
+                return_type=ToolReturnType.NUMBER,
+            ),
+            ExposedToolSpec(
+                name="multiply",
+                function=self.multiply,
+                return_type=ToolReturnType.NUMBER,
+            ),
+            ExposedToolSpec(
+                name="divide",
+                function=self.divide,
+                return_type=ToolReturnType.NUMBER,
+            ),
+            ExposedToolSpec(
+                name="get_history",
+                function=self.get_history,
+                return_type=ToolReturnType.LIST,
+            ),
+            ExposedToolSpec(
+                name="clear_history",
+                function=self.clear_history,
+                return_type=ToolReturnType.TEXT,
+            ),
         ]
     
     def add(self, a: float, b: float) -> float:

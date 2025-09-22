@@ -2,7 +2,7 @@ from typing import Annotated, Dict, List, Any
 
 import numpy as np
 
-from eaa.tools.base import BaseTool, check, ToolReturnType
+from eaa.tools.base import BaseTool, check, ToolReturnType, ExposedToolSpec
 from eaa.tools.imaging.acquisition import SimulatedAcquireImage
 
 
@@ -53,12 +53,12 @@ class SetParameters(BaseTool):
             parameter_names
         )
         
-        self.exposed_tools: List[Dict[str, Any]] = [
-            {
-                "name": "set_parameters",
-                "function": self.set_parameters,
-                "return_type": ToolReturnType.TEXT
-            }
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="set_parameters",
+                function=self.set_parameters,
+                return_type=ToolReturnType.TEXT,
+            )
         ]
         
     @property

@@ -1,5 +1,6 @@
 import typing
 from typing import Optional, Dict, Callable, List, Any, get_args, get_type_hints
+from dataclasses import dataclass
 import base64
 import os
 import io
@@ -22,6 +23,25 @@ class ToolReturnType(StrEnum):
     EXCEPTION = auto()
 
 
+@dataclass
+class ExposedToolSpec:
+    name: str
+    """The name of the tool."""
+    
+    function: Callable[..., Any]
+    """The callable, which should normally be a method of the tool class."""
+    
+    return_type: "ToolReturnType"
+    """The return type of the callable."""
+    
+    require_approval: Optional[bool] = None
+    """Whether the tool requires approval before execution when the tool is
+    called and executed by the agent. If None, this field will be overriden
+    with the tool class-level attribute `require_approval` when the tool is
+    registered with the agent.
+    """
+
+
 class BaseTool:
     
     name: str = "base_tool"
@@ -37,7 +57,7 @@ class BaseTool:
         if build:
             self.build(*args, **kwargs)
         
-        self.exposed_tools: List[Dict[str, Any]] = []
+        self.exposed_tools: List[ExposedToolSpec] = []
 
     def build(self, *args, **kwargs):
         pass
@@ -120,13 +140,18 @@ class BaseTool:
 def check(init_method: Callable):
     def wrapper(self, *args, **kwargs):
         return_value = init_method(self, *args, **kwargs)
-        if (not hasattr(self, "exposed_tools") 
-            or (hasattr(self, "exposed_tools") and len(self.exposed_tools) == 0)
+        if (
+            not hasattr(self, "exposed_tools")
+            or len(getattr(self, "exposed_tools", [])) == 0
         ):
             raise ValueError(
-                "A subclass of BaseTool must have a non-empty `exposed_tools` attribute "
-                "containing a dictionary of tool names and their corresponding callable functions."
+                "A subclass of BaseTool must define `exposed_tools` with at least one ExposedToolSpec."
             )
+        for exposed in self.exposed_tools:
+            if not isinstance(exposed, ExposedToolSpec):
+                raise TypeError(
+                    "Items in `exposed_tools` must be instances of ExposedToolSpec."
+                )
         return return_value
     return wrapper
 

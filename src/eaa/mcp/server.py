@@ -16,7 +16,7 @@ except ImportError:
         "Install it with: pip install fastmcp"
     )
 
-from eaa.tools.base import BaseTool, generate_openai_tool_schema
+from eaa.tools.base import BaseTool, ExposedToolSpec, generate_openai_tool_schema
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class MCPToolServer:
         self.name = name
         self.mcp_server = FastMCP(name)
         self._tool_instances: Dict[str, BaseTool] = {}
-        self._registered_tools: Dict[str, Dict[str, Any]] = {}
+        self._registered_tools: Dict[str, ExposedToolSpec] = {}
         
         # Register tools if provided
         if tools:
@@ -87,16 +87,20 @@ class MCPToolServer:
         tool : BaseTool
             The BaseTool instance to register.
         """
-        for tool_dict in tool.exposed_tools:
-            tool_name = tool_dict["name"]
-            tool_function = tool_dict["function"]
+        for spec in tool.exposed_tools:
+            if not isinstance(spec, ExposedToolSpec):
+                raise TypeError(
+                    "Items in `exposed_tools` must be ExposedToolSpec instances."
+                )
+            tool_name = spec.name
+            tool_function = spec.function
             
             if tool_name in self._registered_tools:
                 raise ValueError(f"Tool '{tool_name}' is already registered")
             
             # Store the tool instance for later method calls
             self._tool_instances[tool_name] = tool
-            self._registered_tools[tool_name] = tool_dict
+            self._registered_tools[tool_name] = spec
             
             # Register the tool with the FastMCP server using the @tool decorator
             # The FastMCP 2.x API uses the @server.tool() decorator
@@ -116,8 +120,8 @@ class MCPToolServer:
             List of tool schemas.
         """
         schemas = []
-        for tool_name, tool_dict in self._registered_tools.items():
-            schema = generate_openai_tool_schema(tool_name, tool_dict["function"])
+        for tool_name, spec in self._registered_tools.items():
+            schema = generate_openai_tool_schema(tool_name, spec.function)
             schemas.append(schema)
         return schemas
     

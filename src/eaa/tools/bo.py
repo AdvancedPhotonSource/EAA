@@ -10,7 +10,7 @@ from botorch.acquisition import AcquisitionFunction
 import gpytorch
 import torch
 
-from eaa.tools.base import BaseTool, ToolReturnType
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec
 from eaa.util import to_tensor
 
 logger = logging.getLogger(__name__)
@@ -115,17 +115,17 @@ class BayesianOptimizationTool(BaseTool):
 
         super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
         
-        self.exposed_tools: List[Dict[str, Any]] = [
-            {
-                "name": "update",
-                "function": self.update,
-                "return_type": ToolReturnType.NUMBER
-            },
-            {
-                "name": "suggest",
-                "function": self.suggest,
-                "return_type": ToolReturnType.NUMBER
-            }
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="update",
+                function=self.update,
+                return_type=ToolReturnType.NUMBER,
+            ),
+            ExposedToolSpec(
+                name="suggest",
+                function=self.suggest,
+                return_type=ToolReturnType.NUMBER,
+            ),
         ]
 
     def check_x_data(self, data: torch.Tensor):

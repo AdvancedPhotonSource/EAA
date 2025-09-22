@@ -8,7 +8,7 @@ import sys
 import tempfile
 from typing import Any, Dict, Optional
 
-from eaa.tools.base import BaseTool, ToolReturnType, check
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 
 
 class PythonCodingTool(BaseTool):
@@ -47,11 +47,11 @@ class PythonCodingTool(BaseTool):
         super().__init__(require_approval=require_approval, **kwargs)
 
         self.exposed_tools = [
-            {
-                "name": "execute_code",
-                "function": self.execute_code,
-                "return_type": ToolReturnType.DICT,
-            }
+            ExposedToolSpec(
+                name="execute_code",
+                function=self.execute_code,
+                return_type=ToolReturnType.DICT,
+            )
         ]
 
     def execute_code(

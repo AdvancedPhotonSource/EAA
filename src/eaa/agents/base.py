@@ -98,7 +98,7 @@ import asyncio
 import numpy as np
 from openai.types.chat import ChatCompletionMessage
 
-from eaa.tools.base import BaseTool, ToolReturnType, generate_openai_tool_schema
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, generate_openai_tool_schema
 from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
@@ -185,16 +185,24 @@ class ToolManager:
 
     def _register_function_tool(self, tool: BaseTool) -> None:
         for exposed in tool.exposed_tools:
-            name = exposed["name"]
+            if not isinstance(exposed, ExposedToolSpec):
+                raise TypeError(
+                    "Items in `exposed_tools` must be ExposedToolSpec instances."
+                )
+            name = exposed.name
             if name in self._tool_entries:
                 raise ValueError(
                     f"Tool '{name}' is already registered. Ensure tool names are unique."
                 )
 
-            call = exposed["function"]
-            return_type = exposed["return_type"]
+            call = exposed.function
+            return_type = exposed.return_type
             schema = generate_openai_tool_schema(name, call)
-            require_approval = exposed.get("require_approval", tool.require_approval)
+            require_approval = (
+                exposed.require_approval
+                if exposed.require_approval is not None
+                else tool.require_approval
+            )
 
             self._tool_entries[name] = ToolEntry(
                 name=name,

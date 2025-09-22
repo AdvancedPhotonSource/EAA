@@ -7,7 +7,7 @@ import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
 
-from eaa.tools.base import BaseTool, check, ToolReturnType
+from eaa.tools.base import BaseTool, check, ToolReturnType, ExposedToolSpec
 import eaa.comms
 import eaa.util
 import eaa.maths
@@ -33,12 +33,12 @@ class AcquireImage(BaseTool):
         self.show_image_in_real_time = show_image_in_real_time
         self.rt_fig = None
         
-        self.exposed_tools: List[Dict[str, Any]] = [
-            {
-                "name": "acquire_image",
-                "function": self.acquire_image,
-                "return_type": ToolReturnType.IMAGE_PATH
-            }
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="acquire_image",
+                function=self.acquire_image,
+                return_type=ToolReturnType.IMAGE_PATH,
+            )
         ]
         
         # Buffered images:
@@ -192,11 +192,11 @@ class SimulatedAcquireImage(AcquireImage):
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
         self.exposed_tools.append(
-            {
-                "name": "scan_line",
-                "function": self.scan_line,
-                "return_type": ToolReturnType.IMAGE_PATH
-            }
+            ExposedToolSpec(
+                name="scan_line",
+                function=self.scan_line,
+                return_type=ToolReturnType.IMAGE_PATH,
+            )
         )
                 
     def build(self):

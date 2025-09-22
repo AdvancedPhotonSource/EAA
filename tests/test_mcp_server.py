@@ -36,7 +36,7 @@ def test_tool_creation():
     assert len(calculator.exposed_tools) > 0, "Calculator should have at least one exposed tool"
     
     # Check expected tools
-    tool_names = [tool["name"] for tool in calculator.exposed_tools]
+    tool_names = [tool.name for tool in calculator.exposed_tools]
     expected_tools = ["add", "subtract", "multiply", "divide", "get_history", "clear_history"]
     
     for expected_tool in expected_tools:

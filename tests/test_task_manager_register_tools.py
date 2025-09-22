@@ -8,7 +8,7 @@ import pytest
 sys.modules.setdefault("fastmcp", Mock())
 
 from eaa.task_managers.base import BaseTaskManager
-from eaa.tools.base import BaseTool, ToolReturnType, check
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 from eaa.tools.mcp import MCPTool
 
 import test_utils as tutils
@@ -22,11 +22,11 @@ class DummyFunctionTool(BaseTool):
     def __init__(self):
         super().__init__(require_approval=True)
         self.exposed_tools = [
-            {
-                "name": "function_tool",
-                "function": self.run,
-                "return_type": ToolReturnType.TEXT,
-            }
+            ExposedToolSpec(
+                name="function_tool",
+                function=self.run,
+                return_type=ToolReturnType.TEXT,
+            )
         ]
 
     def run(self) -> str:
@@ -42,11 +42,11 @@ class DummyMCPTool(MCPTool):
         self._client = None
         self.calls = []
         self.exposed_tools = [
-            {
-                "name": "mcp_placeholder",
-                "function": lambda: None,
-                "return_type": ToolReturnType.TEXT,
-            }
+            ExposedToolSpec(
+                name="mcp_placeholder",
+                function=lambda: None,
+                return_type=ToolReturnType.TEXT,
+            )
         ]
         self._schemas = [
             {

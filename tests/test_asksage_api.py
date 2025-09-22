@@ -8,7 +8,7 @@ import pytest
 import numpy as np
 
 from eaa.agents.base import print_message
-from eaa.tools.base import BaseTool, ToolReturnType, check
+from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -26,11 +26,11 @@ def build_function_tool(name: str, func: Callable, return_type: ToolReturnType) 
         def __init__(self):
             super().__init__()
             self.exposed_tools = [
-                {
-                    "name": name,
-                    "function": func,
-                    "return_type": return_type,
-                }
+                ExposedToolSpec(
+                    name=name,
+                    function=func,
+                    return_type=return_type,
+                )
             ]
 
     _FunctionTool.name = f"{name}_wrapper"
