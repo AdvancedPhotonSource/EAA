@@ -2,12 +2,13 @@
 import argparse
 import logging
 import os
+from typing import Callable
 
 import pytest
 import numpy as np
 
 from eaa.agents.base import print_message
-from eaa.tools.base import ToolReturnType
+from eaa.tools.base import BaseTool, ToolReturnType, check
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -17,6 +18,23 @@ import test_utils as tutils
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def build_function_tool(name: str, func: Callable, return_type: ToolReturnType) -> BaseTool:
+    class _FunctionTool(BaseTool):
+        @check
+        def __init__(self):
+            super().__init__()
+            self.exposed_tools = [
+                {
+                    "name": name,
+                    "function": func,
+                    "return_type": return_type,
+                }
+            ]
+
+    _FunctionTool.name = f"{name}_wrapper"
+    return _FunctionTool()
 
 
 class TestAskSageAPI(tutils.BaseTester):
@@ -55,15 +73,9 @@ class TestAskSageAPI(tutils.BaseTester):
             system_message="You are a helpful assistant."
         )
         
-        agent.register_function_tools(
-            [
-                {
-                    "name": "list_sum",
-                    "function": list_sum,
-                    "return_type": ToolReturnType.NUMBER
-                }
-            ]
-        )
+        agent.register_tools([
+            build_function_tool("list_sum", list_sum, ToolReturnType.NUMBER)
+        ])
         
         # `store_message=True` ensures the user message is saved in the message history.
         response, outgoing = agent.receive("Can you sum these numbers: 2, 4, 6, 6, 7?", context=context, return_outgoing_message=True)
@@ -104,15 +116,9 @@ class TestAskSageAPI(tutils.BaseTester):
             system_message="You are a helpful assistant."
         )
         
-        agent.register_function_tools(
-            [
-                {
-                    "name": "get_image",
-                    "function": get_image,
-                    "return_type": ToolReturnType.IMAGE_PATH
-                }
-            ]
-        )
+        agent.register_tools([
+            build_function_tool("get_image", get_image, ToolReturnType.IMAGE_PATH)
+        ])
         
         response, outgoing = agent.receive(
             "Please use your tool to get the image, and tell me what you see.",

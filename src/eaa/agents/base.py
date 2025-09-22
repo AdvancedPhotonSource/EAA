@@ -82,14 +82,15 @@ which contains a list of `message` objects. We assume there is only one choice.
 """
 
 from typing import (
-    Any, 
-    Callable, 
-    Dict, 
-    List, 
-    Tuple, 
-    Optional, 
-    Literal
+    Any,
+    Callable,
+    Dict,
+    List,
+    Tuple,
+    Optional,
+    Literal,
 )
+from dataclasses import dataclass
 import json
 import logging
 import asyncio
@@ -97,7 +98,7 @@ import asyncio
 import numpy as np
 from openai.types.chat import ChatCompletionMessage
 
-from eaa.tools.base import ToolReturnType, generate_openai_tool_schema
+from eaa.tools.base import BaseTool, ToolReturnType, generate_openai_tool_schema
 from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
@@ -105,137 +106,143 @@ from eaa.util import encode_image_base64, get_image_path_from_text
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ToolEntry:
+    name: str
+    parent: BaseTool
+    call: Callable[..., Any]
+    return_type: ToolReturnType
+    schema: Dict[str, Any]
+    require_approval: bool
+
+
 class ToolManager:
 
     def __init__(self):
-        self.function_tools: List[Dict[str, Any]] = []
-        self.mcp_tools: List[MCPTool] = []
+        self._tool_entries: Dict[str, ToolEntry] = {}
+        self._base_tools: List[BaseTool] = []
         self.approval_handler: Optional[Callable[[str, Dict[str, Any]], bool]] = None
 
-    def get_all_schema(self) -> Dict[str, Any]:
-        """Get the schema for the tool. MCP tools' schemas are generated
-        as if they are function tools, so that all tool schemas have the
-        same format.
-        """
-        schemas = []
-        schemas += [generate_openai_tool_schema(tool["name"], tool["function"]) for tool in self.function_tools]
-        mcp_schemas = []
-        for tool in self.mcp_tools:
-            mcp_schemas += tool.get_all_schema()
-        schemas += mcp_schemas
-        return schemas
+    def get_all_schema(self) -> List[Dict[str, Any]]:
+        """Get the schema for all registered tools."""
+        return [entry.schema for entry in self._tool_entries.values()]
 
     def set_approval_handler(self, handler: Optional[Callable[[str, Dict[str, Any]], bool]]) -> None:
         """Register a callback used to request user approval before running tools."""
         self.approval_handler = handler
 
-    def add_function_tool(
-        self,
-        name: str,
-        tool_function: Callable,
-        return_type: ToolReturnType,
-        require_approval: bool = False,
-    ) -> None:
-        """Add a function tool to the tool manager.
-
+    def add_tool(self, tool: BaseTool) -> None:
+        """Add a BaseTool (either function tool or MCP tool) to the tool manager.
+        
         Parameters
         ----------
-        name : str
-            The name of the tool.
-        tool_function : Callable
-            The function to be used as a tool. The function should be type-annotated,
-            and have a docstring to be used as the description of the tool.
-        return_type : ToolReturnType
-            The type of the return value of the tool.
+        tool : BaseTool
+            The tool to be added to the tool manager.
         """
-        self.function_tools.append(
-            {
-                "name": name,
-                "function": tool_function,
-                "return_type": return_type,
-                "schema": generate_openai_tool_schema(name, tool_function),
-                "require_approval": require_approval,
-            }
-        )
-        
-    def add_mcp_tool(self, tool: MCPTool):
-        """Add an MCP tool to the tool manager.
-        """
-        self.mcp_tools.append(tool)
+        if not isinstance(tool, BaseTool):
+            raise ValueError("tool must inherit from BaseTool")
+
+        self._base_tools.append(tool)
+
+        if isinstance(tool, MCPTool):
+            self._register_mcp_tool(tool)
+        else:
+            self._register_function_tool(tool)
 
     def execute_tool(
         self,
         tool_name: str,
         tool_kwargs: Dict[str, Any]
     ) -> Any:
-        """Execute a tool.
+        """Execute a tool with the provided arguments."""
+        entry = self._get_entry(tool_name)
 
-        Parameters
-        ----------
-        tool_name : str
-            The name of the tool.
-        tool_kwargs : Dict[str, Any]
-            The arguments to be passed to the tool.
-        """
-        tool_obj = self.get_tool(tool_name)
-        if self._requires_approval(tool_obj):
+        if entry.require_approval:
             if self.approval_handler is None:
                 raise PermissionError(
                     f"Tool '{tool_name}' requires approval but no approval handler is configured."
                 )
-            approved = self.approval_handler(tool_name, tool_kwargs)
-            if not approved:
+            if not self.approval_handler(tool_name, tool_kwargs):
                 raise PermissionError(f"Tool '{tool_name}' execution denied by user.")
 
-        if isinstance(tool_obj, MCPTool):
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(tool_obj.call_tool(tool_name, tool_kwargs))
-        else:
-            return tool_obj["function"](**tool_kwargs)
+        return entry.call(**tool_kwargs)
 
-    def get_tool(self, tool_name: str) -> Dict[str, Any] | MCPTool:
-        """Get the tool dictionary or MCPTool object for a given tool name.
-        """
-        for tool in self.function_tools:
-            if tool["name"] == tool_name:
-                return tool
-        for tool in self.mcp_tools:
-            if tool_name in tool.get_all_tool_names():
-                return tool
-        raise ValueError(f"Tool {tool_name} not found.")
-
-    @staticmethod
-    def _requires_approval(tool: Dict[str, Any] | MCPTool) -> bool:
-        if isinstance(tool, MCPTool):
-            return getattr(tool, "require_approval", False)
-        return tool.get("require_approval", False)
+    def get_tool(self, tool_name: str) -> ToolEntry:
+        """Get the tool entry for a given tool name."""
+        return self._get_entry(tool_name)
 
     def get_tool_return_type(self, tool_name: str) -> ToolReturnType:
-        """Get the return type of a tool.
-        """
-        tool = self.get_tool(tool_name)
-        if isinstance(tool, MCPTool):
-            return ToolReturnType.TEXT
-        else:
-            return tool["return_type"]
+        """Get the return type of a tool."""
+        return self._get_entry(tool_name).return_type
 
-    def get_tool_callable(self, tool_name: str) -> Callable | MCPTool:
-        """Get the callable function or MCPTool object for a given tool name.
-        """
-        tool = self.get_tool(tool_name)
-        if isinstance(tool, MCPTool):
-            return tool
-        else:
-            return tool["function"]
+    def get_tool_callable(self, tool_name: str) -> Callable[..., Any]:
+        """Get the callable function for a given tool name."""
+        return self._get_entry(tool_name).call
 
     def get_tool_schema(self, tool_name: str) -> Dict[str, Any]:
-        """Get the schema for a given tool name.
-        """
-        tool = self.get_tool(tool_name)
-        if isinstance(tool, MCPTool):
-            return tool.get_all_schema()
-        else:
-            return tool["schema"]
+        """Get the schema for a given tool name."""
+        return self._get_entry(tool_name).schema
+
+    def _register_function_tool(self, tool: BaseTool) -> None:
+        for exposed in tool.exposed_tools:
+            name = exposed["name"]
+            if name in self._tool_entries:
+                raise ValueError(
+                    f"Tool '{name}' is already registered. Ensure tool names are unique."
+                )
+
+            call = exposed["function"]
+            return_type = exposed["return_type"]
+            schema = generate_openai_tool_schema(name, call)
+            require_approval = exposed.get("require_approval", tool.require_approval)
+
+            self._tool_entries[name] = ToolEntry(
+                name=name,
+                parent=tool,
+                call=call,
+                return_type=return_type,
+                schema=schema,
+                require_approval=require_approval,
+            )
+
+    def _register_mcp_tool(self, tool: MCPTool) -> None:
+        schemas = {schema["function"]["name"]: schema for schema in tool.get_all_schema()}
+        for name in tool.get_all_tool_names():
+            if name in self._tool_entries:
+                raise ValueError(
+                    f"Tool '{name}' is already registered. Ensure tool names are unique."
+                )
+
+            schema = schemas.get(name)
+            if schema is None:
+                raise ValueError(
+                    f"Schema for MCP tool '{name}' could not be located."
+                )
+
+            call = self._make_mcp_call(tool, name)
+            require_approval = getattr(tool, "require_approval", False)
+
+            self._tool_entries[name] = ToolEntry(
+                name=name,
+                parent=tool,
+                call=call,
+                return_type=ToolReturnType.TEXT,
+                schema=schema,
+                require_approval=require_approval,
+            )
+
+    @staticmethod
+    def _make_mcp_call(tool: MCPTool, tool_name: str) -> Callable[..., Any]:
+        def runner(**kwargs: Any) -> Any:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(tool.call_tool(tool_name, kwargs))
+
+        return runner
+
+    def _get_entry(self, tool_name: str) -> ToolEntry:
+        if tool_name not in self._tool_entries:
+            raise ValueError(f"Tool {tool_name} not found.")
+        return self._tool_entries[tool_name]
     
     
 class BaseAgent:
@@ -306,39 +313,16 @@ class BaseAgent:
     def create_client(self) -> Any:
         raise NotImplementedError
         
-    def register_function_tools(self, tools: List[Dict[str, Any]]) -> None:
-        """Register tools with the OpenAI-compatible API.
-        
-        Parameters
-        ----------
-        tools : List[Dict[str, Any]]
-            A list of dictionaries, each containing the name of the tool, the
-            callable function, and the return type of the tool.
-        """
+    def register_tools(self, tools: List[BaseTool]) -> None:
+        """Register BaseTool instances with the agent."""
         if not isinstance(tools, List):
-            raise ValueError(
-                "tools must be a list of dictionaries, each containing the name of the tool, the "
-                "callable function, and the return type of the tool."
-            )
-        
-        for tool_dict in tools:
-            self.tool_manager.add_function_tool(
-                name=tool_dict["name"],
-                tool_function=tool_dict["function"],
-                return_type=tool_dict["return_type"],
-                require_approval=tool_dict.get("require_approval", False),
-            )
-            
-    def register_mcp_tools(self, tools: List[MCPTool]) -> None:
-        """Register MCP tools with the OpenAI-compatible API.
-        """
-        if not isinstance(tools, List):
-            raise ValueError(
-                "tools must be a list of MCPTool objects."
-            )
+            raise ValueError("tools must be a list of BaseTool instances.")
+
         for tool in tools:
-            self.tool_manager.add_mcp_tool(tool)
-        
+            if not isinstance(tool, BaseTool):
+                raise ValueError("All items in tools must inherit from BaseTool.")
+            self.tool_manager.add_tool(tool)
+
     def set_tool_approval_handler(self, handler: Optional[Callable[[str, Dict[str, Any]], bool]]) -> None:
         """Configure a custom approval handler or revert to the default."""
         if handler is None:

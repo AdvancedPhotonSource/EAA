@@ -6,11 +6,11 @@ import time
 
 from eaa.agents.base import generate_openai_message, get_message_elements, print_message
 from eaa.tools.base import BaseTool
+from eaa.tools.mcp import MCPTool
 from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
 from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
-from eaa.tools.mcp import MCPTool
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -126,48 +126,20 @@ class BaseTaskManager:
         if not isinstance(tools, (list, tuple)):
             tools = [tools]
         for tool in tools:
-            if isinstance(tool, MCPTool):
-                self.agent.register_mcp_tools([tool])
-            else:
-                self.agent.register_function_tools(self.create_tool_list([tool]))
-        
-    def create_tool_list(self, tools: list[BaseTool]) -> list[dict]:
-        """Create a list of tool dictionaries by concatenating the exposed_tools
-        of all BaseTool objects.
-        
-        Parameters
-        ----------
-        tools : list[BaseTool]
-            A list of BaseTool objects.
-        
-        Returns
-        -------
-        list[dict]
-            A list of tool dictionaries.
-        """
-        tool_list = []
-        registered_tool_names = []
-        for tool in tools:
             if not isinstance(tool, BaseTool):
                 raise ValueError("Input should be a list of BaseTool objects.")
             if (
-                not hasattr(tool, "exposed_tools")
-                or (hasattr(tool, "exposed_tools") and len(tool.exposed_tools) == 0)
+                not isinstance(tool, MCPTool) and
+                (
+                    not hasattr(tool, "exposed_tools")
+                    or (hasattr(tool, "exposed_tools") and len(tool.exposed_tools) == 0)
+                )
             ):
                 raise ValueError(
-                    "A subclass of BaseTool must have a non-empty `exposed_tools` attribute "
+                    "A subclass of BaseTool that is not MCPTool must have a non-empty `exposed_tools` attribute "
                     "containing a dictionary of tool names and their corresponding callable functions."
                 )
-            for tool_dict in tool.exposed_tools:
-                tool_entry = dict(tool_dict)
-                tool_entry.setdefault("require_approval", getattr(tool, "require_approval", False))
-                if tool_entry["name"] in registered_tool_names:
-                    raise ValueError(
-                        f"Tool {tool_entry['name']} is already registered. Make sure no two callables have the same name."
-                    )
-                tool_list.append(tool_entry)
-                registered_tool_names.append(tool_entry["name"])
-        return tool_list
+        self.agent.register_tools(list(tools))
 
     def prerun_check(self, *args, **kwargs) -> bool:
         return True
