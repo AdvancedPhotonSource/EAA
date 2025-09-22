@@ -4,7 +4,7 @@ Example Calculator Tool for demonstrating MCP server functionality.
 This module provides a simple calculator tool that can be exposed via MCP.
 """
 
-from typing import Dict, List, Any
+from typing import List
 import logging
 
 from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
