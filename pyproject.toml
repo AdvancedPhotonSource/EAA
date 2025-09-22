@@ -16,7 +16,6 @@ dependencies = [
     "botorch",
     "openai",
     "tqdm",
-    "chainlit>=2.5.5",
     "fastmcp>=2.11.3",
     "fastapi",
     "uvicorn[standard]",
