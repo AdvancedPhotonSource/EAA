@@ -26,6 +26,7 @@ class ImageRegistration(BaseTool):
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
+        require_approval: bool = False,
         *args,
         **kwargs,
     ):
@@ -53,7 +54,7 @@ class ImageRegistration(BaseTool):
             centrally. When it is set to "top_left", the test image is on the bottom
             and right sides.
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, require_approval=require_approval, **kwargs)
 
         self.image_acquisition_tool = image_acquisition_tool
         self.reference_image = reference_image

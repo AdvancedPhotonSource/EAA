@@ -23,9 +23,14 @@ class CalculatorTool(BaseTool):
     name: str = "calculator"
     
     @check
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        require_approval: bool = False,
+        **kwargs,
+    ):
         """Initialize the calculator tool."""
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         
         self.calculation_history: List[str] = []
         

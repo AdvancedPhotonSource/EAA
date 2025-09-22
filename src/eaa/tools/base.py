@@ -26,7 +26,14 @@ class BaseTool:
     
     name: str = "base_tool"
         
-    def __init__(self, build: bool = True, *args, **kwargs):
+    def __init__(
+        self,
+        build: bool = True,
+        *args,
+        require_approval: bool = False,
+        **kwargs,
+    ):
+        self.require_approval: bool = require_approval
         if build:
             self.build(*args, **kwargs)
         

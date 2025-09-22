@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional, Callable, Literal
+import json
 import sqlite3
 import logging
 import time
@@ -112,6 +113,7 @@ class BaseTaskManager:
             llm_config=self.llm_config.to_dict(),
             system_message=self.assistant_system_message,
         )
+        self.agent.set_tool_approval_handler(self._request_tool_approval_via_task_manager)
     
     def build_tools(self, *args, **kwargs):
         if self.agent is not None:
@@ -157,12 +159,14 @@ class BaseTaskManager:
                     "containing a dictionary of tool names and their corresponding callable functions."
                 )
             for tool_dict in tool.exposed_tools:
-                if tool_dict["name"] in registered_tool_names:
+                tool_entry = dict(tool_dict)
+                tool_entry.setdefault("require_approval", getattr(tool, "require_approval", False))
+                if tool_entry["name"] in registered_tool_names:
                     raise ValueError(
-                        f"Tool {tool_dict['name']} is already registered. Make sure no two callables have the same name."
+                        f"Tool {tool_entry['name']} is already registered. Make sure no two callables have the same name."
                     )
-                tool_list.append(tool_dict)
-                registered_tool_names.append(tool_dict["name"])
+                tool_list.append(tool_entry)
+                registered_tool_names.append(tool_entry["name"])
         return tool_list
 
     def prerun_check(self, *args, **kwargs) -> bool:
@@ -234,6 +238,26 @@ class BaseTaskManager:
         else:
             message = input(prompt)
             return message
+
+    def _request_tool_approval_via_task_manager(self, tool_name: str, tool_kwargs: Dict[str, Any]) -> bool:
+        """Relay approval requests through the task manager input channels."""
+        serialized_args = json.dumps(tool_kwargs, default=str)
+        prompt = (
+            f"Tool '{tool_name}' requires approval before execution.\n"
+            f"Arguments: {serialized_args}\n"
+            "Approve? [y/N]: "
+        )
+        response = self.get_user_input(
+            prompt,
+            display_prompt_in_webui=bool(self.message_db_conn),
+        )
+        approved = response.strip().lower() in {"y", "yes"}
+        logger.info(
+            "Tool '%s' approval %s by user via task manager.",
+            tool_name,
+            "granted" if approved else "denied",
+        )
+        return approved
 
     def run(self, *args, **kwargs) -> None:
         self.prerun_check()

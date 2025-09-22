@@ -21,8 +21,14 @@ class AcquireImage(BaseTool):
     name: str = "acquire_image"
     
     @check
-    def __init__(self, show_image_in_real_time: bool = False, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        show_image_in_real_time: bool = False,
+        *args,
+        require_approval: bool = False,
+        **kwargs,
+    ):
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         
         self.show_image_in_real_time = show_image_in_real_time
         self.rt_fig = None
@@ -135,7 +141,9 @@ class SimulatedAcquireImage(AcquireImage):
         line_scan_gaussian_fit_y_threshold: float = 0,
         add_line_scan_candidates_to_image: bool = False,
         plot_image_in_log_scale: bool = False,
-        *args, **kwargs
+        *args,
+        require_approval: bool = False,
+        **kwargs
     ):
         """The simulated acquisition tool.
 
@@ -181,7 +189,7 @@ class SimulatedAcquireImage(AcquireImage):
         
         self.line_scan_candidates: Dict[int, list[int]] = {}
 
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         
         self.exposed_tools.append(
             {

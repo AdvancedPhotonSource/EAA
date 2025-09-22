@@ -23,6 +23,7 @@ class PythonCodingTool(BaseTool):
         default_timeout: Optional[float] = None,
         working_directory: Optional[str] = None,
         environment: Optional[Dict[str, str]] = None,
+        require_approval: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initialize the coding tool.
@@ -43,7 +44,7 @@ class PythonCodingTool(BaseTool):
         self._working_directory = working_directory or os.getcwd()
         self._environment = environment or {}
 
-        super().__init__(**kwargs)
+        super().__init__(require_approval=require_approval, **kwargs)
 
         self.exposed_tools = [
             {

@@ -10,6 +10,7 @@ class MCPTool(BaseTool):
     def __init__(
         self,
         config: dict,
+        require_approval: bool = False,
         *args, **kwargs
     ):
         """Initialize an MCP tool.
@@ -51,7 +52,7 @@ class MCPTool(BaseTool):
             }
             ```
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         self.config = config
         self._client = None
         self._connected = False

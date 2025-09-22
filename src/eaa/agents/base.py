@@ -110,6 +110,7 @@ class ToolManager:
     def __init__(self):
         self.function_tools: List[Dict[str, Any]] = []
         self.mcp_tools: List[MCPTool] = []
+        self.approval_handler: Optional[Callable[[str, Dict[str, Any]], bool]] = None
 
     def get_all_schema(self) -> Dict[str, Any]:
         """Get the schema for the tool. MCP tools' schemas are generated
@@ -124,7 +125,17 @@ class ToolManager:
         schemas += mcp_schemas
         return schemas
 
-    def add_function_tool(self, name: str, tool_function: Callable, return_type: ToolReturnType) -> None:
+    def set_approval_handler(self, handler: Optional[Callable[[str, Dict[str, Any]], bool]]) -> None:
+        """Register a callback used to request user approval before running tools."""
+        self.approval_handler = handler
+
+    def add_function_tool(
+        self,
+        name: str,
+        tool_function: Callable,
+        return_type: ToolReturnType,
+        require_approval: bool = False,
+    ) -> None:
         """Add a function tool to the tool manager.
 
         Parameters
@@ -142,7 +153,8 @@ class ToolManager:
                 "name": name,
                 "function": tool_function,
                 "return_type": return_type,
-                "schema": generate_openai_tool_schema(name, tool_function)
+                "schema": generate_openai_tool_schema(name, tool_function),
+                "require_approval": require_approval,
             }
         )
         
@@ -165,12 +177,21 @@ class ToolManager:
         tool_kwargs : Dict[str, Any]
             The arguments to be passed to the tool.
         """
-        callable = self.get_tool_callable(tool_name)
-        if isinstance(callable, MCPTool):
+        tool_obj = self.get_tool(tool_name)
+        if self._requires_approval(tool_obj):
+            if self.approval_handler is None:
+                raise PermissionError(
+                    f"Tool '{tool_name}' requires approval but no approval handler is configured."
+                )
+            approved = self.approval_handler(tool_name, tool_kwargs)
+            if not approved:
+                raise PermissionError(f"Tool '{tool_name}' execution denied by user.")
+
+        if isinstance(tool_obj, MCPTool):
             loop = asyncio.get_event_loop()
-            return loop.run_until_complete(callable.call_tool(tool_name, tool_kwargs))
+            return loop.run_until_complete(tool_obj.call_tool(tool_name, tool_kwargs))
         else:
-            return callable(**tool_kwargs)
+            return tool_obj["function"](**tool_kwargs)
 
     def get_tool(self, tool_name: str) -> Dict[str, Any] | MCPTool:
         """Get the tool dictionary or MCPTool object for a given tool name.
@@ -182,6 +203,12 @@ class ToolManager:
             if tool_name in tool.get_all_tool_names():
                 return tool
         raise ValueError(f"Tool {tool_name} not found.")
+
+    @staticmethod
+    def _requires_approval(tool: Dict[str, Any] | MCPTool) -> bool:
+        if isinstance(tool, MCPTool):
+            return getattr(tool, "require_approval", False)
+        return tool.get("require_approval", False)
 
     def get_tool_return_type(self, tool_name: str) -> ToolReturnType:
         """Get the return type of a tool.
@@ -237,8 +264,12 @@ class BaseAgent:
         self.system_messages = [
             {"role": "system", "content": system_message}
         ]
-        self.tool_manager = ToolManager()
         
+        self.tool_manager = ToolManager()
+        self._default_approval_handler = self.request_tool_approval
+        self._approval_handler = self._default_approval_handler
+        self.tool_manager.set_approval_handler(self._approval_handler)
+
         self.client = self.create_client()
         
     @property
@@ -294,7 +325,8 @@ class BaseAgent:
             self.tool_manager.add_function_tool(
                 name=tool_dict["name"],
                 tool_function=tool_dict["function"],
-                return_type=tool_dict["return_type"]
+                return_type=tool_dict["return_type"],
+                require_approval=tool_dict.get("require_approval", False),
             )
             
     def register_mcp_tools(self, tools: List[MCPTool]) -> None:
@@ -307,6 +339,31 @@ class BaseAgent:
         for tool in tools:
             self.tool_manager.add_mcp_tool(tool)
         
+    def set_tool_approval_handler(self, handler: Optional[Callable[[str, Dict[str, Any]], bool]]) -> None:
+        """Configure a custom approval handler or revert to the default."""
+        if handler is None:
+            self._approval_handler = self._default_approval_handler
+        else:
+            self._approval_handler = handler
+        self.tool_manager.set_approval_handler(self._approval_handler)
+
+    def request_tool_approval(self, tool_name: str, tool_kwargs: Dict[str, Any]) -> bool:
+        """Default approval flow that prompts in the current terminal."""
+        serialized_args = json.dumps(tool_kwargs, default=str)
+        prompt = (
+            f"Tool '{tool_name}' requires approval before execution.\n"
+            f"Arguments: {serialized_args}\n"
+            "Approve? [y/N]: "
+        )
+        response = input(prompt)
+        approved = response.strip().lower() in {"y", "yes"}
+        logger.info(
+            "Tool '%s' approval %s by user.",
+            tool_name,
+            "granted" if approved else "denied",
+        )
+        return approved
+
     def receive(
         self,
         message: Optional[str | Dict[str, Any]] = None, 

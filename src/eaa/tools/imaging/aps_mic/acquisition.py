@@ -30,6 +30,7 @@ class BlueSkyAcquireImage(AcquireImage):
         xrf_elms: Tuple[str, ...] = ("Cr",),
         allowable_x_range: Optional[Tuple[float, float]] = None,
         allowable_y_range: Optional[Tuple[float, float]] = None,
+        require_approval: bool = False,
         *args, **kwargs
     ):
         """Image acquisition tool with Bluesky.
@@ -78,7 +79,7 @@ class BlueSkyAcquireImage(AcquireImage):
         self.xrf_elms = xrf_elms
         self.allowable_x_range = allowable_x_range
         self.allowable_y_range = allowable_y_range
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         
     def acquire_image(
         self,

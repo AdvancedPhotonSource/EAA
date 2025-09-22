@@ -28,6 +28,10 @@ class TestCodingTool(tutils.BaseTester):
         assert result["stderr"] == ""
         assert result["stdout"].strip() == str(np.mean(np.arange(10)))
 
+    def test_python_coding_tool_requires_approval_flag(self):
+        tool = PythonCodingTool()
+        assert tool.require_approval is True
+
 
 if __name__ == "__main__":
     tester = TestCodingTool()

@@ -15,6 +15,7 @@ class SetParameters(BaseTool):
         self,
         parameter_names: list[str],
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]],
+        require_approval: bool = False,
         *args, 
         **kwargs
     ):
@@ -30,7 +31,7 @@ class SetParameters(BaseTool):
             sub-list containing the upper bounds. These ranges will be used to
             scale the parameter errors. As such, inf is not allowed.
         """
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         
         parameter_ranges = np.array(parameter_ranges)
         if np.any(np.isinf(parameter_ranges)):
@@ -107,11 +108,16 @@ class SetParameters(BaseTool):
         
         
 class BlueSkySetParameters(SetParameters):
-    
+
     name: str = "bluesky_tune_optics_parameters"
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        *args,
+        require_approval: bool = False,
+        **kwargs,
+    ):
+        super().__init__(*args, require_approval=require_approval, **kwargs)
         
     def set_parameters(*args, **kwargs):
         raise NotImplementedError
@@ -129,6 +135,7 @@ class SimulatedSetParameters(SetParameters):
         true_parameters: list[float], 
         blur_factor: float = 5,
         drift_factor: float = 0,
+        require_approval: bool = False,
         *args, **kwargs
     ):
         """Simulate the tuning of optics parameters.
@@ -164,7 +171,9 @@ class SimulatedSetParameters(SetParameters):
         super().__init__(
             parameter_names=parameter_names,
             parameter_ranges=parameter_ranges,
-            *args, **kwargs
+            require_approval=require_approval,
+            *args,
+            **kwargs
         )
         self.acquisition_tool = acquisition_tool
         self.true_parameters = np.array(true_parameters)

@@ -32,6 +32,7 @@ class BayesianOptimizationTool(BaseTool):
         optimization_function_kwargs: dict = None,
         n_observations: int = 1,
         kernel_lengthscales: torch.Tensor = None,
+        require_approval: bool = False,
         *args,
         **kwargs,
     ):
@@ -112,7 +113,7 @@ class BayesianOptimizationTool(BaseTool):
         self.input_transform = None
         self.outcome_transform = None
 
-        super().__init__(*args, build=False, **kwargs)
+        super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
         
         self.exposed_tools: List[Dict[str, Any]] = [
             {
