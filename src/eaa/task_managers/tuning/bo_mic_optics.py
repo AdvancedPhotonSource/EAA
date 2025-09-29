@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import numpy as np
@@ -10,6 +10,7 @@ from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManage
 from eaa.tools.base import BaseTool
 from eaa.tools.bo import BayesianOptimizationTool
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class MicroscopyOpticsTuningBOTaskManager(
     def __init__(
         self,
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
         image_acquisition_tool: BaseTool = None,
         parameter_setting_tool: BaseTool = None,
         bayesian_optimization_tool: BayesianOptimizationTool = None,
@@ -91,6 +93,7 @@ class MicroscopyOpticsTuningBOTaskManager(
         BayesianOptimizationTaskManager.__init__(
             self,
             llm_config=llm_config,
+            memory_config=memory_config,
             bayesian_optimization_tool=bayesian_optimization_tool,
             initial_points=initial_points,
             n_initial_points=n_initial_points,
@@ -102,6 +105,7 @@ class MicroscopyOpticsTuningBOTaskManager(
         FeatureTrackingTaskManager.__init__(
             self, 
             llm_config=llm_config,
+            memory_config=memory_config,
             image_acquisition_tool=image_acquisition_tool,
             additional_tools=additional_tools,
             build=True,

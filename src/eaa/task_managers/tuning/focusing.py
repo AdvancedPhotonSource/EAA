@@ -1,4 +1,4 @@
-from typing import Optional, Callable
+from typing import Optional, Callable, Union
 import logging
 import copy
 
@@ -13,6 +13,7 @@ from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
 import eaa.image_proc as ip
 
@@ -24,6 +25,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
     def __init__(
         self,
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
         image_registration_tool: Optional[ImageRegistration] = None,
@@ -117,6 +119,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             param_setting_tool=param_setting_tool,
             additional_tools=[acquisition_tool, *additional_tools],
             initial_parameters=initial_parameters,
@@ -249,6 +252,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         
         self.feature_tracking_task_manager = FeatureTrackingTaskManager(
             llm_config=self.llm_config,
+            memory_config=self.memory_config,
             image_acquisition_tool=copy.deepcopy(self.acquisition_tool),
             image_registration_tool=copy.deepcopy(self.image_registration_tool),
             message_db_path=self.message_db_path,
@@ -503,6 +507,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
@@ -548,6 +553,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
         
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             param_setting_tool=param_setting_tool,
             additional_tools=[param_setting_tool],
             initial_parameters=initial_parameters,

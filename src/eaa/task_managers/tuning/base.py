@@ -1,10 +1,11 @@
-from typing import Optional
+from typing import Optional, Union
 import logging
 
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
         param_setting_tool: SetParameters = None,
         additional_tools: list[BaseTool] = (),
         initial_parameters: dict[str, float] = None,
@@ -58,6 +60,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             tools=[param_setting_tool, *additional_tools],
             message_db_path=message_db_path,
             build=build,

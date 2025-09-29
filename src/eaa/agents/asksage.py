@@ -1,11 +1,12 @@
 import os
 import re
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Union
 
 from asksageclient import AskSageClient
 
 from eaa.agents.base import BaseAgent
+from eaa.agents.memory import MemoryManagerConfig
 from eaa.util import decode_image_base64, get_timestamp
 
 
@@ -15,6 +16,7 @@ class AskSageAgent(BaseAgent):
         self,
         llm_config: dict,
         system_message: str = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
     ) -> None:
         """An agent that uses OpenAI-compatible API to generate responses.
 
@@ -31,10 +33,13 @@ class AskSageAgent(BaseAgent):
             - `cacert_path`: The path to the CA certificate file (*.pem).
         system_message : str, optional
             The system message for the OpenAI-compatible API.
+        memory_config : dict | MemoryManagerConfig, optional
+            Optional configuration for persistent memory support.
         """
         super().__init__(
-            llm_config=llm_config, 
-            system_message=system_message
+            llm_config=llm_config,
+            system_message=system_message,
+            memory_config=memory_config,
         )
     
     @property

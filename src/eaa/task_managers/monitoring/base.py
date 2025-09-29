@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 import logging
 import time
 from textwrap import dedent
@@ -6,6 +6,7 @@ from textwrap import dedent
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class BaseMonitoringTaskManager(BaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
         tools: list[BaseTool] = (),
         message_db_path: Optional[str] = None,
         build: bool = True,
@@ -36,6 +38,7 @@ class BaseMonitoringTaskManager(BaseTaskManager):
         """
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             tools=tools,
             message_db_path=message_db_path,
             build=build,

@@ -1,8 +1,9 @@
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from openai import OpenAI
 
 from eaa.agents.base import BaseAgent
+from eaa.agents.memory import MemoryManagerConfig
 
 
 class OpenAIAgent(BaseAgent):
@@ -11,6 +12,7 @@ class OpenAIAgent(BaseAgent):
         self,
         llm_config: dict,
         system_message: str = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
     ) -> None:
         """An agent that uses OpenAI-compatible API to generate responses.
 
@@ -24,10 +26,13 @@ class OpenAIAgent(BaseAgent):
             - `base_url`: The base URL for the OpenAI-compatible API.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
+        memory_config : dict | MemoryManagerConfig, optional
+            Optional configuration for persistent memory.
         """
         super().__init__(
-            llm_config=llm_config, 
-            system_message=system_message
+            llm_config=llm_config,
+            system_message=system_message,
+            memory_config=memory_config,
         )
         
     @property
@@ -39,6 +44,27 @@ class OpenAIAgent(BaseAgent):
             api_key=self.api_key,
             base_url=self.base_url,
         )
+
+    def supports_memory_embeddings(self) -> bool:
+        return True
+
+    def get_default_embedding_model(self) -> Optional[str]:
+        return self.llm_config.get("embedding_model", "text-embedding-3-small")
+
+    def embed_texts(
+        self,
+        texts: Sequence[str],
+        *,
+        model: Optional[str] = None,
+    ) -> List[List[float]]:
+        selected_model = model or self.get_default_embedding_model()
+        if selected_model is None:
+            raise ValueError("No embedding model configured for OpenAIAgent.")
+        response = self.client.embeddings.create(
+            model=selected_model,
+            input=list(texts),
+        )
+        return [item.embedding for item in response.data]
     
     def send_message_and_get_response(
         self,

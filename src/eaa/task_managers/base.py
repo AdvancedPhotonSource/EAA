@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Callable, Literal
+from typing import Any, Dict, Optional, Callable, Literal, Union
 import json
 import sqlite3
 import logging
@@ -11,6 +11,7 @@ from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
 from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
+from eaa.agents.memory import MemoryManagerConfig
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -31,6 +32,7 @@ class BaseTaskManager:
     def __init__(
         self, 
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[Dict[str, Any], MemoryManagerConfig]] = None,
         tools: list[BaseTool] = (), 
         message_db_path: Optional[str] = None,
         build: bool = True,
@@ -42,6 +44,9 @@ class BaseTaskManager:
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : dict | MemoryManagerConfig, optional
+            Optional configuration for long-term memory. Forwarded to the
+            underlying agent when instantiated.
         tools : list[BaseTool]
             A list of tools provided to the agent.
         message_db_path : Optional[str]
@@ -55,6 +60,7 @@ class BaseTaskManager:
         self.context = []
         self.full_history = []
         self.llm_config = llm_config
+        self.memory_config = memory_config
         self.agent = None
         self.tools = tools
         
@@ -112,6 +118,7 @@ class BaseTaskManager:
         self.agent = agent_class(
             llm_config=self.llm_config.to_dict(),
             system_message=self.assistant_system_message,
+            memory_config=self.memory_config,
         )
         self.agent.set_tool_approval_handler(self._request_tool_approval_via_task_manager)
     

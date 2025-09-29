@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Callable
+from typing import Optional, Callable, Union
 
 import torch
 
@@ -7,6 +7,7 @@ from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.tools.bo import BayesianOptimizationTool
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
     def __init__(
         self,
         llm_config: LLMConfig = None,
+        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
         bayesian_optimization_tool: BayesianOptimizationTool = None,
         additional_tools: list[BaseTool] = (),
         initial_points: Optional[torch.Tensor] = None,
@@ -80,6 +82,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             tools=additional_tools,
             message_db_path=message_db_path,
             build=build,
