@@ -127,6 +127,54 @@
     return raw;
   }
 
+  function formatToolApprovalMessage(text) {
+    const original = text == null ? '' : String(text);
+    const lines = original.split('\n');
+    const placeholder = '<see formatted code below>';
+    let codeSnippet = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const match = line.match(/^(\s*Arguments:\s*)(\{.*\})\s*$/);
+      if (!match) {
+        continue;
+      }
+
+      let jsonPart = match[2];
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonPart);
+      } catch (_err) {
+        continue;
+      }
+
+      let replaced = false;
+      if (typeof parsed.code === 'string') {
+        codeSnippet = parsed.code;
+        parsed.code = placeholder;
+        replaced = true;
+      } else if (parsed.arguments && typeof parsed.arguments.code === 'string') {
+        codeSnippet = parsed.arguments.code;
+        parsed.arguments = { ...parsed.arguments, code: placeholder };
+        replaced = true;
+      }
+      if (!replaced) {
+        continue;
+      }
+      
+      const prefix = match[1];
+      lines[i] = `${prefix}${JSON.stringify(parsed)}`;
+      break;
+    }
+
+    if (!codeSnippet) {
+      return { text: original, code: null };
+    }
+
+    const normalisedCode = codeSnippet.replace(/\r\n/g, '\n');
+    return { text: lines.join('\n'), code: normalisedCode };
+  }
+
   function formatTimestamp(raw) {
     if (!raw) return "";
     const str = String(raw).trim();
@@ -219,10 +267,22 @@
       fullContent += `**[Tool calls]**\n${msg.tool_calls}`;
     }
 
+    const formattedApproval = formatToolApprovalMessage(fullContent);
+    fullContent = formattedApproval.text;
+
     if (msg.role === "system") {
       content.innerHTML = escapeHtml(fullContent).replace(/\n/g, '<br>');
     } else {
       content.innerHTML = renderMarkdown(fullContent);
+    }
+
+    if (formattedApproval.code) {
+      const pre = document.createElement('pre');
+      pre.className = 'approval-code-block';
+      const codeEl = document.createElement('code');
+      codeEl.textContent = formattedApproval.code;
+      pre.appendChild(codeEl);
+      content.appendChild(pre);
     }
 
     container.appendChild(meta);
