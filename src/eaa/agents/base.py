@@ -103,7 +103,12 @@ from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, generate_o
 from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
-from eaa.agents.memory import MemoryManager, MemoryManagerConfig, MemoryQueryResult
+from eaa.agents.memory import (
+    MemoryManager,
+    MemoryManagerConfig,
+    MemoryQueryResult,
+    VectorStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +276,12 @@ class BaseAgent:
         self,
         llm_config: dict,
         system_message: str = "",
-        memory_config: Optional[Dict[str, Any] | MemoryManagerConfig] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
+        *,
+        memory_vector_store: Optional[VectorStore] = None,
+        memory_notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        memory_formatter: Optional[Callable[[List[MemoryQueryResult]], str]] = None,
+        memory_embedder: Optional[Callable[[Sequence[str]], List[List[float]]]] = None,
     ) -> None:
         """The base agent class.
 
@@ -285,18 +295,20 @@ class BaseAgent:
             - `base_url`: The base URL for the OpenAI-compatible API.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
-        memory_config : dict | MemoryManagerConfig, optional
-            Configuration for long-term memory. When provided, the agent can
-            optionally store conversation snippets and retrieve them on future
-            turns using retrieval-augmented generation. Pass a
-            `MemoryManagerConfig` instance when you only need to adjust the
-            dataclass fields. Supply a dictionary when you also want to include
-            auxiliary hooks such as a custom vector store, notability filter,
-            formatter, or embedder override. The dictionary may contain the
-            config fields (`enabled`, `write_enabled`, `retrieval_enabled`,
-            `top_k`, `score_threshold`, `min_content_length`, `embedding_model`,
-            `vector_store_path`, `injection_role`) plus optional extras
-            (`vector_store`, `notability_filter`, `formatter`, `embedder`).
+        memory_config : MemoryManagerConfig, optional
+            Configuration for long-term memory. Use
+            `MemoryManagerConfig.from_dict` to build from a mapping when
+            convenient. When provided, the agent can optionally store
+            conversation snippets and retrieve them on future turns using
+            retrieval-augmented generation.
+        memory_vector_store : VectorStore, optional
+            Override the default memory backend used for persistence and recall.
+        memory_notability_filter : Callable[[str, Dict[str, Any]], bool], optional
+            Custom filter evaluated before storing a snippet.
+        memory_formatter : Callable[[List[MemoryQueryResult]], str], optional
+            Formatter used to inject recalled memories back into the prompt.
+        memory_embedder : Callable[[Sequence[str]], List[List[float]]], optional
+            Override the embedding function for memory operations.
         """
         self.llm_config = llm_config
         
@@ -315,7 +327,13 @@ class BaseAgent:
 
         self.memory_manager: Optional[MemoryManager] = None
         self._memory_injection_role = "system"
-        self._initialize_memory(memory_config)
+        self._initialize_memory(
+            memory_config,
+            vector_store=memory_vector_store,
+            notability_filter=memory_notability_filter,
+            formatter=memory_formatter,
+            embedder_override=memory_embedder,
+        )
         
     @property
     def model(self) -> str:
@@ -372,45 +390,38 @@ class BaseAgent:
 
     def _initialize_memory(
         self,
-        memory_config: Optional[Dict[str, Any] | MemoryManagerConfig],
+        memory_config: Optional[MemoryManagerConfig],
+        *,
+        vector_store: Optional[VectorStore] = None,
+        notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        formatter: Optional[Callable[[List[MemoryQueryResult]], str]] = None,
+        embedder_override: Optional[Callable[[Sequence[str]], List[List[float]]]] = None,
     ) -> None:
         if memory_config is None:
             return
 
-        config_obj: MemoryManagerConfig
-        vector_store = None
-        notability_filter = None
-        formatter = None
-        embedder_override = None
-
-        if isinstance(memory_config, MemoryManagerConfig):
-            config_obj = memory_config
-        elif isinstance(memory_config, dict):
-            config_obj = MemoryManagerConfig.from_dict(memory_config)
-            vector_store = memory_config.get("vector_store")
-            notability_filter = memory_config.get("notability_filter")
-            formatter = memory_config.get("formatter")
-            embedder_override = memory_config.get("embedder")
-        else:
-            raise ValueError("memory_config must be a dict or MemoryManagerConfig instance.")
+        config_obj = memory_config
 
         if config_obj.injection_role not in {"system", "user"}:
-            raise ValueError(
+            logger.warning(
                 "Unsupported injection role '%s'; defaulting to 'system'.",
                 config_obj.injection_role,
             )
+            config_obj.injection_role = "system"
 
         self._memory_injection_role = config_obj.injection_role
 
-        if embedder_override is None and not self.supports_memory_embeddings():
-            logger.warning(
-                "%s does not support embeddings; ignoring memory configuration.",
-                self.__class__.__name__,
-            )
-            return
-
-        embedding_model = config_obj.embedding_model or self.get_default_embedding_model()
-        embedder_fn = embedder_override or self._build_memory_embedder(embedding_model)
+        if embedder_override is None:
+            if not self.supports_memory_embeddings():
+                logger.warning(
+                    "%s does not support embeddings; ignoring memory configuration.",
+                    self.__class__.__name__,
+                )
+                return
+            embedding_model = config_obj.embedding_model or self.get_default_embedding_model()
+            embedder_fn = self._build_memory_embedder(embedding_model)
+        else:
+            embedder_fn = embedder_override
 
         try:
             self.memory_manager = MemoryManager(

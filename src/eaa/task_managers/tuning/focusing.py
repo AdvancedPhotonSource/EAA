@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Union
+from typing import Optional, Callable
 import logging
 import copy
 
@@ -25,7 +25,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
     def __init__(
         self,
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
         image_registration_tool: Optional[ImageRegistration] = None,
@@ -63,6 +63,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         ----------
         llm_config : LLMConfig, optional
             The LLM configuration to use.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         param_setting_tool : SetParameters
             The tool to use to set the parameters.
         acquisition_tool : AcquireImage
@@ -256,6 +258,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             image_acquisition_tool=copy.deepcopy(self.acquisition_tool),
             image_registration_tool=copy.deepcopy(self.image_registration_tool),
             message_db_path=self.message_db_path,
+            memory_vector_store=self._memory_vector_store,
+            memory_notability_filter=self._memory_notability_filter,
+            memory_formatter=self._memory_formatter,
+            memory_embedder=self._memory_embedder,
         )
         
         self.feature_tracking_task_manager.run_feature_tracking(
@@ -507,7 +513,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
@@ -523,6 +529,8 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         param_setting_tool : SetParameters
             The tool to use to set the parameters.
         acquisition_tool : SimulatedAcquireImage, optional

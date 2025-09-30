@@ -28,7 +28,15 @@ class MemoryManagerConfig(MemorySchema):
 
 
 class MemoryManager:
-    """Orchestrates storing and retrieving conversation memories for an agent."""
+    """Orchestrates storing and retrieving conversation memories for an agent.
+
+    The manager wraps an embedder function and a vector-store backend so it can
+    decide when to persist snippets (via :meth:`remember`) and fetch relevant
+    context (:meth:`recall`). Implementations remain pluggable: pass in a custom
+    embedder, a different vector store, or a notability filter to control what
+    gets saved. This class coordinates those pieces and exposes a minimal API
+    that agents can call during a conversation turn.
+    """
 
     def __init__(
         self,
@@ -39,6 +47,24 @@ class MemoryManager:
         notability_filter: Optional[FilterFn] = None,
         formatter: Optional[FormatterFn] = None,
     ) -> None:
+        """Initialise a memory manager with the supplied components.
+
+        Parameters
+        ----------
+        embedder : Callable[[Sequence[str]], List[List[float]]]
+            Function that converts text snippets into numeric embeddings.
+        config : MemoryManagerConfig, optional
+            Runtime configuration controlling toggles, thresholds, and defaults.
+        vector_store : VectorStore, optional
+            Backend used to persist and query memories; defaults to a
+            JSON-backed local store when omitted.
+        notability_filter : Callable[[str, Dict[str, Any]], bool], optional
+            Predicate that can veto storage even if heuristics would otherwise
+            save the snippet.
+        formatter : Callable[[List[MemoryQueryResult]], str], optional
+            Converts recall results into text injected back into the agent
+            prompt; falls back to a bullet-list formatter.
+        """
         self.embedder = embedder
         self.config = config or MemoryManagerConfig()
         self.vector_store = vector_store or LocalVectorStore(self.config.vector_store_path)

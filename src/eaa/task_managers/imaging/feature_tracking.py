@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Literal, Union
+from typing import Optional, Callable, Literal
 
 from eaa.tools.base import BaseTool
 from eaa.tools.imaging.acquisition import AcquireImage
@@ -14,7 +14,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (), 
@@ -29,6 +29,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         image_acquisition_tool : AcquireImage
             The tool to use to acquire images.
         image_registration_tool : ImageRegistration

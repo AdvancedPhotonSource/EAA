@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 import logging
 import time
 from textwrap import dedent
@@ -16,7 +16,7 @@ class BaseMonitoringTaskManager(BaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (),
         message_db_path: Optional[str] = None,
         build: bool = True,
@@ -28,6 +28,8 @@ class BaseMonitoringTaskManager(BaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration to forward to the underlying agent.
         tools : list[BaseTool]
             The tools to use to monitor the experiment.
         message_db_path : Optional[str]

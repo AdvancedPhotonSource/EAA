@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Callable, Union
+from typing import Optional, Callable
 
 import torch
 
@@ -17,7 +17,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
     def __init__(
         self,
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         bayesian_optimization_tool: BayesianOptimizationTool = None,
         additional_tools: list[BaseTool] = (),
         initial_points: Optional[torch.Tensor] = None,
@@ -33,6 +33,8 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         ----------
         llm_config : LLMConfig, optional
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         additional_tools : list[BaseTool], optional
             A list of tools for the agent (not including the
             `BayesianOptimizationTool`).

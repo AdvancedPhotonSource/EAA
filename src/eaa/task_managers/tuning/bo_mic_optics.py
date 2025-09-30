@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import numpy as np
@@ -22,7 +22,7 @@ class MicroscopyOpticsTuningBOTaskManager(
     def __init__(
         self,
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         image_acquisition_tool: BaseTool = None,
         parameter_setting_tool: BaseTool = None,
         bayesian_optimization_tool: BayesianOptimizationTool = None,
@@ -40,6 +40,8 @@ class MicroscopyOpticsTuningBOTaskManager(
         ----------
         llm_config : LLMConfig, optional
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the underlying agents.
         bayesian_optimization_tool : BayesianOptimizationTool
             The Bayesian optimization tool to use.
         image_acquisition_tool : BaseTool

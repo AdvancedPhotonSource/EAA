@@ -1,9 +1,9 @@
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from openai import OpenAI
 
 from eaa.agents.base import BaseAgent
-from eaa.agents.memory import MemoryManagerConfig
+from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
 
 
 class OpenAIAgent(BaseAgent):
@@ -12,7 +12,12 @@ class OpenAIAgent(BaseAgent):
         self,
         llm_config: dict,
         system_message: str = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
+        *,
+        memory_vector_store: Optional[VectorStore] = None,
+        memory_notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        memory_formatter: Optional[Callable[[List[MemoryQueryResult]], str]] = None,
+        memory_embedder: Optional[Callable[[Sequence[str]], List[List[float]]]] = None,
     ) -> None:
         """An agent that uses OpenAI-compatible API to generate responses.
 
@@ -26,13 +31,21 @@ class OpenAIAgent(BaseAgent):
             - `base_url`: The base URL for the OpenAI-compatible API.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
-        memory_config : dict | MemoryManagerConfig, optional
+        memory_config : MemoryManagerConfig, optional
             Optional configuration for persistent memory.
+        memory_vector_store, memory_notability_filter, memory_formatter,
+        memory_embedder : optional
+            Overrides for the memory backend, storage filter, result
+            formatting, and embedding function respectively.
         """
         super().__init__(
             llm_config=llm_config,
             system_message=system_message,
             memory_config=memory_config,
+            memory_vector_store=memory_vector_store,
+            memory_notability_filter=memory_notability_filter,
+            memory_formatter=memory_formatter,
+            memory_embedder=memory_embedder,
         )
         
     @property

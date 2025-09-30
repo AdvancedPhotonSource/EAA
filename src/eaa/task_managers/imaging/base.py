@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Union
+from typing import Optional
 
 from PIL import Image
 
@@ -26,7 +26,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (), 
         message_db_path: Optional[str] = None,
         build: bool = True,
@@ -39,6 +39,8 @@ class ImagingBaseTaskManager(BaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         tools : list[BaseTool]
             A list of tools provided to the agent.
         message_db_path : Optional[str]

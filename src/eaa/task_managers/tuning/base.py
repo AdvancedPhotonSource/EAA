@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 import logging
 
 from eaa.tools.imaging.param_tuning import SetParameters
@@ -15,7 +15,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[dict, MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         param_setting_tool: SetParameters = None,
         additional_tools: list[BaseTool] = (),
         initial_parameters: dict[str, float] = None,
@@ -31,6 +31,8 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         param_setting_tool : SetParameters
             The tool to use to set the parameters.
         initial_parameters : dict[str, float], optional

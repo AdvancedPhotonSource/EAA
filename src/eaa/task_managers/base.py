@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Callable, Literal, Union
+from typing import Any, Dict, Optional, Callable, Literal, List, Sequence
 import json
 import sqlite3
 import logging
@@ -11,7 +11,7 @@ from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
 from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
-from eaa.agents.memory import MemoryManagerConfig
+from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -32,11 +32,16 @@ class BaseTaskManager:
     def __init__(
         self, 
         llm_config: LLMConfig = None,
-        memory_config: Optional[Union[Dict[str, Any], MemoryManagerConfig]] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (), 
         message_db_path: Optional[str] = None,
         build: bool = True,
-        *args, **kwargs
+        *args,
+        memory_vector_store: Optional[VectorStore] = None,
+        memory_notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        memory_formatter: Optional[Callable[[List[MemoryQueryResult]], str]] = None,
+        memory_embedder: Optional[Callable[[Sequence[str]], List[List[float]]]] = None,
+        **kwargs
     ):
         """The base task manager.
         
@@ -44,9 +49,11 @@ class BaseTaskManager:
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
-        memory_config : dict | MemoryManagerConfig, optional
-            Optional configuration for long-term memory. Forwarded to the
-            underlying agent when instantiated.
+        memory_config : MemoryManagerConfig, optional
+            Optional configuration for long-term memory. Use
+            `MemoryManagerConfig.from_dict` to build from a mapping if needed.
+        memory_vector_store, memory_notability_filter, memory_formatter, memory_embedder : optional
+            Overrides propagated to the agent for custom memory behaviour.
         tools : list[BaseTool]
             A list of tools provided to the agent.
         message_db_path : Optional[str]
@@ -60,13 +67,20 @@ class BaseTaskManager:
         self.context = []
         self.full_history = []
         self.llm_config = llm_config
+        if isinstance(memory_config, dict):  # type: ignore[unreachable]
+            memory_config = MemoryManagerConfig.from_dict(memory_config)  # pragma: no cover - legacy path
         self.memory_config = memory_config
         self.agent = None
         self.tools = tools
-        
+
         self.message_db_path = message_db_path
         self.message_db_conn = None
         self.webui_user_input_last_timestamp = 0
+
+        self._memory_vector_store = memory_vector_store
+        self._memory_notability_filter = memory_notability_filter
+        self._memory_formatter = memory_formatter
+        self._memory_embedder = memory_embedder
         
         if build:
             self.build()
@@ -119,6 +133,10 @@ class BaseTaskManager:
             llm_config=self.llm_config.to_dict(),
             system_message=self.assistant_system_message,
             memory_config=self.memory_config,
+            memory_vector_store=self._memory_vector_store,
+            memory_notability_filter=self._memory_notability_filter,
+            memory_formatter=self._memory_formatter,
+            memory_embedder=self._memory_embedder,
         )
         self.agent.set_tool_approval_handler(self._request_tool_approval_via_task_manager)
     
