@@ -264,6 +264,7 @@ class BaseAgent:
     _MEMORY_KEYWORDS: List[Tuple[str, str]] = [
         ("remember", "User asked agent to remember"),
         ("note that", "User highlighted a note"),
+        ("note this", "User highlighted a note"),
         ("call me", "Preferred form of address"),
         ("my name is", "User shared their name"),
         ("i prefer", "User shared a preference"),
