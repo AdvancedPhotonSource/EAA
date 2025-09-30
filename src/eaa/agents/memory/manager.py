@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import logging
 
 from .types import MemoryQueryResult, MemoryRecord, MemorySchema
-from .vector_store import LocalVectorStore, VectorStore
+from .vector_store import ChromaVectorStore, LocalVectorStore, VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,8 @@ class MemoryManager:
             Runtime configuration controlling toggles, thresholds, and defaults.
         vector_store : VectorStore, optional
             Backend used to persist and query memories; defaults to a
-            JSON-backed local store when omitted.
+            Chroma-backed store when available (falling back to the JSON-backed
+            local store otherwise).
         notability_filter : Callable[[str, Dict[str, Any]], bool], optional
             Predicate that can veto storage even if heuristics would otherwise
             save the snippet.
@@ -67,7 +68,7 @@ class MemoryManager:
         """
         self.embedder = embedder
         self.config = config or MemoryManagerConfig()
-        self.vector_store = vector_store or LocalVectorStore(self.config.vector_store_path)
+        self.vector_store = vector_store or self._create_default_store()
         self.notability_filter = notability_filter
         self.formatter = formatter or self._default_formatter
 
@@ -139,6 +140,19 @@ class MemoryManager:
             self.vector_store.persist()
         except AttributeError:
             logger.debug("Vector store does not implement `persist`; skipping flush.")
+
+    def _create_default_store(self) -> VectorStore:
+        persist_path = self.config.vector_store_path
+        try:
+            return ChromaVectorStore(persist_path)
+        except ImportError:
+            logger.debug("chromadb not available; falling back to LocalVectorStore.")
+        except Exception as exc:  # pragma: no cover - defensive fallback.
+            logger.warning(
+                "Failed to initialise ChromaVectorStore, using LocalVectorStore instead: %s",
+                exc,
+            )
+        return LocalVectorStore(persist_path)
 
     @staticmethod
     def _default_formatter(results: List[MemoryQueryResult]) -> str:

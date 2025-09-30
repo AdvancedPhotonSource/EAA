@@ -19,7 +19,7 @@ dependencies = [
     "fastmcp>=2.11.3",
     "fastapi",
     "uvicorn[standard]",
-    "psycopg[binary]>=3.2.10",
+    "chromadb",
 ]
 dynamic = ["version"]
 
@@ -31,6 +31,9 @@ aps_mic = [
 ]
 asksage = [
     "asksageclient==1.31"
+]
+postgresql_vector_store = [
+    "psycopg[binary]>=3.2.10"
 ]
 docs = [
     "sphinx", 

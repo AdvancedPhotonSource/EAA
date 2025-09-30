@@ -18,6 +18,13 @@ except ImportError:  # pragma: no cover
     psycopg = None  # type: ignore
     dict_row = None  # type: ignore
 
+try:  # pragma: no cover - import guard for optional dependency
+    import chromadb  # type: ignore
+    from chromadb.config import Settings  # type: ignore
+except ImportError:  # pragma: no cover
+    chromadb = None  # type: ignore
+    Settings = None  # type: ignore
+
 from .types import MemoryQueryResult, MemoryRecord
 
 logger = logging.getLogger(__name__)
@@ -161,6 +168,117 @@ class LocalVectorStore:
             record_id=payload.get("record_id"),
             created_at=created_at,
         )
+
+
+class ChromaVectorStore(VectorStore):
+    """Vector store backed by ChromaDB."""
+
+    def __init__(
+        self,
+        persist_path: str | Path,
+        *,
+        collection_name: str = "memory_records",
+    ) -> None:
+        if chromadb is None or Settings is None:
+            raise ImportError("chromadb is required for ChromaVectorStore.")
+        
+        # Build DB client
+        self.collection_name = collection_name
+        self._persist_path = Path(persist_path) if isinstance(persist_path, str) else persist_path
+        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        self._client = chromadb.PersistentClient(path=str(self._persist_path))
+        
+        # Build collection
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def add(self, records: Sequence[MemoryRecord]) -> None:
+        if not records:
+            return
+        ids: List[str] = []
+        documents: List[str] = []
+        embeddings: List[List[float]] = []
+        metadatas: List[Dict[str, object]] = []
+        for record in records:
+            ids.append(str(record.record_id))
+            documents.append(record.content)
+            embeddings.append([float(value) for value in record.embedding])
+            metadata = dict(record.metadata or {})
+            metadata.setdefault("created_at", record.created_at)
+            metadatas.append(metadata)
+        self._collection.upsert(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+
+    def search(
+        self,
+        embedding: Sequence[float],
+        *,
+        top_k: int = 5,
+        score_threshold: float = 0.0,
+    ) -> List[MemoryQueryResult]:
+        if not embedding:
+            return []
+        query_embedding = [float(value) for value in embedding]
+        response = self._collection.query(
+            query_embeddings=[query_embedding],
+            n_results=max(int(top_k), 1),
+            include=["distances", "documents", "metadatas", "embeddings"],
+        )
+        ids = response.get("ids", [[]])
+        if not ids or not ids[0]:
+            return []
+        distances = response.get("distances", [[]])[0]
+        documents = response.get("documents", [[]])[0]
+        metadatas = response.get("metadatas", [[]])[0]
+        retrieved_embeddings = response.get("embeddings", [[]])[0]
+        results: List[MemoryQueryResult] = []
+        for idx, record_id in enumerate(ids[0]):
+            distance = None
+            if distances and len(distances) > idx and distances[idx] is not None:
+                distance = float(distances[idx])
+            score = 1.0 - distance if distance is not None else 0.0
+            if score < score_threshold:
+                continue
+            content = documents[idx] if documents and len(documents) > idx else ""
+            metadata = metadatas[idx] if metadatas and len(metadatas) > idx else {}
+            if metadata is None:
+                metadata = {}
+            created_at = metadata.get("created_at", time.time())
+            if isinstance(created_at, str):
+                try:
+                    created_at = float(created_at)
+                except ValueError:
+                    created_at = time.time()
+            embedding_values: List[float] = []
+            if len(retrieved_embeddings[0]) > 0 and len(retrieved_embeddings) > idx:
+                embedding_values = [float(value) for value in retrieved_embeddings[idx]]
+            record = MemoryRecord(
+                content=content,
+                embedding=embedding_values,
+                metadata=metadata if isinstance(metadata, dict) else {},
+                record_id=str(record_id),
+                created_at=float(created_at),
+            )
+            results.append(MemoryQueryResult(record=record, score=score))
+        return results
+
+    def delete(self, record_ids: Sequence[str]) -> None:
+        if not record_ids:
+            return
+        self._collection.delete(ids=[str(rid) for rid in record_ids])
+
+    def persist(self) -> None:
+        if hasattr(self._client, "persist"):
+            try:
+                self._client.persist()
+            except Exception:  # pragma: no cover - best effort persistence
+                logger.debug("Chroma client persistence failed; continuing without persisting.")
 
 
 def _vector_literal(values: Sequence[float]) -> str:
