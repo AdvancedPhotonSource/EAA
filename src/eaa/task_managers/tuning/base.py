@@ -5,6 +5,7 @@ from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         param_setting_tool: SetParameters = None,
         additional_tools: list[BaseTool] = (),
         initial_parameters: dict[str, float] = None,
@@ -29,6 +31,8 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         param_setting_tool : SetParameters
             The tool to use to set the parameters.
         initial_parameters : dict[str, float], optional
@@ -58,6 +62,7 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             tools=[param_setting_tool, *additional_tools],
             message_db_path=message_db_path,
             build=build,

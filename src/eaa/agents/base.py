@@ -89,6 +89,7 @@ from typing import (
     Tuple,
     Optional,
     Literal,
+    Sequence,
 )
 from dataclasses import dataclass
 import json
@@ -102,6 +103,12 @@ from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, generate_o
 from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
+from eaa.agents.memory import (
+    MemoryManager,
+    MemoryManagerConfig,
+    MemoryQueryResult,
+    VectorStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -254,10 +261,28 @@ class ToolManager:
     
     
 class BaseAgent:
+    _MEMORY_KEYWORDS: List[Tuple[str, str]] = [
+        ("remember", "User asked agent to remember"),
+        ("note that", "User highlighted a note"),
+        ("note this", "User highlighted a note"),
+        ("call me", "Preferred form of address"),
+        ("my name is", "User shared their name"),
+        ("i prefer", "User shared a preference"),
+        ("i like", "User shared a preference"),
+        ("store this", "User requested storage"),
+        ("keep in mind", "User asked agent to keep context"),
+    ]
+
     def __init__(
         self,
         llm_config: dict,
         system_message: str = "",
+        memory_config: Optional[MemoryManagerConfig] = None,
+        *,
+        memory_vector_store: Optional[VectorStore] = None,
+        memory_notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        memory_formatter: Optional[Callable[[List[MemoryQueryResult]], str]] = None,
+        memory_embedder: Optional[Callable[[Sequence[str]], List[List[float]]]] = None,
     ) -> None:
         """The base agent class.
 
@@ -271,6 +296,20 @@ class BaseAgent:
             - `base_url`: The base URL for the OpenAI-compatible API.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
+        memory_config : MemoryManagerConfig, optional
+            Configuration for long-term memory. Use
+            `MemoryManagerConfig.from_dict` to build from a mapping when
+            convenient. When provided, the agent can optionally store
+            conversation snippets and retrieve them on future turns using
+            retrieval-augmented generation.
+        memory_vector_store : VectorStore, optional
+            Override the default memory backend used for persistence and recall.
+        memory_notability_filter : Callable[[str, Dict[str, Any]], bool], optional
+            Custom filter evaluated before storing a snippet.
+        memory_formatter : Callable[[List[MemoryQueryResult]], str], optional
+            Formatter used to inject recalled memories back into the prompt.
+        memory_embedder : Callable[[Sequence[str]], List[List[float]]], optional
+            Override the embedding function for memory operations.
         """
         self.llm_config = llm_config
         
@@ -286,6 +325,16 @@ class BaseAgent:
         self.tool_manager.set_approval_handler(self._approval_handler)
 
         self.client = self.create_client()
+
+        self.memory_manager: Optional[MemoryManager] = None
+        self._memory_injection_role = "system"
+        self._initialize_memory(
+            memory_config,
+            vector_store=memory_vector_store,
+            notability_filter=memory_notability_filter,
+            formatter=memory_formatter,
+            embedder_override=memory_embedder,
+        )
         
     @property
     def model(self) -> str:
@@ -320,6 +369,211 @@ class BaseAgent:
         
     def create_client(self) -> Any:
         raise NotImplementedError
+
+    # --- Memory lifecycle -------------------------------------------------
+
+    def supports_memory_embeddings(self) -> bool:
+        """Indicate whether this agent can produce embeddings for memory."""
+        return False
+
+    def embed_texts(
+        self,
+        texts: Sequence[str],
+        *,
+        model: Optional[str] = None,
+    ) -> List[List[float]]:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement text embeddings."
+        )
+
+    def get_default_embedding_model(self) -> Optional[str]:
+        return self.llm_config.get("embedding_model")
+
+    def _initialize_memory(
+        self,
+        memory_config: Optional[MemoryManagerConfig],
+        *,
+        vector_store: Optional[VectorStore] = None,
+        notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        formatter: Optional[Callable[[List[MemoryQueryResult]], str]] = None,
+        embedder_override: Optional[Callable[[Sequence[str]], List[List[float]]]] = None,
+    ) -> None:
+        if memory_config is None:
+            return
+
+        config_obj = memory_config
+
+        if config_obj.injection_role not in {"system", "user"}:
+            logger.warning(
+                "Unsupported injection role '%s'; defaulting to 'system'.",
+                config_obj.injection_role,
+            )
+            config_obj.injection_role = "system"
+
+        self._memory_injection_role = config_obj.injection_role
+
+        if embedder_override is None:
+            if not self.supports_memory_embeddings():
+                logger.warning(
+                    "%s does not support embeddings; ignoring memory configuration.",
+                    self.__class__.__name__,
+                )
+                return
+            embedding_model = config_obj.embedding_model or self.get_default_embedding_model()
+            embedder_fn = self._build_memory_embedder(embedding_model)
+        else:
+            embedder_fn = embedder_override
+
+        try:
+            self.memory_manager = MemoryManager(
+                embedder_fn,
+                config=config_obj,
+                vector_store=vector_store,
+                notability_filter=notability_filter,
+                formatter=formatter,
+            )
+        except Exception as exc:  # pragma: no cover - defensive.
+            logger.warning("Failed to initialise memory manager: %s", exc)
+            self.memory_manager = None
+
+    def _build_memory_embedder(self, embedding_model: Optional[str]) -> Callable[[Sequence[str]], List[List[float]]]:
+        model_name = embedding_model
+
+        def embedder(texts: Sequence[str]) -> List[List[float]]:
+            selected_model = model_name or self.get_default_embedding_model()
+            if selected_model is None:
+                raise ValueError("No embedding model provided for memory usage.")
+            return self.embed_texts(texts, model=selected_model)
+
+        return embedder
+
+    def _extract_message_text(self, message: Optional[Dict[str, Any]]) -> str:
+        if message is None:
+            return ""
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts: List[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    texts.append(item.get("text", ""))
+            return "\n".join(texts)
+        return ""
+
+    def _post_response_memory_update(
+        self,
+        *,
+        user_message: Dict[str, Any],
+        agent_response: Optional[Dict[str, Any]],
+        recall_results: List[MemoryQueryResult],
+    ) -> None:
+        """Capture notable user content after a response has been produced.
+
+        The method inspects the user message, determines whether it should be
+        stored, and forwards the snippet to the memory manager along with
+        metadata about the interaction (message id, prior retrieval count, etc.).
+
+        Parameters
+        ----------
+        user_message : Dict[str, Any]
+            The outgoing OpenAI-formatted user message for the current turn.
+        agent_response : Optional[Dict[str, Any]]
+            Processed agent reply, used to detect tool-call signals.
+        recall_results : List[MemoryQueryResult]
+            Memories that were retrieved for this turn; logged for metadata and
+            potential deduplication.
+        """
+        if self.memory_manager is None or not self.memory_manager.write_enabled:
+            return
+
+        message_text = self._extract_message_text(user_message)
+        if not message_text:
+            return
+
+        notable, note_reason = self._is_notable_message(message_text, agent_response)
+        if not notable:
+            return
+
+        metadata: Dict[str, Any] = {
+            "role": "user",
+            "note": note_reason,
+        }
+        reference_id = user_message.get("id")
+        if reference_id is not None:
+            metadata["message_id"] = reference_id
+        if recall_results:
+            metadata["retrieved_count"] = len(recall_results)
+        if len(message_text.strip()) < self.memory_manager.config.min_content_length:
+            metadata["force_store"] = True
+
+        self.memory_manager.remember(message_text, metadata=metadata)
+
+    def _is_notable_message(
+        self,
+        content: str,
+        response: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str]:
+        """Determine whether a user message should be persisted in memory.
+
+        A message is considered notable if any of the following hold:
+        - It contains one of the heuristic keywords such as "remember", "my name is",
+          or "keep in mind".
+        - It is a long declarative statement (more than 140 characters terminating with
+          punctuation).
+        - The paired response triggered a `memorize` tool call.
+
+        Parameters
+        ----------
+        content : str
+            User-facing text content to inspect.
+        response : Optional[Dict[str, Any]]
+            Processed agent response, used to detect memory-specific tool calls.
+
+        Returns
+        -------
+        Tuple[bool, str]
+            Whether the message is notable and a short reason string describing
+            the path that triggered the decision.
+        """
+        lowered = content.lower()
+        for keyword, reason in self._MEMORY_KEYWORDS:
+            if keyword in lowered:
+                return True, reason
+
+        # Treat long declarative statements as potentially notable.
+        if len(content.strip()) > 140 and content.strip().endswith(('.', '!', '?')):
+            return True, "Long-form user statement"
+
+        if response is not None:
+            tool_calls = response.get("tool_calls") if isinstance(response, dict) else None
+            if tool_calls:
+                for call in tool_calls:
+                    if call.get("function", {}).get("name") == "memorize":
+                        return True, "User triggered memory tool"
+
+        return False, ""
+
+    def configure_memory(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        write_enabled: Optional[bool] = None,
+        retrieval_enabled: Optional[bool] = None,
+    ) -> None:
+        if self.memory_manager is None:
+            raise ValueError("Memory manager is not initialised for this agent.")
+        if enabled is not None:
+            self.memory_manager.set_enabled(enabled)
+        if write_enabled is not None:
+            self.memory_manager.set_write_enabled(write_enabled)
+        if retrieval_enabled is not None:
+            self.memory_manager.set_retrieval_enabled(retrieval_enabled)
+
+    def flush_memory(self) -> None:
+        if self.memory_manager is None:
+            return
+        self.memory_manager.flush()
         
     def register_tools(self, tools: List[BaseTool]) -> None:
         """Register BaseTool instances with the agent."""
@@ -440,23 +694,39 @@ class BaseAgent:
             message = generate_openai_message(
                 message, role=role, image=image, image_path=image_path, encoded_image=encoded_image
             )
-            
+        
         # Print message.
         if message is not None:
             print_message(message, response_requested=request_response)
-            
+
+        # Retrieve from vector store.
+        recalled_memory_results = []
+        memory_context_messages: List[Dict[str, Any]] = []
+        if (
+            request_response
+            and self.memory_manager is not None
+            and self.memory_manager.enabled
+        ):
+            recalled_memory_results, memory_context_messages = self.retrieve_from_vector_store(message)
+        
         # Create the list of messages to send.
         sys_message = self.system_messages if with_system_message else []
-        message = [message] if message is not None else []
-        if context is None:
-            context = []
-        combined_messages = sys_message + context + message
+        message_list = [message] if message is not None else []
+        context_messages = list(context) if context is not None else []
+        combined_messages = sys_message + memory_context_messages + context_messages + message_list
             
         # Send messages, get response and print it.
         if request_response:
             response = self.send_message_and_get_response(combined_messages)
             print_message(response)
-        
+
+        if request_response and self.memory_manager is not None and message is not None:
+            self._post_response_memory_update(
+                user_message=message,
+                agent_response=response if request_response else None,
+                recall_results=recalled_memory_results,
+            )
+
         if not request_response:
             return None
         
@@ -466,11 +736,45 @@ class BaseAgent:
         else:
             returns.append(response.choices[0].message.content)
         if return_outgoing_message:
-            returns.append(message[0] if len(message) > 0 else None)
+            returns.append(message_list[0] if len(message_list) > 0 else None)
         if len(returns) == 1:
             return returns[0]
         else:
             return returns
+        
+    def retrieve_from_vector_store(self, message: Dict[str, Any]) -> List[MemoryQueryResult]:
+        """Retrieve memories from the vector store.
+        
+        Parameters
+        ----------
+        message : Dict[str, Any]
+            The message to be sent to the agent.
+            
+        Returns
+        -------
+        List[MemoryQueryResult]
+            The memories retrieved from the vector store.
+        List[Dict[str, Any]]
+            The retrieved memories converted to OpenAI-compatible messages
+            which can be inserted into the context.
+        """
+        recalled_memory_results = []
+        memory_context_messages: List[Dict[str, Any]] = []
+
+        query_text = self._extract_message_text(message)
+        recalled_memory_results = self.memory_manager.recall(query_text)
+        formatted_memory = self.memory_manager.format_results(recalled_memory_results)
+        if formatted_memory:
+            injection_role = self._memory_injection_role
+            if injection_role not in {"system", "user"}:
+                injection_role = "system"
+            memory_context_messages.append(
+                generate_openai_message(
+                    formatted_memory,
+                    role=injection_role,
+                )
+            )
+        return recalled_memory_results, memory_context_messages
     
     def send_message_and_get_response(
         self,

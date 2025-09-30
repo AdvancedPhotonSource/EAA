@@ -5,6 +5,7 @@ from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.api.llm_config import LLMConfig
+from eaa.agents.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
 
 
@@ -13,6 +14,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
     def __init__(
         self, 
         llm_config: LLMConfig = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (), 
@@ -27,6 +29,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         ----------
         llm_config : LLMConfig
             The configuration for the LLM.
+        memory_config : MemoryManagerConfig, optional
+            Memory configuration forwarded to the agent.
         image_acquisition_tool : AcquireImage
             The tool to use to acquire images.
         image_registration_tool : ImageRegistration
@@ -56,6 +60,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 tools.append(t)
         super().__init__(
             llm_config=llm_config,
+            memory_config=memory_config,
             tools=tools, 
             message_db_path=message_db_path,
             build=build,
