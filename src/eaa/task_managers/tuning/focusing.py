@@ -517,6 +517,12 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     reference_image_path=reference_image_path
                 )
             },
+            expected_tool_call_sequence=[
+                "scan_line",
+                "set_parameters",
+                "acquire_image",
+            ],
+            expected_tool_call_sequence_tolerance=1,
             *args, **kwargs
         )
 

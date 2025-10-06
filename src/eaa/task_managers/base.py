@@ -73,7 +73,7 @@ class BaseTaskManager:
         self.memory_config = memory_config
         self.agent = None
         self.tools = tools
-
+        
         self.message_db_path = message_db_path
         self.message_db_conn = None
         self.webui_user_input_last_timestamp = 0
@@ -322,7 +322,7 @@ class BaseTaskManager:
             
             # Handle tool calls
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
-            if len(tool_responses) >= 1:        
+            if len(tool_responses) >= 1:
                 for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
                     print_message(tool_response)
                     self.update_message_history(tool_response, update_context=True, update_full_history=True)
@@ -405,6 +405,57 @@ class BaseTaskManager:
             else:
                 new_context.append(message)
         self.context = new_context
+        
+    def enforce_tool_call_sequence(
+        self,
+        expected_tool_call_sequence: list[str],
+        tolerance: int = 0,
+    ) -> None:
+        """Check whether the current tool call is the one expected to be
+        made after the last tool call as in the given sequence. If not,
+        a warning is added to the context.
+
+        Parameters
+        ----------
+        expected_tool_call_sequence : list[str]
+            A list of tool names that are expected to be called in order.
+        tolerance : int, optional
+            The number of tool calls to tolerate in the expected tool call sequence.
+            For example, if the actual tool call sequence is [X, B, C] while the
+            expected tool call sequence is [B, C], the check will still pass if the
+            tolerance is 1 because only [B, C] is used for matching. This is useful
+            when the first several calls are only done once instead of iteratively.
+        """
+        if len(self.agent.tool_manager.tool_execution_history) <= 1:
+            return
+        
+        n_actual_calls_to_fetch = min(
+            len(self.agent.tool_manager.tool_execution_history), len(expected_tool_call_sequence)
+        ) - tolerance
+        
+        if n_actual_calls_to_fetch <= 0:
+            return
+        actual_tool_call_sequence = [
+            entry["tool_name"] for entry in self.agent.tool_manager.tool_execution_history[-n_actual_calls_to_fetch:]
+        ]
+        
+        # Replicate the expected sequence so that it matches circularly.
+        expanded_expected_tool_call_sequence = list(expected_tool_call_sequence) * 2
+        
+        # Match the actual tool call sequence with the expanded expected tool call sequence.
+        for i in range(len(expanded_expected_tool_call_sequence) - len(actual_tool_call_sequence) + 1):
+            if expanded_expected_tool_call_sequence[i:i+len(actual_tool_call_sequence)] == actual_tool_call_sequence:
+                return
+        self.context.append(
+            generate_openai_message(
+                content=(
+                    f"The tool call sequence {actual_tool_call_sequence} is not as expected. "
+                    f"Are you making the right tool calls in the right order? If this is intended "
+                    f"to address an exception, ignore this message."
+                ),
+                role="user"
+            )
+        )
 
     def run_feedback_loop(
         self,
@@ -416,6 +467,8 @@ class BaseTaskManager:
         n_past_images_to_keep_in_context: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
         hook_functions: Optional[dict[str, Callable]] = None,
+        expected_tool_call_sequence: Optional[list[str]] = None,
+        expected_tool_call_sequence_tolerance: int = 0,
         termination_behavior: Literal["ask", "return"] = "ask",
         max_arounds_reached_behavior: Literal["return", "raise"] = "return",
         *args, **kwargs
@@ -468,6 +521,18 @@ class BaseTaskManager:
               sent to the agent. When this function is given, it **replaces** the
               `agent.receive` call so be sure to send the image to the agent in
               the hook if this is intended.
+        expected_tool_call_sequence : list[str], optional
+            A list of tool call names that are expected to be made in the loop.
+            If provided, the function will check if the tool call sequence is
+            as expected. A warning is issued to the agent if the sequence is 
+            not as expected.
+        expected_tool_call_sequence_tolerance : int, optional
+            If given, the actual tool call sequence used for matching will be the
+            last `len(expected_tool_call_sequence) - tolerance` calls. For example,
+            if the actual tool call sequence is [X, B, C] while the expected tool
+            call sequence is [B, C], the check will still pass if the tolerance is
+            1 because only [B, C] is used for matching. This is useful when the
+            first several calls are only done once instead of iteratively.
         termination_behavior : Literal["ask", "return"]
             Decides what to do when the agent sends termination signal ("TERMINATE")
             in the response. If "ask", the user will be asked to provide further
@@ -526,6 +591,12 @@ class BaseTaskManager:
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
             if len(tool_responses) == 1:
+                if expected_tool_call_sequence is not None:
+                    self.enforce_tool_call_sequence(
+                        expected_tool_call_sequence,
+                        expected_tool_call_sequence_tolerance
+                    )
+                
                 tool_response = tool_responses[0]
                 tool_response_type = tool_response_types[0]
                 # Just save the tool response to context, but don't send yet. We will send it later;

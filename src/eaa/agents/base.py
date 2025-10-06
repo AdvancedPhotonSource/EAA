@@ -129,6 +129,7 @@ class ToolManager:
         self._tool_entries: Dict[str, ToolEntry] = {}
         self._base_tools: List[BaseTool] = []
         self.approval_handler: Optional[Callable[[str, Dict[str, Any]], bool]] = None
+        self.tool_execution_history: List[Dict[str, Any]] = []
 
     def get_all_schema(self) -> List[Dict[str, Any]]:
         """Get the schema for all registered tools."""
@@ -171,6 +172,13 @@ class ToolManager:
                 )
             if not self.approval_handler(tool_name, tool_kwargs):
                 raise PermissionError(f"Tool '{tool_name}' execution denied by user.")
+
+        self.tool_execution_history.append(
+            {
+                "tool_name": tool_name,
+                "tool_kwargs": tool_kwargs
+            }
+        )
 
         return entry.call(**tool_kwargs)
 
