@@ -213,7 +213,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         n_past_images_to_keep_in_context: Optional[int] = None,
         initial_prompt: Optional[str] = None,
         additional_prompt: Optional[str] = None,
-        termination_behavior: Literal["ask", "return"] = "ask"
+        termination_behavior: Literal["ask", "return"] = "ask",
+        max_arounds_reached_behavior: Literal["return", "raise"] = "return"
     ):
         """Search for a feature that drifted out of the field of view
         given a reference image of it, and bring the feature back into
@@ -256,6 +257,10 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             Decides what to do when the agent sends termination signal ("TERMINATE")
             in the response. If "ask", the user will be asked to provide further
             instructions. If "return", the function will return directly.
+        max_arounds_reached_behavior : Literal["return", "raise"], optional
+            Decides what to do when the agent reaches the maximum number of
+            rounds. If "return", the function will return directly. If "raise",
+            the function will raise an error.
         """
         if reference_image_path is None:
             user_image_input = self.get_user_input(
@@ -347,5 +352,6 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                     reference_image_path
                 )
             },
-            termination_behavior=termination_behavior
+            termination_behavior=termination_behavior,
+            max_arounds_reached_behavior=max_arounds_reached_behavior
         )

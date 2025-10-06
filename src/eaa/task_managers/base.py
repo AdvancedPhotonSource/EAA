@@ -12,6 +12,7 @@ from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
 from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
 from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
+from eaa.exceptions import MaxRoundsReached
 try:
     from eaa.agents.asksage import AskSageAgent
 except ImportError:
@@ -416,6 +417,7 @@ class BaseTaskManager:
         allow_non_image_tool_responses: bool = True,
         hook_functions: Optional[dict[str, Callable]] = None,
         termination_behavior: Literal["ask", "return"] = "ask",
+        max_arounds_reached_behavior: Literal["return", "raise"] = "return",
         *args, **kwargs
     ) -> None:
         """Run an agent-involving feedback loop.
@@ -470,6 +472,10 @@ class BaseTaskManager:
             Decides what to do when the agent sends termination signal ("TERMINATE")
             in the response. If "ask", the user will be asked to provide further
             instructions. If "return", the function will return directly.
+        max_arounds_reached_behavior : Literal["return", "raise"], optional
+            Decides what to do when the agent reaches the maximum number of
+            rounds. If "return", the function will return directly. If "raise",
+            the function will raise an error.
         """
         if termination_behavior not in ["ask", "return"]:
             raise ValueError("`termination_behavior` must be either 'ask' or 'return'.")
@@ -597,3 +603,7 @@ class BaseTaskManager:
                 )
             round += 1
         logger.warning(f"Maximum number of rounds ({max_rounds}) reached.")
+        if max_arounds_reached_behavior == "raise":
+            raise MaxRoundsReached()
+        else:
+            return

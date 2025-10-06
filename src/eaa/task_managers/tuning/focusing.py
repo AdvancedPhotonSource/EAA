@@ -16,6 +16,7 @@ from eaa.api.llm_config import LLMConfig
 from eaa.agents.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
 import eaa.image_proc as ip
+from eaa.exceptions import MaxRoundsReached
 
 logger = logging.getLogger(__name__)
 
@@ -264,22 +265,34 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             memory_embedder=self._memory_embedder,
         )
         
-        self.feature_tracking_task_manager.run_feature_tracking(
-            reference_image_path=target_image_path,
-            initial_position=(
-                self.acquisition_tool.image_acquisition_call_history[-1]["loc_y"], 
-                self.acquisition_tool.image_acquisition_call_history[-1]["loc_x"]
-            ),
-            initial_fov_size=(
-                self.acquisition_tool.image_acquisition_call_history[-1]["size_y"], 
-                self.acquisition_tool.image_acquisition_call_history[-1]["size_x"]
-            ),
-            add_reference_image_to_images_acquired=add_target_image_to_images_acquired,
-            **self.feature_tracking_kwargs,
-            termination_behavior="return"
-        )
-        feature_tracking_response = self.feature_tracking_task_manager.context[-1]["content"]
-        feature_tracking_response = feature_tracking_response.replace("TERMINATE", "")
+        try:
+            self.feature_tracking_task_manager.run_feature_tracking(
+                reference_image_path=target_image_path,
+                initial_position=(
+                    self.acquisition_tool.image_acquisition_call_history[-1]["loc_y"], 
+                    self.acquisition_tool.image_acquisition_call_history[-1]["loc_x"]
+                ),
+                initial_fov_size=(
+                    self.acquisition_tool.image_acquisition_call_history[-1]["size_y"], 
+                    self.acquisition_tool.image_acquisition_call_history[-1]["size_x"]
+                ),
+                add_reference_image_to_images_acquired=add_target_image_to_images_acquired,
+                **self.feature_tracking_kwargs,
+                max_rounds=20,
+                termination_behavior="return",
+                max_arounds_reached_behavior="raise"
+            )
+            feature_tracking_response = self.feature_tracking_task_manager.context[-1]["content"]
+            feature_tracking_response = feature_tracking_response.replace("TERMINATE", "")
+        except MaxRoundsReached:
+            feature_tracking_response = (
+                "Maximum number of rounds reached, but the feature tracking "
+                "sub-task was not able to restore the FOV. To try again, re-collect "
+                "the 2D image. Or ask for human intervention by adding \"NEED HUMAN\" "
+                "to your response."
+            )
+        
+        return feature_tracking_response
         
     def register_images(self, image_k: np.ndarray, image_km1: np.ndarray) -> np.ndarray:
         """Register the two images and return the offset.
