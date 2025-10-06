@@ -1,4 +1,4 @@
-"""Python code execution tool for LLM agents."""
+"""Code execution tools for LLM agents."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class PythonCodingTool(BaseTool):
 
         self.exposed_tools = [
             ExposedToolSpec(
-                name="execute_code",
+                name="execute_python_code",
                 function=self.execute_code,
                 return_type=ToolReturnType.DICT,
             )
@@ -100,6 +100,100 @@ class PythonCodingTool(BaseTool):
 
             result = subprocess.run(
                 [sys.executable, tmp_file.name],
+                capture_output=True,
+                text=True,
+                cwd=exec_cwd,
+                env=env,
+                timeout=exec_timeout,
+                input=input_text,
+            )
+
+            return {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+                "timeout": False,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "stdout": exc.stdout or "",
+                "stderr": exc.stderr or "",
+                "returncode": None,
+                "timeout": True,
+                "error": f"Execution timed out after {exec_timeout} seconds",
+            }
+        except Exception as exc:  # pragma: no cover - best effort reporting
+            return {
+                "stdout": "",
+                "stderr": "",
+                "returncode": None,
+                "timeout": False,
+                "error": str(exc),
+            }
+        finally:
+            try:
+                os.unlink(tmp_file.name)
+            except OSError:
+                pass
+
+
+class BashCodingTool(BaseTool):
+    """Expose a tool that executes Bash code in an isolated subprocess."""
+
+    name: str = "bash_coding"
+
+    @check
+    def __init__(
+        self,
+        *,
+        default_timeout: Optional[float] = None,
+        working_directory: Optional[str] = None,
+        environment: Optional[Dict[str, str]] = None,
+        shell_path: str = "/bin/bash",
+        require_approval: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the Bash coding tool."""
+        self._default_timeout = default_timeout
+        self._working_directory = working_directory or os.getcwd()
+        self._environment = environment or {}
+        self._shell_path = shell_path
+
+        super().__init__(require_approval=require_approval, **kwargs)
+
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="execute_bash_code",
+                function=self.execute_code,
+                return_type=ToolReturnType.DICT,
+            )
+        ]
+
+    def execute_code(
+        self,
+        code: str,
+        *,
+        timeout: Optional[float] = None,
+        cwd: Optional[str] = None,
+        input_text: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute Bash code in a subprocess and capture the result."""
+        if not isinstance(code, str):
+            raise TypeError("code must be a string containing Bash source")
+
+        exec_timeout = timeout if timeout is not None else self._default_timeout
+        exec_cwd = cwd or self._working_directory
+        env = os.environ.copy()
+        env.update(self._environment)
+
+        tmp_file = tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False)
+        try:
+            tmp_file.write(code)
+            tmp_file.flush()
+            tmp_file.close()
+
+            result = subprocess.run(
+                [self._shell_path, tmp_file.name],
                 capture_output=True,
                 text=True,
                 cwd=exec_cwd,
