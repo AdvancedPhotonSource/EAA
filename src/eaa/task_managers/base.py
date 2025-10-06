@@ -267,7 +267,10 @@ class BaseTaskManager:
             "\\chat: enter chat mode. The task manager will always ask for you input "
             "(instead of sending workflow-determined replies to the agent) when the "
             "agent finishes its response.\n"
-            "\\return: return to upper level task"
+            "\\monitor <task description>: enter monitoring mode. The agent will perform "
+            "the described task periodically. Example: `\\monitor check the content of status.txt `"
+            "every 60 seconds`\n"
+            "\\return: return to upper level task\n"
         )
         if self.message_db_conn:
             self.add_message_to_db({"role": "system", "content": s})
@@ -300,6 +303,9 @@ class BaseTaskManager:
                 break
             elif message.lower() == "\\return":
                 return
+            elif message.lower().startswith("\\monitor "):
+                self.enter_monitoring_mode(message.lower().split("\\monitor ")[1])
+                continue
             elif message.lower() == "\\help":
                 self.display_command_help()
                 continue
@@ -345,6 +351,95 @@ class BaseTaskManager:
                     return_outgoing_message=False
                 )
                 self.update_message_history(response, update_context=True, update_full_history=True)
+
+    def enter_monitoring_mode(
+        self,
+        task_description: str,
+    ):
+        local_context = []
+        parsing_prompt = (
+            "Parse the following task description and return a JSON object with the following fields:\n"
+            "- task_description: str\n"
+            "- time_interval: float; time interval in seconds\n"
+            "Example: given \"check the content of status.txt every 60 seconds\", the JSON object should be:\n"
+            "{\n"
+            "    \"task_description\": \"check the content of status.txt\",\n"
+            "    \"time_interval\": 60\n"
+            "}\n"
+            "If enough information is provided, return the only the JSON object. Do not respond with anything else. "
+            "Do not enclose the JSON object in triple backticks."
+            "If any information is missing, ask the user for clarification.\n"
+            f"Task description to be parsed: {task_description}\n"
+        )
+        
+        while True:
+            response, outgoing = self.agent.receive(
+                message=parsing_prompt,
+                context=local_context,
+                return_outgoing_message=True,
+            )
+            self.update_message_history(outgoing, update_context=False, update_full_history=True)
+            self.update_message_history(response, update_context=False, update_full_history=True)
+            local_context.append(outgoing)
+            local_context.append(response)
+            try:
+                parsed_task_description = json.loads(response["content"])
+            except json.JSONDecodeError:
+                parsing_prompt = self.get_user_input(
+                    prompt=f"Failed to parse the task description. Please try again. {response['content']}",
+                    display_prompt_in_webui=bool(self.message_db_conn),
+                )
+                continue
+            break
+        
+        self.run_monitoring(
+            task_description=parsed_task_description["task_description"],
+            time_interval=parsed_task_description["time_interval"],
+        )
+
+    def run_monitoring(
+        self,
+        task_description: str,
+        time_interval: float,
+        initial_prompt: Optional[str] = None,
+    ):
+        """Run a monitoring task.
+
+        Parameters
+        ----------
+        task_description : str
+            The task description.
+        time_interval : float
+            The time interval in seconds to run the task.
+        initial_prompt : Optional[str], optional
+            If provided, the default initial prompt will be overridden.
+        """
+        if initial_prompt is None:
+            initial_prompt = (
+                "You are given the following task needed to monitor the status of an experiment: "
+                f"{task_description}\n"
+                "Use proper trigger words in your response in the following scenarios:\n"
+                "- You have checked all the statuses and everything is right - add \"TERMINATE\".\n"
+                "- Something is wrong, but you have fixed it (if user instructed you to fix it) - add \"TERMINATE\".\n"
+                "- Something is wrong, and you need immediate human input - add \"NEED HUMAN\".\n\n"
+            )
+        
+        while True:
+            try:
+                self.run_feedback_loop(
+                    initial_prompt=initial_prompt,
+                    termination_behavior="return",
+                )
+                time.sleep(time_interval)
+            except KeyboardInterrupt:
+                logger.warning("Keyboard interrupt detected. Terminating monitoring task.")
+                self.add_message_to_db(
+                    generate_openai_message(
+                        content="Keyboard interrupt detected. Terminating monitoring task.",
+                        role="system",
+                    )
+                )
+                return
 
     def purge_context_images(
         self, 

@@ -677,8 +677,8 @@ class BaseAgent:
             The response from the agent. If `return_full_response` is True, the
             response is a dictionary containing the full response from the agent.
             Otherwise, the response is a string containing the content of the response.
-            If `return_outgoing_message` is True, the outgoing message will also be returned.
-            If `request_response` is False, the function returns None.
+            If `return_outgoing_message` is True, the outgoing message will also be returned
+            after the response. If `request_response` is False, the function returns None.
         """
         if image is not None or image_path is not None or encoded_image is not None:
             if isinstance(message, dict):
