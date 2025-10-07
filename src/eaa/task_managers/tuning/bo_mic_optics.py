@@ -10,7 +10,7 @@ from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManage
 from eaa.tools.base import BaseTool
 from eaa.tools.bo import BayesianOptimizationTool
 from eaa.api.llm_config import LLMConfig
-from eaa.agents.memory import MemoryManagerConfig
+from eaa.api.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 

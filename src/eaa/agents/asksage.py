@@ -7,7 +7,8 @@ from asksageclient import AskSageClient
 
 from eaa.agents.base import BaseAgent
 from eaa.api.llm_config import AskSageConfig
-from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
+from eaa.agents.memory import MemoryQueryResult, VectorStore
+from eaa.api.memory import MemoryManagerConfig
 from eaa.util import decode_image_base64, get_timestamp
 
 

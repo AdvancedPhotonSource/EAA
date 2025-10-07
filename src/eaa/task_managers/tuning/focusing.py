@@ -13,7 +13,7 @@ from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.agents.base import print_message
 from eaa.api.llm_config import LLMConfig
-from eaa.agents.memory import MemoryManagerConfig
+from eaa.api.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
 import eaa.image_proc as ip
 from eaa.exceptions import MaxRoundsReached

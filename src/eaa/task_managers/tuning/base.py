@@ -5,7 +5,7 @@ from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.base import BaseTaskManager
 from eaa.tools.base import BaseTool
 from eaa.api.llm_config import LLMConfig
-from eaa.agents.memory import MemoryManagerConfig
+from eaa.api.memory import MemoryManagerConfig
 
 logger = logging.getLogger(__name__)
 

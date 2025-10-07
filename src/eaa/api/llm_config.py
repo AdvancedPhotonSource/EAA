@@ -1,17 +1,15 @@
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass
+
+from eaa.api.base import BaseConfig
 
 
 @dataclass
-class LLMConfig:
+class LLMConfig(BaseConfig):
     """A base class for LLM configurations.
     
     This class is used to store the configuration for an LLM.
     """
-    def to_dict(self) -> dict:
-        return asdict(self)
-    
-    def fields(self) -> list[str]:
-        return [f.name for f in fields(self)]
+    pass
 
 
 @dataclass

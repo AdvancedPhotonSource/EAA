@@ -5,7 +5,7 @@ from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.registration import ImageRegistration
 from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.api.llm_config import LLMConfig
-from eaa.agents.memory import MemoryManagerConfig
+from eaa.api.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
 
 

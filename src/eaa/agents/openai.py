@@ -3,8 +3,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from openai import OpenAI
 
 from eaa.agents.base import BaseAgent
-from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
+from eaa.agents.memory import MemoryQueryResult, VectorStore
 from eaa.api.llm_config import OpenAIConfig
+from eaa.api.memory import MemoryManagerConfig
 
 
 class OpenAIAgent(BaseAgent):

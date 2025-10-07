@@ -99,6 +99,7 @@ import asyncio
 import numpy as np
 from openai.types.chat import ChatCompletionMessage
 
+from eaa.api.memory import MemoryManagerConfig
 from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, generate_openai_tool_schema
 from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
@@ -106,7 +107,6 @@ from eaa.util import encode_image_base64, get_image_path_from_text
 from eaa.api.llm_config import LLMConfig
 from eaa.agents.memory import (
     MemoryManager,
-    MemoryManagerConfig,
     MemoryQueryResult,
     VectorStore,
 )

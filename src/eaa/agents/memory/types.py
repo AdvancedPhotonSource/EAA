@@ -1,29 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 import time
 import uuid
 
-T = TypeVar("T", bound="MemorySchema")
-
-
-class MemorySchema:
-    """Shared helper with a `from_dict` classmethod for memory dataclasses."""
-
-    @classmethod
-    def from_dict(cls: Type[T], payload: Optional[Dict[str, Any]]) -> T:
-        if payload is None:
-            return cls()  # type: ignore[misc]
-        if not isinstance(payload, dict):
-            raise TypeError("memory configuration must be a dictionary")
-        allowed = {field.name for field in fields(cls)}
-        kwargs = {key: payload[key] for key in allowed if key in payload}
-        return cls(**kwargs)  # type: ignore[arg-type]
-
 
 @dataclass
-class MemoryRecord(MemorySchema):
+class MemoryRecord:
     content: str
     embedding: List[float]
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -32,10 +16,10 @@ class MemoryRecord(MemorySchema):
 
 
 @dataclass
-class MemoryQueryResult(MemorySchema):
+class MemoryQueryResult:
     record: MemoryRecord
     score: float
     highlights: Optional[str] = None
 
 
-__all__ = ["MemorySchema", "MemoryRecord", "MemoryQueryResult"]
+__all__ = ["MemoryRecord", "MemoryQueryResult"]

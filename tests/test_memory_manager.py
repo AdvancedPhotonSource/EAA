@@ -1,4 +1,5 @@
-from eaa.agents.memory import LocalVectorStore, MemoryManager, MemoryManagerConfig
+from eaa.agents.memory import LocalVectorStore, MemoryManager
+from eaa.api.memory import MemoryManagerConfig
 
 
 def dummy_embedder(texts):

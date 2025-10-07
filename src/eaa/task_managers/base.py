@@ -5,13 +5,14 @@ import logging
 import time
 
 from eaa.agents.base import generate_openai_message, get_message_elements, print_message
+from eaa.api.memory import MemoryManagerConfig
 from eaa.tools.base import BaseTool
 from eaa.tools.mcp import MCPTool
 from eaa.agents.openai import OpenAIAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
 from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
-from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
+from eaa.agents.memory import MemoryQueryResult, VectorStore
 from eaa.exceptions import MaxRoundsReached
 try:
     from eaa.agents.asksage import AskSageAgent

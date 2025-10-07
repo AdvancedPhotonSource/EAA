@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence
 import logging
 
-from .types import MemoryQueryResult, MemoryRecord, MemorySchema
+from eaa.api.memory import MemoryManagerConfig
+
+from .types import MemoryQueryResult, MemoryRecord
 from .vector_store import ChromaVectorStore, LocalVectorStore, VectorStore
 
 logger = logging.getLogger(__name__)
@@ -12,19 +13,6 @@ logger = logging.getLogger(__name__)
 EmbedderFn = Callable[[Sequence[str]], List[List[float]]]
 FilterFn = Callable[[str, Dict[str, Any]], bool]
 FormatterFn = Callable[[List[MemoryQueryResult]], str]
-
-
-@dataclass
-class MemoryManagerConfig(MemorySchema):
-    enabled: bool = False
-    write_enabled: bool = True
-    retrieval_enabled: bool = True
-    top_k: int = 5
-    score_threshold: float = 0.25
-    min_content_length: int = 12
-    embedding_model: Optional[str] = None
-    vector_store_path: Optional[str] = None
-    injection_role: str = "system"
 
 
 class MemoryManager:
