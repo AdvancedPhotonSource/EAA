@@ -693,14 +693,15 @@ class BaseTaskManager:
                         continue
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
+            
+            # Add tool response to context regardless whether multiple tool calls are allowed or not, 
+            # because otherwise it would throw an error.
+            for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                print_message(tool_response)
+                self.update_message_history(tool_response, update_context=True, update_full_history=True)
+            
             if len(tool_responses) == 1 or allow_multiple_tool_calls:
                 for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
-                    # Just save the tool response to context, but don't send yet. We will send it later;
-                    # that will be together with the image if the tool returns an image path, and with
-                    # all tool responses if multiple tool calls are made.
-                    print_message(tool_response)
-                    self.update_message_history(tool_response, update_context=True, update_full_history=True)
-                    
                     if tool_response_type == ToolReturnType.IMAGE_PATH:
                         # If the tool returns an image path, load and encode the image,
                         # then compose a follow-up message with the image and add it to
