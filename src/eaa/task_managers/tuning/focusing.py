@@ -11,7 +11,7 @@ from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
-from eaa.agents.base import print_message
+from eaa.agents.base import print_message, generate_openai_message
 from eaa.api.llm_config import LLMConfig
 from eaa.api.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
@@ -165,15 +165,20 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     and self.acquisition_tool.image_k is not None
                     and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
                 ):
+                    temp_context = [
+                        generate_openai_message(content="Image 1", image=self.acquisition_tool.image_km1),
+                        generate_openai_message(content="Image 2", image=self.acquisition_tool.image_k)
+                    ]
                     response, outgoing = self.agent.receive(
-                        "Here is the collected image. Does it have any overlap with the reference image? "
+                        "Does the last image have any overlap with the previous one? "
                         "Just answer with 'yes' or 'no'.",
                         image_path=image_path,
-                        context=self.context,
+                        context=temp_context,
                         return_outgoing_message=True
                     )
+                    # Context is not updated in the hook.
                     self.update_message_history(outgoing, update_context=False, update_full_history=True)
-                    self.update_message_history(response, update_context=True, update_full_history=True)
+                    self.update_message_history(response, update_context=False, update_full_history=True)
                     
                     if "no" in response["content"].lower():
                         # If there is no overlap, run feature tracking to restore the FOV.
