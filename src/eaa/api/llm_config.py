@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 
 
 @dataclass
@@ -9,6 +9,9 @@ class LLMConfig:
     """
     def to_dict(self) -> dict:
         return asdict(self)
+    
+    def fields(self) -> list[str]:
+        return [f.name for f in fields(self)]
 
 
 @dataclass
@@ -16,7 +19,7 @@ class OpenAIConfig(LLMConfig):
     model: str = None
     """The name of the model to use."""
     
-    base_url: str = None
+    base_url: str = "https://api.openai.com/v1"
     """The base URL of the inference endpoint."""
     
     api_key: str = None

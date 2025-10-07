@@ -103,6 +103,7 @@ from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, generate_o
 from eaa.tools.mcp import MCPTool
 from eaa.comms import get_api_key
 from eaa.util import encode_image_base64, get_image_path_from_text
+from eaa.api.llm_config import LLMConfig
 from eaa.agents.memory import (
     MemoryManager,
     MemoryManagerConfig,
@@ -283,7 +284,7 @@ class BaseAgent:
 
     def __init__(
         self,
-        llm_config: dict,
+        llm_config: LLMConfig,
         system_message: str = "",
         memory_config: Optional[MemoryManagerConfig] = None,
         *,
@@ -296,12 +297,10 @@ class BaseAgent:
 
         Parameters
         ----------
-        llm_config : dict
-            Configuration for the OpenAI-compatible API. It should be a dictionary with
-            the following keys:
-            - `model`: The name of the model.
-            - `api_key`: The API key for the OpenAI-compatible API.
-            - `base_url`: The base URL for the OpenAI-compatible API.
+        llm_config : LLMConfig
+            Configuration for the agent. It should be an instance of a subclass
+            of LLMConfig. Refer to the documentation of the config classes for
+            more details.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
         memory_config : MemoryManagerConfig, optional
@@ -346,14 +345,14 @@ class BaseAgent:
         
     @property
     def model(self) -> str:
-        return self.llm_config.get("model")
+        return self.llm_config.model
     
     @property
     def base_url(self) -> str:
-        if "base_url" in self.llm_config.keys():
-            return self.llm_config["base_url"]
-        elif "server_base_url" in self.llm_config.keys():
-            return self.llm_config["server_base_url"]
+        if "base_url" in self.llm_config.fields():
+            return self.llm_config.base_url
+        elif "server_base_url" in self.llm_config.fields():
+            return self.llm_config.server_base_url
         else:
             raise ValueError(
                 "Unable to infer the base URL of the LLM. "
@@ -362,7 +361,7 @@ class BaseAgent:
     
     @property
     def api_key(self) -> str:
-        api_key = self.llm_config.get("api_key")
+        api_key = self.llm_config.api_key
         if api_key is None:
             logger.warning(
                 "`api_key` is not set in the LLM configuration. "
@@ -394,9 +393,6 @@ class BaseAgent:
             f"{self.__class__.__name__} does not implement text embeddings."
         )
 
-    def get_default_embedding_model(self) -> Optional[str]:
-        return self.llm_config.get("embedding_model")
-
     def _initialize_memory(
         self,
         memory_config: Optional[MemoryManagerConfig],
@@ -409,16 +405,14 @@ class BaseAgent:
         if memory_config is None:
             return
 
-        config_obj = memory_config
-
-        if config_obj.injection_role not in {"system", "user"}:
+        if memory_config.injection_role not in {"system", "user"}:
             logger.warning(
                 "Unsupported injection role '%s'; defaulting to 'system'.",
-                config_obj.injection_role,
+                memory_config.injection_role,
             )
-            config_obj.injection_role = "system"
+            memory_config.injection_role = "system"
 
-        self._memory_injection_role = config_obj.injection_role
+        self._memory_injection_role = memory_config.injection_role
 
         if embedder_override is None:
             if not self.supports_memory_embeddings():
@@ -427,7 +421,7 @@ class BaseAgent:
                     self.__class__.__name__,
                 )
                 return
-            embedding_model = config_obj.embedding_model or self.get_default_embedding_model()
+            embedding_model = memory_config.embedding_model
             embedder_fn = self._build_memory_embedder(embedding_model)
         else:
             embedder_fn = embedder_override
@@ -435,7 +429,7 @@ class BaseAgent:
         try:
             self.memory_manager = MemoryManager(
                 embedder_fn,
-                config=config_obj,
+                config=memory_config,
                 vector_store=vector_store,
                 notability_filter=notability_filter,
                 formatter=formatter,
@@ -448,10 +442,9 @@ class BaseAgent:
         model_name = embedding_model
 
         def embedder(texts: Sequence[str]) -> List[List[float]]:
-            selected_model = model_name or self.get_default_embedding_model()
-            if selected_model is None:
+            if model_name is None:
                 raise ValueError("No embedding model provided for memory usage.")
-            return self.embed_texts(texts, model=selected_model)
+            return self.embed_texts(texts, model=model_name)
 
         return embedder
 

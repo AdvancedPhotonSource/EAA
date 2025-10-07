@@ -131,7 +131,7 @@ class BaseTaskManager:
                 f"Dependencies required for {agent_class.__name__} is unavailable."
             )
         self.agent = agent_class(
-            llm_config=self.llm_config.to_dict(),
+            llm_config=self.llm_config,
             system_message=self.assistant_system_message,
             memory_config=self.memory_config,
             memory_vector_store=self._memory_vector_store,

@@ -4,13 +4,14 @@ from openai import OpenAI
 
 from eaa.agents.base import BaseAgent
 from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
+from eaa.api.llm_config import OpenAIConfig
 
 
 class OpenAIAgent(BaseAgent):
     
     def __init__(
         self,
-        llm_config: dict,
+        llm_config: OpenAIConfig,
         system_message: str = None,
         memory_config: Optional[MemoryManagerConfig] = None,
         *,
@@ -23,12 +24,10 @@ class OpenAIAgent(BaseAgent):
 
         Parameters
         ----------
-        llm_config : dict
-            Configuration for the OpenAI-compatible API. It should be a dictionary with
-            the following keys:
-            - `model`: The name of the model.
-            - `api_key`: The API key for the OpenAI-compatible API.
-            - `base_url`: The base URL for the OpenAI-compatible API.
+        llm_config : OpenAIConfig
+            Configuration for the OpenAI-compatible API. It should be an instance
+            of OpenAIConfig. Refer to the documentation of the config class for
+            more details.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
         memory_config : MemoryManagerConfig, optional
@@ -50,7 +49,7 @@ class OpenAIAgent(BaseAgent):
         
     @property
     def base_url(self) -> str:
-        return self.llm_config.get("base_url", "https://api.openai.com/v1")
+        return self.llm_config.base_url
         
     def create_client(self) -> OpenAI:
         return OpenAI(
@@ -61,20 +60,16 @@ class OpenAIAgent(BaseAgent):
     def supports_memory_embeddings(self) -> bool:
         return True
 
-    def get_default_embedding_model(self) -> Optional[str]:
-        return self.llm_config.get("embedding_model", "text-embedding-3-small")
-
     def embed_texts(
         self,
         texts: Sequence[str],
         *,
         model: Optional[str] = None,
     ) -> List[List[float]]:
-        selected_model = model or self.get_default_embedding_model()
-        if selected_model is None:
+        if model is None:
             raise ValueError("No embedding model configured for OpenAIAgent.")
         response = self.client.embeddings.create(
-            model=selected_model,
+            model=model,
             input=list(texts),
         )
         return [item.embedding for item in response.data]

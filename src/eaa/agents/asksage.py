@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from asksageclient import AskSageClient
 
 from eaa.agents.base import BaseAgent
+from eaa.api.llm_config import AskSageConfig
 from eaa.agents.memory import MemoryManagerConfig, MemoryQueryResult, VectorStore
 from eaa.util import decode_image_base64, get_timestamp
 
@@ -14,7 +15,7 @@ class AskSageAgent(BaseAgent):
     
     def __init__(
         self,
-        llm_config: dict,
+        llm_config: AskSageConfig,
         system_message: str = None,
         memory_config: Optional[MemoryManagerConfig] = None,
         *,
@@ -27,15 +28,10 @@ class AskSageAgent(BaseAgent):
 
         Parameters
         ----------
-        llm_config : dict
-            Configuration for the OpenAI-compatible API. It should be a dictionary with
-            the following keys:
-            - `model`: The name of the model.
-            - `api_key`: The API key for the OpenAI-compatible API.
-            - `server_base_url`: The server base URL for the OpenAI-compatible API.
-            - `user_base_url`: The user base URL for the OpenAI-compatible API.
-            - `email`: The email of the user.
-            - `cacert_path`: The path to the CA certificate file (*.pem).
+        llm_config : AskSageConfig
+            Configuration for the AskSage API. It should be an instance
+            of AskSageConfig. Refer to the documentation of the config class for
+            more details.
         system_message : str, optional
             The system message for the OpenAI-compatible API.
         memory_config : MemoryManagerConfig, optional
@@ -57,18 +53,18 @@ class AskSageAgent(BaseAgent):
     
     @property
     def user_base_url(self) -> str:
-        return self.llm_config.get("user_base_url")
+        return self.llm_config.user_base_url
     
     @property
     def server_base_url(self) -> str:
-        return self.llm_config.get("server_base_url")
+        return self.llm_config.server_base_url
         
     def create_client(self) -> AskSageClient:
-        if "cacert_path" in self.llm_config.keys():
-            os.environ["REQUESTS_CA_BUNDLE"] = self.llm_config["cacert_path"]
+        if self.llm_config.cacert_path is not None:
+            os.environ["REQUESTS_CA_BUNDLE"] = self.llm_config.cacert_path
         
         return AskSageClient(
-            email=self.llm_config["email"],
+            email=self.llm_config.email,
             api_key=self.api_key,
             user_base_url=self.user_base_url,
             server_base_url=self.server_base_url,
