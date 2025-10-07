@@ -177,6 +177,7 @@ def add_marker_to_imgae(
     y_range: Optional[tuple[float, float]] = None,
     marker_type: Literal["line", "rectangle"] = None,
     marker_params: dict = None,
+    add_reticles_for_key_points: bool = False,
 ) -> plt.Figure:
     """Add a marker to an image and plot it.
 
@@ -212,6 +213,9 @@ def add_marker_to_imgae(
             - `linewidth`: float. The width of the marker.
             - `linestyle`: str. The style of the marker.
             - `alpha`: float. The transparency of the marker.
+    add_reticles_for_key_points : bool, optional
+        If True, reticles that extend to the axes are added to key points of the marker to
+        help identify the coordinates of the key points.
 
     Returns
     -------
@@ -239,6 +243,23 @@ def add_marker_to_imgae(
             marker_params["x"], marker_params["y"], 
             **{k: v for k, v in marker_params.items() if k != "x" and k != "y"}
         )
+        if add_reticles_for_key_points:
+            ax.vlines(
+                marker_params["x"], 
+                ymin=ax.get_ylim()[0],
+                ymax=ax.get_ylim()[1], 
+                linestyle="--",
+                linewidth=0.5,
+                color="gray"
+            )
+            ax.hlines(
+                marker_params["y"], 
+                xmin=ax.get_xlim()[0], 
+                xmax=ax.get_xlim()[1], 
+                linestyle="--",
+                linewidth=0.5,
+                color="gray"
+            )
     elif marker_type == "rectangle":
         if x_range is not None and y_range is not None:
             marker_params["x"] = physical_pos_to_pixel(np.array(marker_params["x"]), x_range, image.shape[1])
