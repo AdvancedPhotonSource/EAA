@@ -562,6 +562,7 @@ class BaseTaskManager:
         n_first_images_to_keep_in_context: Optional[int] = None,
         n_past_images_to_keep_in_context: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
+        allow_multiple_tool_calls: bool = False,
         hook_functions: Optional[dict[str, Callable]] = None,
         expected_tool_call_sequence: Optional[list[str]] = None,
         expected_tool_call_sequence_tolerance: int = 0,
@@ -605,18 +606,24 @@ class BaseTaskManager:
         allow_non_image_tool_responses : bool, optional
             If False, the agent will be asked to redo the tool call if it returns
             anything that is not an image path.
+        allow_multiple_tool_calls: bool, optional
+            If True, the agent will be allowed to make multiple tool calls in one
+            response. If False, the agent will be asked to redo the tool call if it
+            makes multiple tool calls.
         hook_functions : dict[str, Callable], optional
             A dictionary of hook functions to call at certain points in the loop.
             The keys specify the points where the hook functions are called, and
             the values are the callables. Allowed keys are:
             - `image_path_tool_response`: 
-              args: {"img_path": str}
-              return: {"response": Dict[str, Any], "outgoing": Dict[str, Any]}
-              Executed when the tool response is an image path, after the tool
-              response is added to the context but before the image is loaded and
-              sent to the agent. When this function is given, it **replaces** the
-              `agent.receive` call so be sure to send the image to the agent in
-              the hook if this is intended.
+              - args: {"img_path": str}
+              - return: list[Dict[str, Any]]: A list of messages that should be added 
+                to the context.
+              - Executed when the tool response is an image path, after the tool
+                response is added to the context but before the image is loaded and
+                sent to the agent. When this function is given, it **overrides** the
+                routine that loads, encodes images and composes the image-containing
+                follow-up message, so be sure to make the hook return a message that
+                contains the loaded image if desired.
         expected_tool_call_sequence : list[str], optional
             A list of tool call names that are expected to be made in the loop.
             If provided, the function will check if the tool call sequence is
@@ -686,58 +693,54 @@ class BaseTaskManager:
                         continue
             
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
-            if len(tool_responses) == 1:
+            if len(tool_responses) == 1 or allow_multiple_tool_calls:
+                for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                    # Just save the tool response to context, but don't send yet. We will send it later;
+                    # that will be together with the image if the tool returns an image path, and with
+                    # all tool responses if multiple tool calls are made.
+                    print_message(tool_response)
+                    self.update_message_history(tool_response, update_context=True, update_full_history=True)
+                    
+                    if tool_response_type == ToolReturnType.IMAGE_PATH:
+                        # If the tool returns an image path, load and encode the image,
+                        # then compose a follow-up message with the image and add it to
+                        # the context.
+                        image_path = tool_response["content"]
+                        if hook_functions.get("image_path_tool_response", None) is not None:
+                            # Override the normal routine composing image-containing follow-up message
+                            # with the hook function and the message it returns.
+                            hook_messages = hook_functions["image_path_tool_response"](image_path)
+                            for hook_message in hook_messages:
+                                self.update_message_history(hook_message, update_context=True, update_full_history=True)
+                        else:
+                            image_followup = generate_openai_message(
+                                content=message_with_acquired_image,
+                                image_path=image_path
+                            )
+                            self.update_message_history(image_followup, update_context=True, update_full_history=True)
+                    else: 
+                        if not allow_non_image_tool_responses:
+                            msg = generate_openai_message(
+                                f"The tool should return an image path, but got {str(tool_response_type)}. "
+                                "Make sure you call the right tool correctly.",
+                            )
+                            self.update_message_history(msg, update_context=True, update_full_history=True)
+                            
                 if expected_tool_call_sequence is not None:
                     self.enforce_tool_call_sequence(
                         expected_tool_call_sequence,
                         expected_tool_call_sequence_tolerance
                     )
-                
-                tool_response = tool_responses[0]
-                tool_response_type = tool_response_types[0]
-                # Just save the tool response to context, but don't send yet. We will send it later;
-                # that will be together with the image if the tool returns an image path.
-                print_message(tool_response)
-                self.update_message_history(tool_response, update_context=True, update_full_history=True)
-                
-                if tool_response_type == ToolReturnType.IMAGE_PATH:
-                    image_path = tool_response["content"]
-                    if hook_functions.get("image_path_tool_response", None) is not None:
-                        response, outgoing = hook_functions["image_path_tool_response"](image_path)
-                    else:
-                        response, outgoing = self.agent.receive(
-                            message_with_acquired_image,
-                            image_path=image_path,
-                            context=self.context,
-                            return_outgoing_message=True
-                        )
-                elif tool_response_type == ToolReturnType.EXCEPTION:
-                    response, outgoing = self.agent.receive(
-                        "The tool returned an exception. Please fix the exception and try again.",
-                        image_path=None,
-                        context=self.context,
-                        return_outgoing_message=True
-                    )
-                else:
-                    if not allow_non_image_tool_responses:
-                        response, outgoing = self.agent.receive(
-                            f"The tool should return an image path, but got {str(tool_response_type)}. "
-                            "Make sure you call the right tool correctly.",
-                            image_path=None,
-                            context=self.context,
-                            return_outgoing_message=True
-                        )
-                    else:
-                        # Tool response is already added to the context so just send it.
-                        response, outgoing = self.agent.receive(
-                            message=None,
-                            image_path=None,
-                            context=self.context,
-                            return_outgoing_message=True
-                        )
-                if outgoing is not None:
-                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                            
+                # Send the tool responses and any follow-ups for all tool calls.
+                response = self.agent.receive(
+                    message=None,
+                    image_path=None,
+                    context=self.context,
+                    return_outgoing_message=False
+                )
                 self.update_message_history(response, update_context=True, update_full_history=True)
+                
             elif len(tool_responses) > 1:
                 response, outgoing = self.agent.receive(
                     "There are more than one tool calls in your response. "

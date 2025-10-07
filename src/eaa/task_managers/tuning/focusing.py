@@ -226,13 +226,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                         f"next time. The last 2D image acquisition call is {self.acquisition_tool.image_acquisition_call_history[-1]}."
                     )
                     self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
-            response, outgoing = self.agent.receive(
-                message,
-                image_path=image_path,
-                context=self.context,
-                return_outgoing_message=True
-            )
-            return response, outgoing
+            return [generate_openai_message(content=message, image_path=image_path)]
         
         if (
             (not use_registration_in_workflow)
