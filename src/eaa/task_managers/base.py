@@ -4,7 +4,9 @@ import sqlite3
 import logging
 import time
 
-from eaa.agents.base import generate_openai_message, get_message_elements, print_message
+from eaa.agents.base import (
+    generate_openai_message, get_message_elements, print_message, has_tool_call
+)
 from eaa.api.memory import MemoryManagerConfig
 from eaa.tools.base import BaseTool
 from eaa.tools.mcp import MCPTool
@@ -293,46 +295,50 @@ class BaseTaskManager:
             in the initial prompt, if any, is stored in the context. Keep this
             False to reduce the context size and save costs.
         """
+        response = None
         while True:
-            message = self.get_user_input(
-                prompt=(
-                    "Enter a message (\\exit: exit; \\return: return to upper level task; "
-                    "\\help: show command help): "
+            if response is None or (response is not None and not has_tool_call(response)):
+                message = self.get_user_input(
+                    prompt=(
+                        "Enter a message (\\exit: exit; \\return: return to upper level task; "
+                        "\\help: show command help): "
+                    )
                 )
-            )
-            if message.lower() == "\\exit":
-                break
-            elif message.lower() == "\\return":
-                return
-            elif message.lower().startswith("\\monitor "):
-                self.enter_monitoring_mode(message.lower().split("\\monitor ")[1])
-                continue
-            elif message.lower() == "\\help":
-                self.display_command_help()
-                continue
+                if message.lower() == "\\exit":
+                    break
+                elif message.lower() == "\\return":
+                    return
+                elif message.lower().startswith("\\monitor "):
+                    self.enter_monitoring_mode(message.lower().split("\\monitor ")[1])
+                    continue
+                elif message.lower() == "\\help":
+                    self.display_command_help()
+                    continue
             
-            # Send message and get response
-            response, outgoing_message = self.agent.receive(
-                message, 
-                context=self.context, 
-                return_outgoing_message=True
-            )
-            # If message DB is used, user input should come from WebUI which writes
-            # to the DB, so we don't update DB again.
-            self.update_message_history(
-                outgoing_message, 
-                update_context=True, 
-                update_full_history=True, 
-                update_db=(self.message_db_conn is None)
-            )
-            self.update_message_history(response, update_context=True, update_full_history=True)
+                # Send message and get response
+                response, outgoing_message = self.agent.receive(
+                    message, 
+                    context=self.context, 
+                    return_outgoing_message=True
+                )
+                # If message DB is used, user input should come from WebUI which writes
+                # to the DB, so we don't update DB again.
+                self.update_message_history(
+                    outgoing_message, 
+                    update_context=True, 
+                    update_full_history=True, 
+                    update_db=(self.message_db_conn is None)
+                )
+                self.update_message_history(response, update_context=True, update_full_history=True)
             
             # Handle tool calls
             tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
+            for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                print_message(tool_response)
+                self.update_message_history(tool_response, update_context=True, update_full_history=True)
+            
             if len(tool_responses) >= 1:
                 for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
-                    print_message(tool_response)
-                    self.update_message_history(tool_response, update_context=True, update_full_history=True)
                     # If the tool returns an image path, load the image and send it to 
                     # the assistant in a follow-up message as user.
                     if tool_response_type == ToolReturnType.IMAGE_PATH:
