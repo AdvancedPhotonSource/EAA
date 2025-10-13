@@ -229,11 +229,13 @@ body {
 
 .message img.inline {
   max-width: 100%;
+  max-height: 35vh;
   height: auto;
   border-radius: 8px;
   margin-top: 8px;
   border: 1px solid var(--border);
   display: block;
+  cursor: zoom-in;
 }
 
 .images-panel {
@@ -406,4 +408,57 @@ body {
   #scrollToBottom {
     right: calc(320px + 32px);
   }
-} 
+}
+
+.image-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.85);
+  z-index: 2000;
+  padding: 32px;
+}
+
+.image-modal.open {
+  display: flex;
+}
+
+.image-modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-modal-content img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.4);
+}
+
+.image-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.image-modal-close:hover {
+  background: rgba(37, 99, 235, 0.85);
+}

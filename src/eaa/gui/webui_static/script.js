@@ -8,6 +8,9 @@
   const attachBtn = document.getElementById("attachBtn");
   const statusEl = document.getElementById("status");
   const inputRow = document.getElementById("inputRow");
+  const imageModal = document.getElementById("imageModal");
+  const imageModalImg = document.getElementById("imageModalImg");
+  const imageModalClose = document.getElementById("imageModalClose");
 
   let lastMessageId = null;
   let polling = true;
@@ -295,8 +298,10 @@
       const img = document.createElement("img");
       img.className = "inline";
       img.src = msg.image;
+      img.dataset.fullSrc = msg.image;
       container.appendChild(img);
       addImageToSidebar(msg.image);
+      setupImagePreview(img);
     }
 
     // Inline image from <img path>
@@ -308,8 +313,10 @@
       img.className = "inline";
       img.loading = "lazy";
       img.src = url;
+      img.dataset.fullSrc = url;
       container.appendChild(img);
       addImageToSidebar(url);
+      setupImagePreview(img);
     }
 
     return container;
@@ -406,6 +413,31 @@
     const needsSpace = current && !/\s$/.test(current);
     const toInsert = needsSpace ? ` <img ${filePath}>` : `<img ${filePath}>`;
     inputEl.value = current + toInsert;
+  }
+
+  function openImageModal(src) {
+    if (!imageModal || !imageModalImg) return;
+    imageModalImg.src = src;
+    imageModal.classList.add("open");
+    imageModal.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeImageModal() {
+    if (!imageModal || !imageModalImg) return;
+    imageModal.classList.remove("open");
+    imageModal.setAttribute("aria-hidden", "true");
+    imageModalImg.src = "";
+    document.body.style.overflow = "";
+  }
+
+  function setupImagePreview(img) {
+    if (!img) return;
+    img.addEventListener("click", () => {
+      const src = img.getAttribute("data-full-src") || img.src;
+      if (!src) return;
+      openImageModal(src);
+    });
   }
 
   function withInputLoading(message = "Uploading image...") {
@@ -621,6 +653,26 @@
       }
     });
   }
+
+  if (imageModalClose) {
+    imageModalClose.addEventListener("click", () => {
+      closeImageModal();
+    });
+  }
+
+  if (imageModal) {
+    imageModal.addEventListener("click", (event) => {
+      if (event.target === imageModal) {
+        closeImageModal();
+      }
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && imageModal && imageModal.classList.contains("open")) {
+      closeImageModal();
+    }
+  });
 
   // Clipboard paste event listener
   inputEl.addEventListener("paste", handleClipboardPaste);
