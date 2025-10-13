@@ -292,6 +292,7 @@
 
     container.appendChild(meta);
     container.appendChild(content);
+    maybeAddApprovalActions(content, msg);
 
     // Inline image from base64 column
     if (msg.image) {
@@ -440,6 +441,54 @@
     });
   }
 
+  function maybeAddApprovalActions(contentEl, msg) {
+    if (!contentEl || !msg) return;
+    if (msg.role !== "system") return;
+    const text = String(msg.content || "");
+    if (!/Approve\?\s*\[y\/N\]:/i.test(text)) return;
+    if (contentEl.querySelector(".approval-actions")) return;
+
+    const actions = document.createElement("span");
+    actions.className = "approval-actions";
+
+    const createButton = (label, value) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "approval-button";
+      btn.textContent = label;
+      btn.dataset.value = value;
+      return btn;
+    };
+
+    const yesBtn = createButton("Yes", "yes");
+    const noBtn = createButton("No", "no");
+    actions.appendChild(yesBtn);
+    actions.appendChild(noBtn);
+
+    contentEl.appendChild(actions);
+
+    let submitting = false;
+    async function handleClick(event) {
+      if (submitting) return;
+      submitting = true;
+      yesBtn.disabled = true;
+      noBtn.disabled = true;
+      const value = event.currentTarget.dataset.value || "";
+      try {
+        await postUserMessage(value);
+      } catch (err) {
+        const message = err && err.message ? err.message : "Failed to submit response.";
+        alert(message);
+        submitting = false;
+        yesBtn.disabled = false;
+        noBtn.disabled = false;
+      }
+    }
+
+    yesBtn.addEventListener("click", handleClick);
+    noBtn.addEventListener("click", handleClick);
+  }
+
   function withInputLoading(message = "Uploading image...") {
     const originalPlaceholder = inputEl.placeholder;
     const wasDisabled = inputEl.disabled;
@@ -521,17 +570,26 @@
     }
   }
 
+  async function postUserMessage(content) {
+    const res = await fetch("/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content })
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      const message = error.error || `HTTP ${res.status}`;
+      throw new Error(message);
+    }
+    return res.json().catch(() => ({}));
+  }
+
   async function sendMessage() {
     const content = inputEl.value.trim();
     if (!content) return;
     sendBtn.disabled = true;
     try {
-      const res = await fetch("/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content })
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await postUserMessage(content);
       inputEl.value = "";
       inputEl.focus();
       
