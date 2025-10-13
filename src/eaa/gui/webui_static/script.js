@@ -7,10 +7,12 @@
   const fileInput = document.getElementById("fileInput");
   const attachBtn = document.getElementById("attachBtn");
   const statusEl = document.getElementById("status");
+  const inputRow = document.getElementById("inputRow");
 
   let lastMessageId = null;
   let polling = true;
   let userPinnedScroll = false;
+  let dragCounter = 0;
 
   function escapeHtml(text) {
     return String(text)
@@ -390,6 +392,77 @@
     }
   }
 
+  function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Could not read file data"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function appendImageTag(filePath) {
+    const current = inputEl.value;
+    const needsSpace = current && !/\s$/.test(current);
+    const toInsert = needsSpace ? ` <img ${filePath}>` : `<img ${filePath}>`;
+    inputEl.value = current + toInsert;
+  }
+
+  function withInputLoading(message = "Uploading image...") {
+    const originalPlaceholder = inputEl.placeholder;
+    const wasDisabled = inputEl.disabled;
+    inputEl.placeholder = message;
+    inputEl.disabled = true;
+    return () => {
+      inputEl.placeholder = originalPlaceholder;
+      inputEl.disabled = wasDisabled;
+    };
+  }
+
+  function withAttachBusy(tempText = "📤") {
+    if (!attachBtn) {
+      return () => {};
+    }
+    const originalText = attachBtn.textContent;
+    const wasDisabled = attachBtn.disabled;
+    attachBtn.textContent = tempText;
+    attachBtn.disabled = true;
+    return () => {
+      attachBtn.textContent = originalText;
+      attachBtn.disabled = wasDisabled;
+    };
+  }
+
+  function isImageFile(file) {
+    if (!file) return false;
+    if (file.type) {
+      return file.type.startsWith("image/");
+    }
+    return /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(file.name || "");
+  }
+
+  async function attachImageFromFile(file, { onStart } = {}) {
+    if (!isImageFile(file)) {
+      throw new Error("Only image files are supported");
+    }
+
+    let cleanup = () => {};
+    if (typeof onStart === "function") {
+      const maybeCleanup = onStart();
+      if (typeof maybeCleanup === "function") {
+        cleanup = maybeCleanup;
+      }
+    }
+
+    try {
+      const imageData = await readFileAsDataURL(file);
+      const filePath = await uploadClipboardImage(imageData);
+      appendImageTag(filePath);
+    } finally {
+      cleanup();
+    }
+  }
+
   async function handleClipboardPaste(event) {
     const items = event.clipboardData?.items;
     if (!items) return;
@@ -402,36 +475,13 @@
         if (!file) continue;
 
         try {
-          // Show loading state
-          const originalPlaceholder = inputEl.placeholder;
-          inputEl.placeholder = "Uploading image...";
-          inputEl.disabled = true;
-
-          // Convert to base64
-          const reader = new FileReader();
-          const imageData = await new Promise((resolve, reject) => {
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
+          await attachImageFromFile(file, {
+            onStart: () => withInputLoading("Uploading image...")
           });
-
-          // Upload to server
-          const filePath = await uploadClipboardImage(imageData);
-
-          // Insert image tag into input
-          const current = inputEl.value;
-          const toInsert = current && !/\s$/.test(current) ? ` <img ${filePath}>` : `<img ${filePath}>`;
-          inputEl.value = current + toInsert;
-
-          // Restore input state
-          inputEl.placeholder = originalPlaceholder;
-          inputEl.disabled = false;
           inputEl.focus();
-
         } catch (e) {
-          alert(`Failed to paste image: ${e.message}`);
-          inputEl.placeholder = originalPlaceholder;
-          inputEl.disabled = false;
+          const message = e?.message || "Failed to paste image.";
+          alert(`Failed to paste image: ${message}`);
         }
         
         break; // Only handle the first image
@@ -475,41 +525,102 @@
     if (!file) return;
     
     try {
-      // Show loading state
-      const originalText = attachBtn.textContent;
-      attachBtn.textContent = "📤";
-      attachBtn.disabled = true;
-      
-      // Convert file to base64
-      const reader = new FileReader();
-      const imageData = await new Promise((resolve, reject) => {
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+      await attachImageFromFile(file, {
+        onStart: () => {
+          const cleanups = [
+            withInputLoading("Uploading image..."),
+            withAttachBusy("📤")
+          ];
+          return () => cleanups.forEach(fn => fn());
+        }
       });
-
-      // Upload to server
-      const filePath = await uploadClipboardImage(imageData);
-
-      // Insert image tag into input
-      const current = inputEl.value;
-      const toInsert = current && !/\s$/.test(current) ? ` <img ${filePath}>` : `<img ${filePath}>`;
-      inputEl.value = current + toInsert;
       inputEl.focus();
-
-      // Restore button state
-      attachBtn.textContent = originalText;
-      attachBtn.disabled = false;
-
     } catch (e) {
-      alert(`Failed to upload file: ${e.message}`);
-      attachBtn.textContent = "📎";
-      attachBtn.disabled = false;
+      const message = e?.message || "Failed to upload file.";
+      alert(`Failed to upload file: ${message}`);
     }
     
     // Clear the file input for next use
     fileInput.value = "";
   });
+
+  function isFileDrag(event) {
+    const dt = event.dataTransfer;
+    if (!dt) return false;
+    if (dt.types && typeof dt.types.includes === "function") {
+      return dt.types.includes("Files");
+    }
+    if (Array.isArray(dt.types)) {
+      return dt.types.includes("Files");
+    }
+    return dt.files && dt.files.length > 0;
+  }
+
+  function firstImageFileFromEvent(event) {
+    const dt = event.dataTransfer;
+    if (!dt || !dt.files || !dt.files.length) {
+      return null;
+    }
+    for (const file of dt.files) {
+      if (isImageFile(file)) {
+        return file;
+      }
+    }
+    return null;
+  }
+
+  if (inputRow) {
+    inputRow.addEventListener("dragenter", (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      dragCounter += 1;
+      inputRow.classList.add("drag-active");
+    });
+
+    inputRow.addEventListener("dragover", (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+    });
+
+    inputRow.addEventListener("dragleave", (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      dragCounter = Math.max(0, dragCounter - 1);
+      if (dragCounter === 0) {
+        inputRow.classList.remove("drag-active");
+      }
+    });
+
+    inputRow.addEventListener("drop", async (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      dragCounter = 0;
+      inputRow.classList.remove("drag-active");
+
+      const file = firstImageFileFromEvent(event);
+      if (!file) {
+        alert("Only image files can be attached.");
+        return;
+      }
+
+      try {
+        await attachImageFromFile(file, {
+          onStart: () => withInputLoading("Uploading image...")
+        });
+        inputEl.focus();
+      } catch (e) {
+        const message = e?.message || "Failed to upload file.";
+        alert(`Failed to upload file: ${message}`);
+      } finally {
+        if (event.dataTransfer) {
+          event.dataTransfer.clearData();
+        }
+      }
+    });
+  }
 
   // Clipboard paste event listener
   inputEl.addEventListener("paste", handleClipboardPaste);

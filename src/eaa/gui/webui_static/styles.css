@@ -315,6 +315,7 @@ body {
   grid-template-columns: auto 1fr auto;
   gap: 8px;
   max-width: 100%;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .input-box {
@@ -325,6 +326,21 @@ body {
   border-radius: 8px;
   border: 1px solid var(--border);
   font-size: 1rem;
+}
+
+.input-row.drag-active {
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.input-row.drag-active .input-box {
+  border-color: var(--primary);
+  background: #fff;
+}
+
+.input-row.drag-active .btn {
+  border-color: var(--primary);
 }
 
 .btn {
