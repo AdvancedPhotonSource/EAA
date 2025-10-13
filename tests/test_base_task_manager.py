@@ -176,7 +176,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         self.task_manager.agent.receive.side_effect = make_receive_side_effect([
             (response1, outgoing1),  # Initial call
             (response2, None),  # After tool response - contains TERMINATE
-            (response3, outgoing3),  # After user continues with "\exit"
+            (response3, outgoing3),  # After user continues with "/exit"
         ])
         
         # Configure tool call handler to return tool response first, then empty for termination
@@ -185,7 +185,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
             ([], []),  # No tool calls in termination response
         ]
         
-        self.task_manager.get_user_input.return_value = "\\exit"
+        self.task_manager.get_user_input.return_value = "/exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -245,7 +245,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ])
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "\\exit"
+        self.task_manager.get_user_input.return_value = "/exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -291,7 +291,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ])
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "\\exit"
+        self.task_manager.get_user_input.return_value = "/exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -332,7 +332,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ])
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "\\exit"
+        self.task_manager.get_user_input.return_value = "/exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -373,7 +373,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ])
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "\\exit"
+        self.task_manager.get_user_input.return_value = "/exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -423,7 +423,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
         ])
         
         self.task_manager.agent.handle_tool_call.return_value = (tool_responses, tool_response_types)
-        self.task_manager.get_user_input.return_value = "\\exit"
+        self.task_manager.get_user_input.return_value = "/exit"
         
         # Execute
         self.task_manager.run_feedback_loop(
@@ -568,7 +568,7 @@ class TestBaseTaskManagerFeedbackLoop(tutils.BaseTester):
             ([], []),  # No tool calls after continuation
         ]
         
-        self.task_manager.get_user_input.side_effect = [user_continuation, "\\exit"]
+        self.task_manager.get_user_input.side_effect = [user_continuation, "/exit"]
         
         # Execute
         self.task_manager.run_feedback_loop(

@@ -266,14 +266,14 @@ class BaseTaskManager:
         s = (
             "Below are supported commands. Note that not all commands are availble "
             "in your current environment. Refer to the input prompt for available commands.\n"
-            "\\exit: exit the current loop\n"
-            "\\chat: enter chat mode. The task manager will always ask for you input "
+            "/exit: exit the current loop\n"
+            "/chat: enter chat mode. The task manager will always ask for you input "
             "(instead of sending workflow-determined replies to the agent) when the "
             "agent finishes its response.\n"
-            "\\monitor <task description>: enter monitoring mode. The agent will perform "
-            "the described task periodically. Example: `\\monitor check the content of status.txt `"
+            "/monitor <task description>: enter monitoring mode. The agent will perform "
+            "the described task periodically. Example: `/monitor check the content of status.txt `"
             "every 60 seconds`\n"
-            "\\return: return to upper level task\n"
+            "/return: return to upper level task\n"
         )
         if self.message_db_conn:
             self.add_message_to_db({"role": "system", "content": s})
@@ -300,18 +300,18 @@ class BaseTaskManager:
             if response is None or (response is not None and not has_tool_call(response)):
                 message = self.get_user_input(
                     prompt=(
-                        "Enter a message (\\exit: exit; \\return: return to upper level task; "
-                        "\\help: show command help): "
+                        "Enter a message (/exit: exit; /return: return to upper level task; "
+                        "/help: show command help): "
                     )
                 )
-                if message.lower() == "\\exit":
+                if message.lower() == "/exit":
                     break
-                elif message.lower() == "\\return":
+                elif message.lower() == "/return":
                     return
-                elif message.lower().startswith("\\monitor "):
-                    self.enter_monitoring_mode(message.lower().split("\\monitor ")[1])
+                elif message.lower().startswith("/monitor "):
+                    self.enter_monitoring_mode(message.lower().split("/monitor ")[1])
                     continue
-                elif message.lower() == "\\help":
+                elif message.lower() == "/help":
                     self.display_command_help()
                     continue
             
@@ -676,15 +676,15 @@ class BaseTaskManager:
                     message = self.get_user_input(
                         prompt=(
                             "Termination condition triggered. What to do next? "
-                            "(\\exit: exit; \\chat: chat mode; \\help: show command help): "
+                            "(/exit: exit; /chat: chat mode; /help: show command help): "
                         ),
                         display_prompt_in_webui=True
                     )
-                    if message.lower() == "\\exit":
+                    if message.lower() == "/exit":
                         return
-                    elif message.lower() == "\\chat":
+                    elif message.lower() == "/chat":
                         self.run_conversation(store_all_images_in_context=True)
-                    elif message.lower() == "\\help":
+                    elif message.lower() == "/help":
                         self.display_command_help()
                         continue
                     else:
