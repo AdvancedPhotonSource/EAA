@@ -266,14 +266,14 @@ class BaseTaskManager:
         s = (
             "Below are supported commands. Note that not all commands are availble "
             "in your current environment. Refer to the input prompt for available commands.\n"
-            "/exit: exit the current loop\n"
-            "/chat: enter chat mode. The task manager will always ask for you input "
+            "* `/exit`: exit the current loop\n"
+            "* `/chat`: enter chat mode. The task manager will always ask for you input "
             "(instead of sending workflow-determined replies to the agent) when the "
             "agent finishes its response.\n"
-            "/monitor <task description>: enter monitoring mode. The agent will perform "
+            "* `/monitor <task description>`: enter monitoring mode. The agent will perform "
             "the described task periodically. Example: `/monitor check the content of status.txt `"
             "every 60 seconds`\n"
-            "/return: return to upper level task\n"
+            "* `/return`: return to upper level task\n"
         )
         if self.message_db_conn:
             self.add_message_to_db({"role": "system", "content": s})

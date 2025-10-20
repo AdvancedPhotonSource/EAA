@@ -275,11 +275,7 @@
     const formattedApproval = formatToolApprovalMessage(fullContent);
     fullContent = formattedApproval.text;
 
-    if (msg.role === "system") {
-      content.innerHTML = escapeHtml(fullContent).replace(/\n/g, '<br>');
-    } else {
-      content.innerHTML = renderMarkdown(fullContent);
-    }
+    content.innerHTML = renderMarkdown(fullContent);
 
     if (formattedApproval.code) {
       const pre = document.createElement('pre');
