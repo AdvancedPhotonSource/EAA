@@ -3,6 +3,9 @@ import json
 import sqlite3
 import logging
 import time
+import inspect
+import textwrap
+from collections import Counter
 
 from eaa.agents.base import (
     generate_openai_message, get_message_elements, print_message, has_tool_call
@@ -238,6 +241,16 @@ class BaseTaskManager:
         else:
             message = input(prompt)
             return message
+        
+    def _sync_webui_user_input_last_timestamp(self) -> None:
+        if self.message_db_conn:
+            cursor = self.message_db_conn.cursor()
+            cursor.execute(
+                "SELECT timestamp, role, content, tool_calls, image FROM messages WHERE role = 'user_webui' ORDER BY rowid"
+            )
+            messages = cursor.fetchall()
+            if len(messages) > 0:
+                self.webui_user_input_last_timestamp = int(messages[-1][0])
 
     def _request_tool_approval_via_task_manager(self, tool_name: str, tool_kwargs: Dict[str, Any]) -> bool:
         """Relay approval requests through the task manager input channels."""
@@ -273,6 +286,8 @@ class BaseTaskManager:
             "* `/monitor <task description>`: enter monitoring mode. The agent will perform "
             "the described task periodically. Example: `/monitor check the content of status.txt `"
             "every 60 seconds`\n"
+            "* `/subtask <task description>`: launch a sub-task manager that fits the description. "
+            "Arguments will be inferred automatically.\n"
             "* `/return`: return to upper level task\n"
         )
         if self.message_db_conn:
@@ -280,6 +295,312 @@ class BaseTaskManager:
         else:
             print(s)
         return s
+
+    def _get_registered_tools(self) -> List[BaseTool]:
+        if self.agent is None:
+            return []
+        return list(getattr(self.agent.tool_manager, "_base_tools", []))
+
+    def _build_task_manager_catalog_payload(self) -> List[Dict[str, Any]]:
+        from eaa.task_managers.factory import get_task_manager_specs
+
+        specs = get_task_manager_specs()
+        catalog: List[Dict[str, Any]] = []
+        for spec in sorted(specs.values(), key=lambda item: item.name):
+            doc = " ".join(spec.doc.split()) if spec.doc else ""
+            methods: List[Dict[str, Any]] = []
+            for method in spec.methods:
+                method_doc = " ".join(method.doc.split()) if method.doc else ""
+                methods.append(
+                    {
+                        "name": method.name,
+                        "signature": method.signature,
+                        "doc": textwrap.shorten(method_doc, width=400, placeholder="...") if method_doc else "",
+                    }
+                )
+            catalog.append(
+                {
+                    "name": spec.name,
+                    "module": spec.module,
+                    "doc": textwrap.shorten(doc, width=600, placeholder="...") if doc else "",
+                    "init_signature": spec.init_signature,
+                    "methods": methods,
+                }
+            )
+        return catalog
+
+    def _collect_registered_tools_for_prompt(self) -> tuple[List[Dict[str, Any]], Dict[str, BaseTool]]:
+        tools = self._get_registered_tools()
+        if len(tools) == 0:
+            return [], {}
+
+        class_counts = Counter(tool.__class__.__name__ for tool in tools)
+        class_seen = Counter()
+        name_counts = Counter(
+            getattr(tool, "name") for tool in tools if getattr(tool, "name", None) is not None
+        )
+
+        catalog: List[Dict[str, Any]] = []
+        alias_map: Dict[str, BaseTool] = {}
+        for tool in tools:
+            class_name = tool.__class__.__name__
+            class_seen[class_name] += 1
+            if class_counts[class_name] > 1:
+                alias = f"{class_name}#{class_seen[class_name]}"
+            else:
+                alias = class_name
+
+            tool_name = getattr(tool, "name", None)
+            doc = inspect.getdoc(tool.__class__) or ""
+            catalog.append(
+                {
+                    "alias": alias,
+                    "class": class_name,
+                    "tool_name": tool_name,
+                    "description": textwrap.shorten(" ".join(doc.split()), width=300, placeholder="...") if doc else "",
+                }
+            )
+
+            alias_map.setdefault(alias, tool)
+            if tool_name and name_counts[tool_name] == 1:
+                alias_map.setdefault(tool_name, tool)
+            if class_counts[class_name] == 1:
+                alias_map.setdefault(class_name, tool)
+
+        return catalog, alias_map
+
+    def _resolve_tool_placeholders(self, value: Any, alias_map: Dict[str, BaseTool]) -> Any:
+        if isinstance(value, dict):
+            if "$tool" in value:
+                alias = value["$tool"]
+                if alias not in alias_map:
+                    raise KeyError(alias)
+                return alias_map[alias]
+            return {key: self._resolve_tool_placeholders(val, alias_map) for key, val in value.items()}
+        if isinstance(value, list):
+            return [self._resolve_tool_placeholders(item, alias_map) for item in value]
+        return value
+
+    def launch_task_manager(self, task_request: str) -> None:
+        if self.agent is None:
+            logger.warning("Cannot launch a task manager because no agent is configured.")
+            system_message = generate_openai_message(
+                content="Cannot launch a sub task manager because no agent is configured.",
+                role="system",
+            )
+            self.update_message_history(system_message, update_context=True, update_full_history=True)
+            print_message(system_message)
+            return
+
+        from eaa.task_managers.factory import get_task_manager_specs
+
+        specs = get_task_manager_specs()
+        if len(specs) == 0:
+            logger.info("No task managers discovered; skipping launch.")
+            system_message = generate_openai_message(
+                content="No task managers are available to launch.", role="system"
+            )
+            self.update_message_history(system_message, update_context=True, update_full_history=True)
+            print_message(system_message)
+            return
+
+        task_manager_catalog = self._build_task_manager_catalog_payload()
+        tool_catalog, alias_map = self._collect_registered_tools_for_prompt()
+
+        manager_catalog_json = json.dumps(task_manager_catalog, indent=2)
+        tool_catalog_json = json.dumps(tool_catalog, indent=2)
+
+        request_text = task_request.strip()
+        if len(request_text) == 0:
+            request_text = "(no additional description provided)"
+
+        parsing_prompt = (
+            "You are responsible for selecting a task manager and preparing arguments to run it.\n"
+            "Use the `task_manager` list below to pick a class by its `name` field. "
+            "When tool instances are required, refer to them using the alias from the `tools` list. "
+            "Represent any tool reference as an object {\"$tool\": \"<alias>\"}.\n"
+            "Return a JSON object with the following keys:\n"
+            "- task_manager (string)\n"
+            "- method (string or null). Use 'run_conversation' if the user wants to chat with the new task manager. "
+            "Use null to indicate the default `run` method.\n"
+            "- init_args (object) with arguments for the constructor. Do not include llm_config, memory_config, "
+            "memory_vector_store, memory_notability_filter, memory_formatter, memory_embedder, message_db_path, or tools "
+            "unless they must override the defaults.\n"
+            "- method_args (object) with keyword arguments for the selected method.\n"
+            "- clarification_prompt (string). Leave empty if you have enough information; otherwise, ask the user a single "
+            "follow-up question.\n"
+            "Always return only the JSON object with those keys. Do not enclose the JSON object in triple backticks.\n"
+            f"task_manager options:\n{manager_catalog_json}\n"
+            f"tools:\n{tool_catalog_json}\n"
+            f"User request: {request_text}"
+        )
+
+        local_context: List[Dict[str, Any]] = []
+        parsed_result: Dict[str, Any] = {}
+
+        while True:
+            response, outgoing = self.agent.receive(
+                message=parsing_prompt,
+                context=local_context,
+                return_outgoing_message=True,
+            )
+            self.update_message_history(outgoing, update_context=False, update_full_history=True)
+            self.update_message_history(response, update_context=False, update_full_history=True)
+            local_context.append(outgoing)
+            local_context.append(response)
+
+            try:
+                parsed_result = json.loads(response["content"])
+            except json.JSONDecodeError:
+                parsing_prompt = (
+                    "Your previous response was not valid JSON. "
+                    "Return only the JSON object that matches the requested schema."
+                )
+                continue
+
+            clarification = parsed_result.get("clarification_prompt", "")
+            if clarification:
+                user_answer = self.get_user_input(
+                    prompt=clarification + " ",
+                    display_prompt_in_webui=bool(self.message_db_conn),
+                )
+                parsing_prompt = user_answer
+                continue
+
+            if "task_manager" not in parsed_result:
+                parsing_prompt = (
+                    "The JSON object must include the `task_manager` field. "
+                    "Return the full object again."
+                )
+                continue
+
+            manager_name = parsed_result["task_manager"]
+            if not isinstance(manager_name, str):
+                parsing_prompt = "The `task_manager` field must be a string. Return the JSON object again."
+                continue
+
+            if manager_name not in specs:
+                parsing_prompt = (
+                    f"'{manager_name}' is not a known task manager. Choose one of: "
+                    f"{', '.join(sorted(specs.keys()))}."
+                )
+                continue
+
+            init_args = parsed_result.get("init_args", {})
+            method_args = parsed_result.get("method_args", {})
+            if not isinstance(init_args, dict) or not isinstance(method_args, dict):
+                parsing_prompt = (
+                    "`init_args` and `method_args` must both be JSON objects. Return the JSON object again."
+                )
+                continue
+
+            try:
+                init_args = self._resolve_tool_placeholders(init_args, alias_map)
+                method_args = self._resolve_tool_placeholders(method_args, alias_map)
+            except KeyError as missing_alias:
+                parsing_prompt = (
+                    f"The tool alias '{missing_alias.args[0]}' is not available. "
+                    f"Choose from: {', '.join(sorted(alias_map.keys()))}."
+                )
+                continue
+
+            method_name = parsed_result.get("method")
+            if method_name is not None and not isinstance(method_name, str):
+                parsing_prompt = "The `method` field must be a string or null. Return the JSON object again."
+                continue
+
+            allowed_methods = {m.name for m in specs[manager_name].methods}
+            allowed_methods.update({"run", "run_conversation"})
+            if method_name and method_name not in allowed_methods:
+                parsing_prompt = (
+                    f"Method '{method_name}' is not valid for {manager_name}. "
+                    f"Choose from: {', '.join(sorted(allowed_methods))}."
+                )
+                continue
+
+            parsed_result["init_args"] = init_args
+            parsed_result["method_args"] = method_args
+            break
+
+        manager_class = specs[manager_name].cls
+        init_kwargs = dict(parsed_result.get("init_args", {}))
+        method_kwargs = dict(parsed_result.get("method_args", {}))
+
+        resolved_method_name = parsed_result.get("method") or "run"
+
+        init_signature = inspect.signature(manager_class.__init__)
+        accepts_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in init_signature.parameters.values()
+        )
+        auto_kwargs = {
+            "llm_config": self.llm_config,
+            "memory_config": self.memory_config,
+            "memory_vector_store": self._memory_vector_store,
+            "memory_notability_filter": self._memory_notability_filter,
+            "memory_formatter": self._memory_formatter,
+            "memory_embedder": self._memory_embedder,
+            "message_db_path": self.message_db_path,
+            "tools": self._get_registered_tools(),
+        }
+        for key, value in auto_kwargs.items():
+            if key == "tools":
+                if key not in init_signature.parameters:
+                    continue
+            elif key not in init_signature.parameters and not accepts_var_kwargs:
+                continue
+            if key in init_kwargs and init_kwargs[key] is not None:
+                continue
+            init_kwargs[key] = value
+
+        try:
+            sub_manager = manager_class(**init_kwargs)
+        except Exception as exc:  # noqa: BLE001 - surface configuration errors
+            logger.exception("Failed to instantiate task manager '%s'", manager_name)
+            system_message = generate_openai_message(
+                content=f"Failed to instantiate task manager '{manager_name}': {exc}",
+                role="system",
+            )
+            self.update_message_history(system_message, update_context=True, update_full_history=True)
+            print_message(system_message)
+            return
+
+        result = None
+        try:
+            if resolved_method_name == "run_conversation":
+                result = sub_manager.run_conversation()
+            else:
+                method_callable = getattr(sub_manager, resolved_method_name)
+                result = method_callable(**method_kwargs)
+            last_of_sub_manager_context = sub_manager.context[-1] if len(sub_manager.context) > 0 else None
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Task manager '%s' failed while running method '%s'", manager_name, resolved_method_name
+            )
+            system_message = generate_openai_message(
+                content=f"Task manager '{manager_name}' raised an error while running '{resolved_method_name}': {exc}",
+                role="system",
+            )
+            self.update_message_history(system_message, update_context=True, update_full_history=True)
+            print_message(system_message)
+            return
+
+        summary_parts = [
+            f"Launched task manager '{manager_name}' using method '{resolved_method_name}'."
+        ]
+        if result is not None:
+            summary_parts.append(f"Result: {result}")
+        if last_of_sub_manager_context is not None:
+            summary_parts.append(f"Last message in sub-task manager context: {last_of_sub_manager_context}")
+        summary_message = generate_openai_message(
+            content=" ".join(summary_parts),
+            role="system",
+        )
+        self.update_message_history(summary_message, update_context=True, update_full_history=True)
+        print_message(summary_message)
+        
+        # Sync WebUI timestamp so that `get_user_input` doesn't mistaken the last
+        # user input as the current input.
+        self._sync_webui_user_input_last_timestamp()
 
     def run_conversation(
         self, 
@@ -304,14 +625,24 @@ class BaseTaskManager:
                         "/help: show command help): "
                     )
                 )
-                if message.lower() == "/exit":
+                stripped_message = message.strip()
+                command, _, remainder = stripped_message.partition(" ")
+                command_lower = command.lower()
+
+                if command_lower == "/exit" and remainder == "":
                     break
-                elif message.lower() == "/return":
+                elif command_lower == "/return" and remainder == "":
                     return
-                elif message.lower().startswith("/monitor "):
-                    self.enter_monitoring_mode(message.lower().split("/monitor ")[1])
+                elif command_lower == "/monitor":
+                    if len(remainder.strip()) == 0:
+                        logger.info("Monitoring command requires a task description.")
+                    else:
+                        self.enter_monitoring_mode(remainder.strip())
                     continue
-                elif message.lower() == "/help":
+                elif command_lower == "/subtask":
+                    self.launch_task_manager(remainder.strip())
+                    continue
+                elif command_lower == "/help" and remainder == "":
                     self.display_command_help()
                     continue
             
