@@ -275,20 +275,72 @@
     const formattedApproval = formatToolApprovalMessage(fullContent);
     fullContent = formattedApproval.text;
 
-    content.innerHTML = renderMarkdown(fullContent);
+    const normalisedContent = fullContent.replace(/\r\n/g, "\n");
+    const normalisedLines = normalisedContent ? normalisedContent.split("\n") : [];
+    const lineCount = normalisedLines.length;
+    const isUserRole = msg.role === "user" || msg.role === "user_webui";
+    const shouldFold = isUserRole && lineCount > 10;
+    let actionsRow = null;
 
-    if (formattedApproval.code) {
-      const pre = document.createElement('pre');
-      pre.className = 'approval-code-block';
-      const codeEl = document.createElement('code');
-      codeEl.textContent = formattedApproval.code;
-      pre.appendChild(codeEl);
-      content.appendChild(pre);
+    if (shouldFold) {
+      content.classList.add("foldable");
+      const previewLines = normalisedLines.slice(0, 10);
+      previewLines.push("…");
+      const collapsedText = previewLines.join("\n");
+      const collapsedHtml = renderMarkdown(collapsedText);
+      const expandedHtml = renderMarkdown(fullContent);
+      let expanded = false;
+
+      const renderState = (expand) => {
+        content.innerHTML = expand ? expandedHtml : collapsedHtml;
+        content.classList.toggle("folded", !expand);
+        if (expand && formattedApproval.code) {
+          const pre = document.createElement("pre");
+          pre.className = "approval-code-block";
+          const codeEl = document.createElement("code");
+          codeEl.textContent = formattedApproval.code;
+          pre.appendChild(codeEl);
+          content.appendChild(pre);
+        }
+      };
+
+      renderState(false);
+
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "show-more-button";
+      toggleBtn.textContent = "Show more";
+      toggleBtn.addEventListener("click", () => {
+        expanded = !expanded;
+        renderState(expanded);
+        toggleBtn.textContent = expanded ? "Show less" : "Show more";
+      });
+
+      actionsRow = document.createElement("div");
+      actionsRow.className = "message-actions";
+      actionsRow.appendChild(toggleBtn);
+    } else {
+      content.innerHTML = renderMarkdown(fullContent);
+      content.classList.remove("foldable");
+      content.classList.remove("folded");
+
+      if (formattedApproval.code) {
+        const pre = document.createElement("pre");
+        pre.className = "approval-code-block";
+        const codeEl = document.createElement("code");
+        codeEl.textContent = formattedApproval.code;
+        pre.appendChild(codeEl);
+        content.appendChild(pre);
+      }
     }
 
     container.appendChild(meta);
     container.appendChild(content);
     maybeAddApprovalActions(content, msg);
+
+    if (actionsRow) {
+      container.appendChild(actionsRow);
+    }
 
     // Inline image from base64 column
     if (msg.image) {
