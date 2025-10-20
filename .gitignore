@@ -13,3 +13,7 @@
 
 # Workspace
 workspace/
+
+# Images
+**/*.png
+**/*.tiff
