@@ -4,6 +4,7 @@ import copy
 
 import numpy as np
 
+from eaa.message_proc import generate_openai_message, purge_context_images
 from eaa.tools.imaging.acquisition import AcquireImage
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.task_managers.tuning.base import BaseParameterTuningTaskManager
@@ -11,7 +12,7 @@ from eaa.task_managers.imaging.base import ImagingBaseTaskManager
 from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa.tools.base import ToolReturnType, BaseTool
 from eaa.tools.imaging.registration import ImageRegistration
-from eaa.agents.base import print_message, generate_openai_message
+from eaa.message_proc import print_message
 from eaa.api.llm_config import LLMConfig
 from eaa.api.memory import MemoryManagerConfig
 from eaa.util import get_image_path_from_text
@@ -719,7 +720,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
                         context=self.context,
                         return_outgoing_message=True
                     )
-                self.purge_context_images(keep_first_n=1, keep_last_n=n_last_images_to_keep - 1)
+                self.context = purge_context_images(self.context, keep_first_n=1, keep_last_n=n_last_images_to_keep - 1)
                 self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:

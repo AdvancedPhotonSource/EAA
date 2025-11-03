@@ -6,9 +6,7 @@ import os
 import pytest
 import numpy as np
 
-from eaa.agents.base import print_message, generate_openai_message
-from eaa.agents.openai import OpenAIAgent
-from eaa.tools.base import ToolReturnType
+from eaa.message_proc import generate_openai_message, purge_context_images
 from eaa.task_managers.base import BaseTaskManager
 
 import test_utils as tutils
@@ -36,9 +34,7 @@ class TestPurgeImageMessages(tutils.BaseTester):
                 image=np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
             )
         ]
-        task = BaseTaskManager()
-        task.context = context
-        task.purge_context_images(keep_first_n=1, keep_last_n=0)
+        context = purge_context_images(context, keep_first_n=1, keep_last_n=0)
         
         answer = [
             context[0],
@@ -48,7 +44,7 @@ class TestPurgeImageMessages(tutils.BaseTester):
                 "content": "This is message 3\n<image> \n",
             }
         ]
-        assert task.context == answer
+        assert context == answer
         return
     
     def test_purge_image_messages_remove_completely(self):
@@ -68,15 +64,13 @@ class TestPurgeImageMessages(tutils.BaseTester):
                 image=np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
             )
         ]
-        task = BaseTaskManager()
-        task.context = context
-        task.purge_context_images(keep_first_n=1, keep_last_n=0, keep_text=False)
+        context = purge_context_images(context, keep_first_n=1, keep_last_n=0, keep_text=False)
         
         answer = [
             context[0],
             context[1],
         ]
-        assert task.context == answer
+        assert context == answer
         return
 
 

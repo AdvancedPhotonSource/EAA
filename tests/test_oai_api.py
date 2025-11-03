@@ -7,7 +7,7 @@ from typing import Callable
 import pytest
 import numpy as np
 
-from eaa.agents.base import print_message
+from eaa.message_proc import print_message
 from eaa.agents.openai import OpenAIAgent
 from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 

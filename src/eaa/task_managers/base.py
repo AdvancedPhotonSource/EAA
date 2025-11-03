@@ -7,14 +7,15 @@ import inspect
 import textwrap
 from collections import Counter
 
-from eaa.agents.base import (
+from eaa.message_proc import print_message
+from eaa.api.memory import MemoryManagerConfig
+from eaa.message_proc import (
     generate_openai_message, 
     get_message_elements_as_text, 
-    get_message_elements, 
-    print_message, 
-    has_tool_call
+    has_tool_call,
+    purge_context_images,
+    complete_unresponded_tool_calls
 )
-from eaa.api.memory import MemoryManagerConfig
 from eaa.tools.base import BaseTool
 from eaa.tools.mcp import MCPTool
 from eaa.agents.openai import OpenAIAgent
@@ -784,105 +785,6 @@ class BaseTaskManager:
                     )
                 )
                 return
-
-    def purge_context_images(
-        self, 
-        keep_first_n: Optional[int] = None,
-        keep_last_n: Optional[int] = None,
-        keep_text: bool = True
-    ) -> None:
-        """Remove image-containing messages from the context, only keeping
-        the ones in the first `keep_fist_n` and last `keep_last_n`.
-
-        Parameters
-        ----------
-        keep_first_n, keep_last_n : int, optional
-            The first and last n image-containing messages to keep. If both them
-            is None, no images will be removed. If one and only one of them is None,
-            it will be set to 0. If there is an overlap between the
-            ranges given by `keep_first_n` and `keep_last_n`, the overlap will be
-            kept. For example, if `keep_first_n` is 3 and `keep_last_n` is 3 and there
-            are 5 image-containing messages in the context, all the 5 images will be
-            kept.
-        keep_text : bool, optional
-            Whether to keep the text in image-containing messages. If True,
-            these messages will be preserved with only the images removed.
-            Otherwise, these messages will be removed completely.
-        """
-        if keep_first_n is None and keep_last_n is None:
-            return
-        if keep_first_n is None and keep_last_n is not None:
-            keep_first_n = 0
-        if keep_first_n is not None and keep_last_n is None:
-            keep_last_n = 0
-        if keep_first_n < 0 or keep_last_n < 0:
-            raise ValueError("`keep_fist_n` and `keep_last_n` must be non-negative.")
-        n_image_messages = 0
-        image_message_indices = []
-        for i, message in enumerate(self.context):
-            elements = get_message_elements_as_text(message)
-            if elements["image"] is not None:
-                n_image_messages += 1
-                image_message_indices.append(i)
-        ind_range_to_remove = [keep_first_n, n_image_messages - keep_last_n - 1]
-        new_context = []
-        i_img_msg = 0
-        for i, message in enumerate(self.context):
-            if i in image_message_indices:
-                if i_img_msg < ind_range_to_remove[0] or i_img_msg > ind_range_to_remove[1]:
-                    new_context.append(message)
-                else:
-                    if keep_text:
-                        elements = get_message_elements_as_text(message)
-                        new_context.append(
-                            generate_openai_message(
-                                content=elements["content"],
-                                role=elements["role"],
-                            )
-                        )
-                i_img_msg += 1
-            else:
-                new_context.append(message)
-        self.context = new_context
-        
-    @staticmethod
-    def complete_unresponded_tool_calls(
-        context: list[Dict[str, Any]],
-    ) -> None:
-        """Look for any tool calls from "assistant" in the context
-        that are not followed by a tool response from "tool" with the
-        same tool call ID. If found, a placeholder tool response message
-        is added to the context.
-        
-        Parameters
-        ----------
-        context : list[Dict[str, Any]]
-            The context to complete unresponded tool calls in.
-        """
-        tool_call_ids = []
-        tool_call_responded = []
-        
-        for message in context:
-            elements = get_message_elements(message)
-            if elements["role"] == "assistant" and elements["tool_calls"] is not None:
-                for tool_call in elements["tool_calls"]:
-                    tool_call_ids.append(tool_call["id"])
-                    tool_call_responded.append(False)
-        
-            elif elements["role"] == "tool" and elements["tool_response_id"] is not None:
-                if elements["tool_response_id"] in tool_call_ids:
-                    tool_call_responded[tool_call_ids.index(elements["tool_response_id"])] = True
-        
-        for i, responded in enumerate(tool_call_responded):
-            if not responded:
-                context.append(
-                    generate_openai_message(
-                        content="<Interrupted tool response>",
-                        role="tool",
-                        tool_call_id=tool_call_ids[i],
-                    )
-                )
-        return context
         
     def enforce_tool_call_sequence(
         self,
@@ -1150,14 +1052,15 @@ class BaseTaskManager:
                 if n_last_images_to_keep_in_context is not None or n_first_images_to_keep_in_context is not None:
                     n_last_images_to_keep_in_context = n_last_images_to_keep_in_context if n_last_images_to_keep_in_context is not None else 0
                     n_first_images_to_keep_in_context = n_first_images_to_keep_in_context if n_first_images_to_keep_in_context is not None else 0
-                    self.purge_context_images(
+                    self.context = purge_context_images(
+                        context=self.context,
                         keep_first_n=n_first_images_to_keep_in_context, 
                         keep_last_n=n_last_images_to_keep_in_context - 1,
                         keep_text=True
                     )
                 round += 1
             except KeyboardInterrupt:
-                self.context = self.complete_unresponded_tool_calls(self.context)
+                self.context = complete_unresponded_tool_calls(self.context)
                 response = generate_openai_message(
                     content="Workflow interrupted by keyboard interrupt. TERMINATE",
                     role="system"
