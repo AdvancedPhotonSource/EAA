@@ -165,10 +165,14 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 f"feature centered in the FOV. If the feature is off to the left, move "
                 f"the FOV to the left; if the feature is off to the top, move the FOV "
                 f"to the top.\n"
+                f"- Do not acquire images at the same or close location over and over again. "
+                f"If you find yourself calling the tool repeatedly at close locations, "
+                f"stop the process.\n"
                 f"- When you find the feature of interest, report the coordinates of the "
-                f"FOV. When calling tools, make only one call at a time. Do not make "
-                f"another call before getting the response of a previous one. When you "
-                f"finish the search or need user response, say 'TERMINATE'."
+                f"FOV.\n" 
+                f"- When calling tools, make only one call at a time. Do not make "
+                f"another call before getting the response of a previous one. \n"
+                f"- When you finish the search or need user response, say 'TERMINATE'.\n"
             )
         else:
             if (
