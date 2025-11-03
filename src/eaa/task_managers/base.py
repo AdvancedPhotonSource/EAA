@@ -14,9 +14,10 @@ from eaa.api.memory import MemoryManagerConfig
 from eaa.tools.base import BaseTool
 from eaa.tools.mcp import MCPTool
 from eaa.agents.openai import OpenAIAgent
+from eaa.agents.argo import ArgoAgent
 from eaa.util import get_timestamp
 from eaa.tools.base import ToolReturnType
-from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig
+from eaa.api.llm_config import LLMConfig, OpenAIConfig, AskSageConfig, ArgoConfig
 from eaa.agents.memory import MemoryQueryResult, VectorStore
 from eaa.exceptions import MaxRoundsReached
 try:
@@ -130,6 +131,7 @@ class BaseTaskManager:
         agent_class = {
             OpenAIConfig: OpenAIAgent,
             AskSageConfig: AskSageAgent,
+            ArgoConfig: ArgoAgent,
         }[type(self.llm_config)]
         
         if agent_class is None:

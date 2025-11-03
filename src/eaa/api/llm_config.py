@@ -43,3 +43,19 @@ class AskSageConfig(LLMConfig):
     
     cacert_path: str = None
     """The path to the CA certificate file (*.pem)."""
+
+
+@dataclass
+class ArgoConfig(LLMConfig):
+    model: str = None
+    """The name of the model to use."""
+    
+    base_url: str = "https://apps-dev.inside.anl.gov/argoapi/api/v1/resource/"
+    """The base URL of the inference endpoint."""
+    
+    api_key: str = "ARGO_USER"
+    "Only a placeholder. Not needed by the API."
+    
+    user: str = None
+    """The user's ANL domain username."""
+    
