@@ -897,7 +897,7 @@ class BaseTaskManager:
         message_with_acquired_image: str = "Here is the image the tool returned.",
         max_rounds: int = 99,
         n_first_images_to_keep_in_context: Optional[int] = None,
-        n_past_images_to_keep_in_context: Optional[int] = None,
+        n_last_images_to_keep_in_context: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
         allow_multiple_tool_calls: bool = False,
         hook_functions: Optional[dict[str, Callable]] = None,
@@ -937,7 +937,7 @@ class BaseTaskManager:
             The message to send to the agent along with the acquired image.
         max_rounds : int, optional
             The maximum number of rounds to run.
-        n_first_images_to_keep, n_past_images_to_keep : int, optional
+        n_first_images_to_keep, n_last_images_to_keep : int, optional
             The number of first and last images to keep in the context. If both of
             them are None, all images will be kept.
         allow_non_image_tool_responses : bool, optional
@@ -1101,12 +1101,12 @@ class BaseTaskManager:
                 self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             
-            if n_past_images_to_keep_in_context is not None or n_first_images_to_keep_in_context is not None:
-                n_past_images_to_keep_in_context = n_past_images_to_keep_in_context if n_past_images_to_keep_in_context is not None else 0
+            if n_last_images_to_keep_in_context is not None or n_first_images_to_keep_in_context is not None:
+                n_last_images_to_keep_in_context = n_last_images_to_keep_in_context if n_last_images_to_keep_in_context is not None else 0
                 n_first_images_to_keep_in_context = n_first_images_to_keep_in_context if n_first_images_to_keep_in_context is not None else 0
                 self.purge_context_images(
                     keep_first_n=n_first_images_to_keep_in_context, 
-                    keep_last_n=n_past_images_to_keep_in_context - 1,
+                    keep_last_n=n_last_images_to_keep_in_context - 1,
                     keep_text=True
                 )
             round += 1

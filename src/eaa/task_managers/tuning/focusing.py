@@ -322,7 +322,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         add_reference_image_to_images_acquired: bool = False,
         initial_prompt: Optional[str] = None,
         max_iters: int = 20,
-        n_past_images_to_keep_in_context: Optional[int] = None,
+        n_last_images_to_keep_in_context: Optional[int] = None,
         additional_prompt: Optional[str] = None,
         *args, **kwargs
     ):
@@ -365,7 +365,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             If provided, this prompt will override the default initial prompt.
         max_iters : int, optional
             The maximum number of iterations to run.
-        n_past_images_to_keep_in_context : int, optional
+        n_last_images_to_keep_in_context : int, optional
             The number of past images to keep in the context. If None, all images
             will be kept.
         additional_prompt : Optional[str]
@@ -506,7 +506,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             initial_image_path=reference_image_path,
             allow_non_image_tool_responses=True,
             n_first_images_to_keep_in_context=1,
-            n_past_images_to_keep_in_context=n_past_images_to_keep_in_context,
+            n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
             max_rounds=max_iters,
             hook_functions={
                 "image_path_tool_response": self.image_path_tool_response_hook_factory(
@@ -597,7 +597,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
     def run(
         self,
         acquisition_tool_kwargs: dict = {},
-        n_past_images_to_keep: int = 3,
+        n_last_images_to_keep: int = 3,
         max_iters: int = 10, 
         initial_prompt: Optional[str] = None,
         additional_prompt: Optional[str] = None,
@@ -609,7 +609,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
         acquisition_tool_kwargs : dict
             The arguments for the acquisition tool. These arguments will be
             used to acquire images for evaluation.
-        n_past_images_to_keep : int, optional
+        n_last_images_to_keep : int, optional
             The number of most recent images to keep in the context. Having past
             images in the context allows to agent to "remember" images it
             has seen before; however, it also increases the context size
@@ -719,7 +719,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
                         context=self.context,
                         return_outgoing_message=True
                     )
-                self.purge_context_images(keep_first_n=1, keep_last_n=n_past_images_to_keep - 1)
+                self.purge_context_images(keep_first_n=1, keep_last_n=n_last_images_to_keep - 1)
                 self.update_message_history(outgoing, update_context=True, update_full_history=True)
                 self.update_message_history(response, update_context=True, update_full_history=True)
             elif len(tool_responses) > 1:
