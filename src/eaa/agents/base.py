@@ -1040,8 +1040,8 @@ def get_tool_call_info(
         return message["tool_calls"][index]
 
 
-def get_message_elements(message: Dict[str, Any]) -> Dict[str, Any]:
-    """Get the elements of the message.
+def get_message_elements_as_text(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the elements of the message as human readable text.
 
     Parameters
     ----------
@@ -1082,6 +1082,50 @@ def get_message_elements(message: Dict[str, Any]) -> Dict[str, Any]:
         "tool_calls": tool_calls,
         "image": image
     }
+    
+
+def get_message_elements(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the elements of the message as a structured dictionary.
+
+    Parameters
+    ----------
+    message : Dict[str, Any]
+        The message to get the elements from. The message
+        should be in OpenAI-compatible format.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The elements of the message.
+    """
+    role = message["role"]
+
+    image = []
+    content = []
+    if "content" in message.keys():
+        if isinstance(message["content"], str):
+            content.append(message["content"])
+        elif isinstance(message["content"], list):
+            content = message["content"]
+            for item in content:
+                if item["type"] == "image_url":
+                    image.append(item["image_url"]["url"])
+
+    tool_calls = None
+    if "tool_calls" in message.keys():
+        tool_calls = message["tool_calls"]
+        
+    tool_response_id = None
+    if "tool_call_id" in message.keys():
+        tool_response_id = message["tool_call_id"]
+
+    return {
+        "role": role,
+        "content": content,
+        "tool_calls": tool_calls,
+        "image": image,
+        "tool_response_id": tool_response_id
+    }
 
 
 def print_message(
@@ -1113,7 +1157,7 @@ def print_message(
     if response_requested is not None:
         text += f"[Response requested] {response_requested}\n"
 
-    elements = get_message_elements(message)
+    elements = get_message_elements_as_text(message)
 
     text += "[Content]\n"
     text += elements["content"] + "\n"

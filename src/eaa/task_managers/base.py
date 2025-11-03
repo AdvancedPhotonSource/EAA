@@ -8,7 +8,11 @@ import textwrap
 from collections import Counter
 
 from eaa.agents.base import (
-    generate_openai_message, get_message_elements, print_message, has_tool_call
+    generate_openai_message, 
+    get_message_elements_as_text, 
+    get_message_elements, 
+    print_message, 
+    has_tool_call
 )
 from eaa.api.memory import MemoryManagerConfig
 from eaa.tools.base import BaseTool
@@ -192,7 +196,7 @@ class BaseTaskManager:
             self.add_message_to_db(message)
             
     def add_message_to_db(self, message: Dict[str, Any]) -> None:
-        elements = get_message_elements(message)
+        elements = get_message_elements_as_text(message)
         self.message_db_conn.execute(
             "INSERT INTO messages (timestamp, role, content, tool_calls, image) VALUES (?, ?, ?, ?, ?)",
             (
@@ -816,7 +820,7 @@ class BaseTaskManager:
         n_image_messages = 0
         image_message_indices = []
         for i, message in enumerate(self.context):
-            elements = get_message_elements(message)
+            elements = get_message_elements_as_text(message)
             if elements["image"] is not None:
                 n_image_messages += 1
                 image_message_indices.append(i)
@@ -829,7 +833,7 @@ class BaseTaskManager:
                     new_context.append(message)
                 else:
                     if keep_text:
-                        elements = get_message_elements(message)
+                        elements = get_message_elements_as_text(message)
                         new_context.append(
                             generate_openai_message(
                                 content=elements["content"],
@@ -840,6 +844,45 @@ class BaseTaskManager:
             else:
                 new_context.append(message)
         self.context = new_context
+        
+    @staticmethod
+    def complete_unresponded_tool_calls(
+        context: list[Dict[str, Any]],
+    ) -> None:
+        """Look for any tool calls from "assistant" in the context
+        that are not followed by a tool response from "tool" with the
+        same tool call ID. If found, a placeholder tool response message
+        is added to the context.
+        
+        Parameters
+        ----------
+        context : list[Dict[str, Any]]
+            The context to complete unresponded tool calls in.
+        """
+        tool_call_ids = []
+        tool_call_responded = []
+        
+        for message in context:
+            elements = get_message_elements(message)
+            if elements["role"] == "assistant" and elements["tool_calls"] is not None:
+                for tool_call in elements["tool_calls"]:
+                    tool_call_ids.append(tool_call["id"])
+                    tool_call_responded.append(False)
+        
+            elif elements["role"] == "tool" and elements["tool_response_id"] is not None:
+                if elements["tool_response_id"] in tool_call_ids:
+                    tool_call_responded[tool_call_ids.index(elements["tool_response_id"])] = True
+        
+        for i, responded in enumerate(tool_call_responded):
+            if not responded:
+                context.append(
+                    generate_openai_message(
+                        content="<Interrupted tool response>",
+                        role="tool",
+                        tool_call_id=tool_call_ids[i],
+                    )
+                )
+        return context
         
     def enforce_tool_call_sequence(
         self,
@@ -999,119 +1042,132 @@ class BaseTaskManager:
         self.update_message_history(outgoing, update_context=True, update_full_history=True)
         self.update_message_history(response, update_context=True, update_full_history=True)
         while round < max_rounds:
-            if response["content"] is not None:
-                if "TERMINATE" in response["content"] and termination_behavior == "return":
-                    return
-                if (
-                    ("TERMINATE" in response["content"] and termination_behavior == "ask") 
-                    or "NEED HUMAN" in response["content"]
-                ):
-                    message = self.get_user_input(
-                        prompt=(
-                            "Termination condition triggered. What to do next? "
-                            "(/exit: exit; /chat: chat mode; /help: show command help): "
-                        ),
-                        display_prompt_in_webui=True
-                    )
-                    if message.lower() == "/exit":
+            try:
+                if response["content"] is not None:
+                    if "TERMINATE" in response["content"] and termination_behavior == "return":
                         return
-                    elif message.lower() == "/chat":
-                        self.run_conversation(store_all_images_in_context=True)
-                    elif message.lower() == "/help":
-                        self.display_command_help()
-                        continue
-                    else:
-                        response, outgoing = self.agent.receive(
-                            message,
-                            context=self.context,
-                            image_path=None,
-                            return_outgoing_message=True
+                    if (
+                        ("TERMINATE" in response["content"] and termination_behavior == "ask") 
+                        or "NEED HUMAN" in response["content"]
+                    ):
+                        message = self.get_user_input(
+                            prompt=(
+                                "Termination condition triggered. What to do next? "
+                                "(`/exit`: exit; `/chat`: chat mode; `/help`: show command help): "
+                            ),
+                            display_prompt_in_webui=True
                         )
-                        self.update_message_history(outgoing, update_context=True, update_full_history=True)
-                        self.update_message_history(response, update_context=True, update_full_history=True)
-                        continue
-            
-            tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
-            
-            # Add tool response to context regardless whether multiple tool calls are allowed or not, 
-            # because otherwise it would throw an error.
-            for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
-                print_message(tool_response)
-                self.update_message_history(tool_response, update_context=True, update_full_history=True)
-            
-            if len(tool_responses) == 1 or allow_multiple_tool_calls:
-                for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
-                    if tool_response_type == ToolReturnType.IMAGE_PATH:
-                        # If the tool returns an image path, load and encode the image,
-                        # then compose a follow-up message with the image and add it to
-                        # the context.
-                        image_path = tool_response["content"]
-                        if hook_functions.get("image_path_tool_response", None) is not None:
-                            # Override the normal routine composing image-containing follow-up message
-                            # with the hook function and the message it returns.
-                            hook_messages = hook_functions["image_path_tool_response"](image_path)
-                            for hook_message in hook_messages:
-                                self.update_message_history(hook_message, update_context=True, update_full_history=True)
+                        if message.lower() == "/exit":
+                            return
+                        elif message.lower() == "/chat":
+                            self.run_conversation(store_all_images_in_context=True)
+                        elif message.lower() == "/help":
+                            self.display_command_help()
+                            continue
                         else:
-                            image_followup = generate_openai_message(
-                                content=message_with_acquired_image,
-                                image_path=image_path
+                            response, outgoing = self.agent.receive(
+                                message,
+                                context=self.context,
+                                image_path=None,
+                                return_outgoing_message=True
                             )
-                            self.update_message_history(image_followup, update_context=True, update_full_history=True)
-                    else: 
-                        if not allow_non_image_tool_responses:
-                            msg = generate_openai_message(
-                                f"The tool should return an image path, but got {str(tool_response_type)}. "
-                                "Make sure you call the right tool correctly.",
-                            )
-                            self.update_message_history(msg, update_context=True, update_full_history=True)
-                            
-                if expected_tool_call_sequence is not None:
-                    self.enforce_tool_call_sequence(
-                        expected_tool_call_sequence,
-                        expected_tool_call_sequence_tolerance
-                    )
-                            
-                # Send the tool responses and any follow-ups for all tool calls.
-                response = self.agent.receive(
-                    message=None,
-                    image_path=None,
-                    context=self.context,
-                    return_outgoing_message=False
-                )
-                self.update_message_history(response, update_context=True, update_full_history=True)
+                            self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                            self.update_message_history(response, update_context=True, update_full_history=True)
+                            continue
                 
-            elif len(tool_responses) > 1:
-                response, outgoing = self.agent.receive(
-                    "There are more than one tool calls in your response. "
-                    "Make sure you only make one call at a time. Please redo "
-                    "your tool calls.",
-                    image_path=None,
-                    context=self.context,
-                    return_outgoing_message=True
+                tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
+                
+                # Add tool response to context regardless whether multiple tool calls are allowed or not, 
+                # because otherwise it would throw an error.
+                for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                    print_message(tool_response)
+                    self.update_message_history(tool_response, update_context=True, update_full_history=True)
+                
+                if len(tool_responses) == 1 or allow_multiple_tool_calls:
+                    for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                        if tool_response_type == ToolReturnType.IMAGE_PATH:
+                            # If the tool returns an image path, load and encode the image,
+                            # then compose a follow-up message with the image and add it to
+                            # the context.
+                            image_path = tool_response["content"]
+                            if hook_functions.get("image_path_tool_response", None) is not None:
+                                # Override the normal routine composing image-containing follow-up message
+                                # with the hook function and the message it returns.
+                                hook_messages = hook_functions["image_path_tool_response"](image_path)
+                                for hook_message in hook_messages:
+                                    self.update_message_history(hook_message, update_context=True, update_full_history=True)
+                            else:
+                                image_followup = generate_openai_message(
+                                    content=message_with_acquired_image,
+                                    image_path=image_path
+                                )
+                                self.update_message_history(image_followup, update_context=True, update_full_history=True)
+                        else: 
+                            if not allow_non_image_tool_responses:
+                                msg = generate_openai_message(
+                                    f"The tool should return an image path, but got {str(tool_response_type)}. "
+                                    "Make sure you call the right tool correctly.",
+                                )
+                                self.update_message_history(msg, update_context=True, update_full_history=True)
+                                
+                    if expected_tool_call_sequence is not None:
+                        self.enforce_tool_call_sequence(
+                            expected_tool_call_sequence,
+                            expected_tool_call_sequence_tolerance
+                        )
+                                
+                    # Send the tool responses and any follow-ups for all tool calls.
+                    response = self.agent.receive(
+                        message=None,
+                        image_path=None,
+                        context=self.context,
+                        return_outgoing_message=False
+                    )
+                    self.update_message_history(response, update_context=True, update_full_history=True)
+                    
+                elif len(tool_responses) > 1:
+                    response, outgoing = self.agent.receive(
+                        "There are more than one tool calls in your response. "
+                        "Make sure you only make one call at a time. Please redo "
+                        "your tool calls.", 
+                        image_path=None,
+                        context=self.context,
+                        return_outgoing_message=True
+                    )
+                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                    self.update_message_history(response, update_context=True, update_full_history=True)
+                else:
+                    response, outgoing = self.agent.receive(
+                        "There is no tool call in the response. Make sure you call the tool correctly. "
+                        "If you need human intervention, say \"TERMINATE\".",
+                        image_path=None,
+                        context=self.context,
+                        return_outgoing_message=True
+                    )
+                    self.update_message_history(outgoing, update_context=True, update_full_history=True)
+                    self.update_message_history(response, update_context=True, update_full_history=True)
+                
+                if n_last_images_to_keep_in_context is not None or n_first_images_to_keep_in_context is not None:
+                    n_last_images_to_keep_in_context = n_last_images_to_keep_in_context if n_last_images_to_keep_in_context is not None else 0
+                    n_first_images_to_keep_in_context = n_first_images_to_keep_in_context if n_first_images_to_keep_in_context is not None else 0
+                    self.purge_context_images(
+                        keep_first_n=n_first_images_to_keep_in_context, 
+                        keep_last_n=n_last_images_to_keep_in_context - 1,
+                        keep_text=True
+                    )
+                round += 1
+            except KeyboardInterrupt:
+                self.context = self.complete_unresponded_tool_calls(self.context)
+                response = generate_openai_message(
+                    content="Workflow interrupted by keyboard interrupt. TERMINATE",
+                    role="system"
                 )
-                self.update_message_history(outgoing, update_context=True, update_full_history=True)
-                self.update_message_history(response, update_context=True, update_full_history=True)
-            else:
-                response, outgoing = self.agent.receive(
-                    "There is no tool call in the response. Make sure you call the tool correctly. "
-                    "If you need human intervention, say \"TERMINATE\".",
-                    image_path=None,
-                    context=self.context,
-                    return_outgoing_message=True
+                self.update_message_history(
+                    response, 
+                    update_context=True, 
+                    update_full_history=True
                 )
-                self.update_message_history(outgoing, update_context=True, update_full_history=True)
-                self.update_message_history(response, update_context=True, update_full_history=True)
-            
-            if n_last_images_to_keep_in_context is not None or n_first_images_to_keep_in_context is not None:
-                n_last_images_to_keep_in_context = n_last_images_to_keep_in_context if n_last_images_to_keep_in_context is not None else 0
-                n_first_images_to_keep_in_context = n_first_images_to_keep_in_context if n_first_images_to_keep_in_context is not None else 0
-                self.purge_context_images(
-                    keep_first_n=n_first_images_to_keep_in_context, 
-                    keep_last_n=n_last_images_to_keep_in_context - 1,
-                    keep_text=True
-                )
-            round += 1
+                continue
         logger.warning(f"Maximum number of rounds ({max_rounds}) reached.")
         if max_arounds_reached_behavior == "raise":
             raise MaxRoundsReached()
