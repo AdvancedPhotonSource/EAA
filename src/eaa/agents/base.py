@@ -95,6 +95,7 @@ from dataclasses import dataclass
 import json
 import logging
 import asyncio
+import time
 
 import numpy as np
 
@@ -723,8 +724,15 @@ class BaseAgent:
             
         # Send messages, get response and print it.
         if request_response:
-            response = self.send_message_and_get_response(combined_messages)
-            print_message(response)
+            for i in range(5):
+                try:
+                    response = self.send_message_and_get_response(combined_messages)
+                    print_message(response)
+                    break
+                except Exception as e:
+                    logger.error(f"Error sending message and getting response: {e}")
+                    logger.error(f"Retrying...({i+1}/5)")
+                    time.sleep(1)
 
         if request_response and self.memory_manager is not None and message is not None:
             self._post_response_memory_update(
