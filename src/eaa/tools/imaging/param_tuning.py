@@ -107,22 +107,6 @@ class SetParameters(BaseTool):
                 self.parameter_history[self.parameter_names[i]].append(val)
         
         
-class BlueSkySetParameters(SetParameters):
-
-    name: str = "bluesky_tune_optics_parameters"
-    
-    def __init__(
-        self,
-        *args,
-        require_approval: bool = False,
-        **kwargs,
-    ):
-        super().__init__(*args, require_approval=require_approval, **kwargs)
-        
-    def set_parameters(*args, **kwargs):
-        raise NotImplementedError
-        
-        
 class SimulatedSetParameters(SetParameters):
     
     name: str = "simulated_tune_optics_parameters"
