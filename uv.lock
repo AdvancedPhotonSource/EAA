@@ -1168,6 +1168,7 @@ aps-mic = [
     { name = "bluesky" },
     { name = "h5py" },
     { name = "mic-instrument" },
+    { name = "mic-vis" },
 ]
 asksage = [
     { name = "asksageclient" },
@@ -1194,6 +1195,7 @@ requires-dist = [
     { name = "h5py", marker = "extra == 'aps-mic'" },
     { name = "matplotlib" },
     { name = "mic-instrument", marker = "extra == 'aps-mic'", git = "https://github.com/BCDA-APS/bluesky-mic.git" },
+    { name = "mic-vis", marker = "extra == 'aps-mic'", git = "https://github.com/grace227/mic-vis" },
     { name = "numpy" },
     { name = "openai" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgresql-vector-store'", specifier = ">=3.2.10" },
@@ -2656,6 +2658,17 @@ version = "0.0.1"
 source = { git = "https://github.com/BCDA-APS/bluesky-mic.git#79b0161ac02de860d33752e2f8f8606f95078745" }
 dependencies = [
     { name = "apsbits" },
+]
+
+[[package]]
+name = "mic-vis"
+version = "0.1.0"
+source = { git = "https://github.com/grace227/mic-vis#51e95c07537ae10f4c7e1a002eeb9929b592d12a" }
+dependencies = [
+    { name = "h5py" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
 ]
 
 [[package]]
