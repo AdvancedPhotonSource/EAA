@@ -2,11 +2,12 @@
 
 # ruff: noqa: F403
 
+from eaa.tools.base import BaseTool
 from eaa.tools.imaging.aps_mic.acquisition import BlueSkyAcquireImage
 from eaa.tools.imaging.aps_mic.param_tuning import BlueskyParameterTuning
 
 
-class BlueskyScanControl(BlueSkyAcquireImage, BlueskyParameterTuning):
+class BlueskyScanControl(BaseTool):
     
     from typing import Callable
     from ophyd import EpicsMotor
@@ -17,7 +18,9 @@ class BlueskyScanControl(BlueSkyAcquireImage, BlueskyParameterTuning):
     acquire_image_tool: BlueSkyAcquireImage = None
     param_tuning_tool: BlueskyParameterTuning = None
     
-    def __init__(self):
+    def __init__(self, require_approval: bool = False, *args, **kwargs):
+        super().__init__(require_approval=require_approval, *args, **kwargs)
+        
         try: 
             from s2idd_uprobe.startup import RE, oregistry, fly2d_scanrecord, step1d_scanrecord, bps
         except ImportError:
@@ -36,3 +39,4 @@ class BlueskyScanControl(BlueSkyAcquireImage, BlueskyParameterTuning):
         self.param_tuning_tool.RE = RE
         self.param_tuning_tool.samz_motor = oregistry["samz"]
 
+        self.exposed_tools = self.acquire_image_tool.exposed_tools + self.param_tuning_tool.exposed_tools

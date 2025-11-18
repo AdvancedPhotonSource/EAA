@@ -1,7 +1,9 @@
+from typing import Annotated, Optional, Tuple
+import logging
+
+from eaa.tools.base import ToolReturnType, ExposedToolSpec
 from eaa.tools.imaging.param_tuning import SetParameters
 from eaa.tools.imaging.aps_mic.util import validate_position_in_range
-from typing import Optional, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +47,38 @@ class BlueskyParameterTuning(SetParameters):
         # self.parameter_names = parameter_names
         # self.parameter_ranges = parameter_ranges
 
-        super().__init__(parameter_names, parameter_ranges, *args, **kwargs)
+        super().__init__(
+            *args,
+            parameter_names=parameter_names, 
+            parameter_ranges=parameter_ranges, 
+            require_approval=require_approval, 
+            **kwargs
+        )
         
-    def set_parameters(self, parameters: list[float]) -> str:
-        """Set the sample z motor position of the imaging system."""
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="set_parameters",
+                function=self.set_parameters,
+                return_type=ToolReturnType.TEXT,
+            )
+        ]
+        
+    def set_parameters(
+        self, 
+        parameters: Annotated[
+            list[float], 
+            "The parameters to set the optics to. For this function, "
+            "the list should only contain one element giving the z position."
+        ]
+    ) -> str:
+        """Set the sample z motor position of the imaging system.
+        
+        Parameters
+        ----------
+        parameters: list[float]
+            The parameters to set the optics to. For this function, 
+            the list should only contain one element giving the z position.
+        """
         if self.RE is None:
             raise ValueError("RunEngine is not set")
         if self.samz_motor is None:

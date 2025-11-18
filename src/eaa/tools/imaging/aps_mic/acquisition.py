@@ -2,8 +2,8 @@ from typing import Annotated, Tuple, Optional
 import logging
 import os
 
-from eaa.tools.imaging.acquisition import AcquireImage
-from eaa.tools.imaging.param_tuning import SetParameters
+
+from eaa.tools.base import ToolReturnType, ExposedToolSpec
 from eaa.tools.imaging.aps_mic.util import (
     process_xrfdata,
     save_xrf_line_scan,
@@ -86,6 +86,19 @@ class BlueSkyAcquireImage(AcquireImage):
         self.allowable_y_range = allowable_y_range
         self.allowable_z_range = allowable_z_range
         super().__init__(*args, require_approval=require_approval, **kwargs)
+        
+        self.exposed_tools = [
+            ExposedToolSpec(
+                name="acquire_image",
+                function=self.acquire_image,
+                return_type=ToolReturnType.IMAGE_PATH,
+            ),
+            ExposedToolSpec(
+                name="acquire_line_scan",
+                function=self.acquire_line_scan,
+                return_type=ToolReturnType.IMAGE_PATH,
+            ),
+        ]
         
     def acquire_image(
         self,
