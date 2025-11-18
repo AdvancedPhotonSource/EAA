@@ -4,7 +4,6 @@ This module contains the functions for processing data collected by the XRF dete
 
 import subprocess
 import os
-import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import logging

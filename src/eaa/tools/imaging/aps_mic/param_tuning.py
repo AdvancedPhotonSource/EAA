@@ -8,14 +8,14 @@ from eaa.tools.imaging.aps_mic.util import validate_position_in_range
 logger = logging.getLogger(__name__)
 
 
-class BlueskyParameterTuning(SetParameters):
+class BlueskySetParameters(SetParameters):
     
     from bluesky.run_engine import RunEngine
     from typing import Callable
     from ophyd import EpicsMotor
     import bluesky.plan_stubs as bps
 
-    name: str = "bluesky_parameter_tuning"
+    name: str = "bluesky_set_parameters"
     samz_motor: EpicsMotor = None
     RE: RunEngine = None
     allowable_z_range: Optional[Tuple[float, float]] = None

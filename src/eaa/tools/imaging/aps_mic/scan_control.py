@@ -4,7 +4,7 @@
 
 from eaa.tools.base import BaseTool
 from eaa.tools.imaging.aps_mic.acquisition import BlueSkyAcquireImage
-from eaa.tools.imaging.aps_mic.param_tuning import BlueskyParameterTuning
+from eaa.tools.imaging.aps_mic.param_tuning import BlueskySetParameters
 
 
 class BlueskyScanControl(BaseTool):
@@ -16,7 +16,7 @@ class BlueskyScanControl(BaseTool):
     scan2d_plan: Callable = None
     scan1d_plan: Callable = None
     acquire_image_tool: BlueSkyAcquireImage = None
-    param_tuning_tool: BlueskyParameterTuning = None
+    param_tuning_tool: BlueskySetParameters = None
     
     def __init__(self, require_approval: bool = False, *args, **kwargs):
         super().__init__(require_approval=require_approval, *args, **kwargs)
@@ -35,7 +35,7 @@ class BlueskyScanControl(BaseTool):
         self.acquire_image_tool.scan2d_plan = fly2d_scanrecord
         self.acquire_image_tool.scan1d_plan = step1d_scanrecord
 
-        self.param_tuning_tool = BlueskyParameterTuning()
+        self.param_tuning_tool = BlueskySetParameters()
         self.param_tuning_tool.RE = RE
         self.param_tuning_tool.samz_motor = oregistry["samz"]
 
