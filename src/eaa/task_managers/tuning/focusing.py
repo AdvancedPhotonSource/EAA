@@ -303,7 +303,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             raise ValueError(
                 "`image_registration_tool` should be provided in the class constructor."
             )
-        registration_tool = copy.deepcopy(self.image_registration_tool)
+        registration_tool = self.image_registration_tool
         shift = registration_tool.register_images(
             image_t=registration_tool.process_image(image_k),
             image_r=registration_tool.process_image(image_km1),
