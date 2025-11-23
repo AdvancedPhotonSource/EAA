@@ -227,10 +227,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                         f"drift is {[float(shift[i] + scan_pos_diff[i]) for i in [0, 1]]} (y, x). Use this offset to "
                         f"to adjust the line scan positions by **adding** it to both "
                         f"the x and y coordinates of the start and end points of the previous line scan. "
-                        f"For your reference, the last line scan tool call is {self.acquisition_tool.line_scan_call_history[-1]}."
-                        f"Also use this offset to update the argument when you perform 2D image acquisition "
-                        f"next time. The last 2D image acquisition call is {self.acquisition_tool.image_acquisition_call_history[-1]}."
                     )
+                    if len(self.acquisition_tool.line_scan_call_history[-1]) > 0:
+                        message += (
+                            f"For your reference, the last line scan tool call is {self.acquisition_tool.line_scan_call_history[-1]}."
+                            f"Also use this offset to update the argument when you perform 2D image acquisition "
+                            f"next time. The last 2D image acquisition call is {self.acquisition_tool.image_acquisition_call_history[-1]}."
+                        )
                     self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
             return [generate_openai_message(content=message, image_path=image_path)]
         
@@ -475,12 +478,11 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 f"your response to hand over control back to the user.\n\n"
                 f"Important notes:\n\n"
                 f"- Your line scan should cross only one line feature, and you should see "
-                f"**exactly one peak** in the line scan plot. If there isn't one, or if there "
-                f"are multiple peaks, or if the Gaussian fit looks bad, check your arguments "
+                f"**exactly one peak** in the line scan plot. If there isn't one, or if "
+                f"the Gaussian fit looks bad, check your arguments "
                 f"to the line scan tool and run it again. Make sure your line scan strictly "
                 f"follow the marker in the reference image. Do not trust the FWHM value "
-                f"in the line plot if there is no peak, if the peak is incomplete, or if "
-                f"there are multiple peaks!\n"
+                f"in the line plot if there is no peak, or if the peak is incomplete!\n"
                 f"- The line scan plot should show a complete peak. If the peak is incomplete, "
                 f"adjust the line scan tool's arguments to make it complete.\n"
                 f"- The minimal point of the FWHM is indicated by an inflection of the trend "

@@ -220,6 +220,8 @@ class BlueSkyAcquireImage(AcquireImage):
 
     )->Annotated[str, "The path to the plot of the line scan."]:
         """Acquire a horizontal line scan of a given width at a given center position.
+        This function returns a plot of the acquired data, and a Gaussian fit of it.
+        The FWHM of the Gaussian fit is annotated on the plot.
         
         Parameters
         ----------
