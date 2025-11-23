@@ -86,7 +86,7 @@ class BlueskySetParameters(SetParameters):
         if self.parameter_ranges is not None:
             validate_position_in_range(
                 parameters[0], 
-                (self.parameter_ranges[0], self.parameter_ranges[1]), 
+                (self.parameter_ranges[0][0], self.parameter_ranges[1][0]), 
                 "z")
             self.RE(self.bps.mv(self.samz_motor, parameters[0]))
             msg = f"Move sample z motor to position: {parameters[0]}"
