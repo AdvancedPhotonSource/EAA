@@ -221,7 +221,7 @@ def save_xrf_line_scan(
         try:
             a, mu, sigma, c = eaa.maths.fit_gaussian_1d(x, y, y_threshold=y_threshold)
             val_gauss = eaa.maths.gaussian_1d(x, a, mu, sigma, c)
-            fwhm = 2.35 * sigma
+            fwhm = 2.35 * abs(sigma)
         except RuntimeError as e:
             logger.error(f"Failed to fit Gaussian to data: {e}")
             val_gauss = None
@@ -284,7 +284,7 @@ def load_h5(img_h5_path, fit_type=["NNLS", "ROI"], fsizelim=1e3) -> dict:
         return None
 
 
-def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
+def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin, plot_in_log_scale: bool = False):
     """
     Plot the XRF data.
 
@@ -306,13 +306,19 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin):
         The maximum value of the colorbar.
     vmin : float
         The minimum value of the colorbar.
-
+    plot_in_log_scale : bool
+        Whether to plot the image in log scale.
+    
     Returns
     -------
     matplotlib.figure.Figure
         The figure object.
     """
     fig, ax = plt.subplots(figsize=(5, 5))
+    if plot_in_log_scale:
+        plotarr = np.log10(plotarr + 1)
+        vmax = np.log10(vmax + 1)
+        vmin = np.log10(vmin + 1)
     ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
     ax.set_title(f"{scan_name} {elm_name}")
 
@@ -335,6 +341,7 @@ def save_xrfdata(
     elms: list[str] = None, 
     vmax_th: float = 99, 
     vmin: float = 0,
+    plot_in_log_scale: bool = False,
     return_image_array: bool = False
 ) -> str | None:
     """
@@ -354,6 +361,8 @@ def save_xrfdata(
         The threshold for the maximum percentile of the colorbar.
     vmin : float
         The minimum value of the colorbar.
+    plot_in_log_scale : bool
+        Whether to plot the image in log scale.
     return_image_array : bool
         If True, an numpy array of the image will be returned
         in addition to the path to the saved image.
@@ -377,7 +386,7 @@ def save_xrfdata(
         for e in plot_elms:
             plotarr = data_arr[data_ch.index(e)]
             vmax = np.nanpercentile(plotarr, vmax_th)
-            fig = plot_xrfdata(plotarr, xaxis, yaxis, data["scan"], e, cmap, vmax, vmin)
+            fig = plot_xrfdata(plotarr, xaxis, yaxis, data["scan"], e, cmap, vmax, vmin, plot_in_log_scale=plot_in_log_scale)
             fname = f"{output_dir}/{data['scan']}_{e}.png"
             fig.savefig(fname)
             plt.close(fig)
