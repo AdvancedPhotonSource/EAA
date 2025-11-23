@@ -153,7 +153,8 @@ def plot_xrf_line_scan(x, y, val_gauss, fwhm, scan_name, roi_num):
     """
     fig, ax = plt.subplots(1, 1, squeeze=True)
     ax.plot(x, y, label="data")
-    ax.plot(x, val_gauss, linestyle="--", color="red", label="fit")
+    if val_gauss is not None:
+        ax.plot(x, val_gauss, linestyle="--", color="red", label="fit")
     ax.text(
         0.05,
         0.95, 
@@ -217,9 +218,14 @@ def save_xrf_line_scan(
         y = roi_data[order]
 
         # Fit a Gaussian to the data
-        a, mu, sigma, c = eaa.maths.fit_gaussian_1d(x, y, y_threshold=y_threshold)
-        val_gauss = eaa.maths.gaussian_1d(x, a, mu, sigma, c)
-        fwhm = 2.35 * sigma
+        try:
+            a, mu, sigma, c = eaa.maths.fit_gaussian_1d(x, y, y_threshold=y_threshold)
+            val_gauss = eaa.maths.gaussian_1d(x, a, mu, sigma, c)
+            fwhm = 2.35 * sigma
+        except RuntimeError as e:
+            logger.error(f"Failed to fit Gaussian to data: {e}")
+            val_gauss = None
+            fwhm = np.nan
 
         # Plot the data and the fit
         scan_name = os.path.basename(mda_path)
