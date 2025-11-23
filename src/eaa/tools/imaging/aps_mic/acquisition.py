@@ -22,12 +22,16 @@ class BlueSkyAcquireImage(AcquireImage):
     from typing import Callable
     from mic_common.devices.save_data import SaveDataMic
     from mic_vis.s2idd.xrf_eaa import save_xrfdata
+    from ophyd import EpicsMotor
+    import bluesky.plan_stubs as bps
     
     name: str = "bluesky_acquire_image"
     RE: RunEngine = None
     savedata: SaveDataMic = None
     scan2d_plan: Callable = None
     scan1d_plan: Callable = None
+    samy_motor: EpicsMotor = None
+    bps: Callable = bps
     
     def __init__(
         self, 
@@ -206,10 +210,11 @@ class BlueSkyAcquireImage(AcquireImage):
         self,
         width: Annotated[float, "The width of the scan area in microns"] = 0,
         x_center: Annotated[float, "The center of the scan area in the x direction in microns"] = None,
+        y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
         stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
 
     )->Annotated[str, "The path to the plot of the line scan."]:
-        """Acquire a line scan of a given width at a given center position.
+        """Acquire a horizontal line scan of a given width at a given center position.
         
         Parameters
         ----------
@@ -217,6 +222,8 @@ class BlueSkyAcquireImage(AcquireImage):
             The width of the scan area in microns.
         x_center: float
             The center of the scan area in the x direction in microns.
+        y_center: float
+            The center of the scan area in the y direction in microns.
         stepsize_x: float
             The scan step size in the x direction, i.e., the distance between
             two adjacent pixels in the x direction in microns.
@@ -227,6 +234,8 @@ class BlueSkyAcquireImage(AcquireImage):
             The path of the plot of the line scan saved in hard drive.
 
         """
+        self.set_motor_y(y_center)
+        
         start_x = x_center - width/2
         end_x = x_center + width/2
         self.update_line_scan_call_history(start_x=start_x, end_x=end_x, step=stepsize_x, start_y=None, end_y=None)
@@ -263,7 +272,7 @@ class BlueSkyAcquireImage(AcquireImage):
                 if not os.path.exists(png_output_dir):
                     os.makedirs(png_output_dir)
                 
-                img_path, img_arr = save_xrf_line_scan(
+                img_path, _ = save_xrf_line_scan(
                     mda_file_path, png_output_dir, roi_num=self.xrf_roi_num, 
                     return_line_array=True
                 )
@@ -282,3 +291,24 @@ class BlueSkyAcquireImage(AcquireImage):
             logger.error(f"Error acquiring line scan: {e}")
             raise e
 
+    def set_motor_y(
+        self, 
+        value: float
+    ) -> str:
+        """Set the sample y motor position of the imaging system.
+        
+        Parameters
+        ----------
+        value: float
+            The value to set the sample y motor to.
+        """
+        if self.RE is None:
+            raise ValueError("RunEngine is not set")
+        if self.samy_motor is None:
+            raise ValueError("samz_motor is not set")
+        
+        validate_position_in_range(value, self.allowable_y_range, "y")
+        self.RE(self.bps.mv(self.samy_motor, value))
+        msg = f"Move sample y motor to position: {value}"
+        logger.info(msg)
+        return msg

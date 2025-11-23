@@ -34,6 +34,7 @@ class BlueskyScanControl(BaseTool):
         self.acquire_image_tool.savedata = oregistry["savedata"]
         self.acquire_image_tool.scan2d_plan = fly2d_scanrecord
         self.acquire_image_tool.scan1d_plan = step1d_scanrecord
+        self.acquire_image_tool.samy_motor = oregistry["samy"]
 
         self.param_tuning_tool = BlueskySetParameters()
         self.param_tuning_tool.RE = RE
