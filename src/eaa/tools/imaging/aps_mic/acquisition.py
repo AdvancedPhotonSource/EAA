@@ -2,12 +2,12 @@ from typing import Annotated, Tuple, Optional
 import logging
 import os
 
-
 from eaa.tools.base import ToolReturnType, ExposedToolSpec
 from eaa.tools.imaging.aps_mic.util import (
     process_xrfdata,
     save_xrf_line_scan,
     validate_position_in_range,
+    save_xrfdata
 )
 from eaa.util import wait_for_file
 # from eaa.tools.imaging.aps_mic.bluesky_init import BlueskyScanControl
@@ -220,8 +220,6 @@ class BlueSkyAcquireImage(AcquireImage):
         stepsize_x: float
             The scan step size in the x direction, i.e., the distance between
             two adjacent pixels in the x direction in microns.
-        sample_z: float
-            The sample z position in millimeters.
 
         Returns
         -------
