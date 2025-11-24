@@ -210,6 +210,5 @@ class ImageRegistration(BaseTool):
         # Convert the offset from pixel units to physical units. We use psize_r here
         # since the target image has already been resized to have the same pixel size
         # as the reference image.
-        if psize_t != psize_r:
-            offset = offset * psize_r
+        offset = offset * psize_r
         return offset
