@@ -23,8 +23,8 @@ class BlueskySetParameters(SetParameters):
     
     def __init__(
         self, 
-        parameter_names: list[str] = ['sample-z'],
-        parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = [[-0.5], [0.5]],
+        parameter_names: list[str] = ["zp-z"],
+        parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = ((-200,),(-180,)),
         require_approval: bool = False,
         *args, **kwargs
     ):
@@ -81,15 +81,15 @@ class BlueskySetParameters(SetParameters):
         """
         if self.RE is None:
             raise ValueError("RunEngine is not set")
-        if self.samz_motor is None:
-            raise ValueError("samz_motor is not set")
+        if self.zp_z_motor is None:
+            raise ValueError("zp_z_motor is not set")
         if self.parameter_ranges is not None:
             validate_position_in_range(
                 parameters[0], 
                 (self.parameter_ranges[0][0], self.parameter_ranges[1][0]), 
                 "z")
-            self.RE(self.bps.mv(self.samz_motor, parameters[0]))
-            msg = f"Move sample z motor to position: {parameters[0]}"
+            self.RE(self.bps.mv(self.zp_z_motor, parameters[0]))
+            msg = f"Moved Zone Plate z position to position: {parameters[0]}"
             logger.info(msg)
             return msg
         else:

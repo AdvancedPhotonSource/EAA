@@ -38,6 +38,6 @@ class BlueskyScanControl(BaseTool):
 
         self.param_tuning_tool = BlueskySetParameters()
         self.param_tuning_tool.RE = RE
-        self.param_tuning_tool.samz_motor = oregistry["samz"]
+        self.param_tuning_tool.zp_z_motor = oregistry["zp_z"]
 
         self.exposed_tools = self.acquire_image_tool.exposed_tools + self.param_tuning_tool.exposed_tools
