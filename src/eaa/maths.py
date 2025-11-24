@@ -47,11 +47,14 @@ def fit_gaussian_1d(
     Returns
     -------
     tuple[float, float, float]
-        The amplitude, mean, and standard deviation of the Gaussian.
+        The amplitude, mean, standard deviation, and constant offset of the Gaussian.
     """
     y_max, y_min = np.max(y), np.min(y)
     x_max = x[np.argmax(y)]
+    offset = x_max
+    x = x - offset
     mask = y >= y_min + y_threshold * (y_max - y_min)
     p0 = [y_max - y_min, x_max, np.count_nonzero(mask) / (x[-1] - x[0]) / 2, y_min]
     popt, _ = scipy.optimize.curve_fit(gaussian_1d, x[mask], y[mask], p0=p0)
+    popt[1] += offset
     return tuple(popt)
