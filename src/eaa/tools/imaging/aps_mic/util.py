@@ -284,7 +284,11 @@ def load_h5(img_h5_path, fit_type=["NNLS", "ROI"], fsizelim=1e3) -> dict:
         return None
 
 
-def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin, plot_in_log_scale: bool = False):
+def plot_xrfdata(
+    plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin, 
+    plot_in_log_scale: bool = False,
+    show_colorbar: bool = False
+):
     """
     Plot the XRF data.
 
@@ -308,6 +312,8 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin, p
         The minimum value of the colorbar.
     plot_in_log_scale : bool
         Whether to plot the image in log scale.
+    show_colorbar : bool
+        Whether to show the colorbar in the image.
     
     Returns
     -------
@@ -319,9 +325,12 @@ def plot_xrfdata(plotarr, xaxis, yaxis, scan_name, elm_name, cmap, vmax, vmin, p
         plotarr = np.log10(plotarr + 1)
         vmax = np.log10(vmax + 1)
         vmin = np.log10(vmin + 1)
-    ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
+    im = ax.imshow(plotarr, cmap=cmap, vmax=vmax, vmin=vmin)
     ax.set_title(f"{scan_name} {elm_name}")
-
+    if show_colorbar:
+        cbar = fig.colorbar(im)
+        cbar.set_label("Intensity")
+    
     # Show only 5 ticks for both x- and y- axes
     xticks = np.linspace(0, len(xaxis) - 1, 5, dtype=int)
     yticks = np.linspace(0, len(yaxis) - 1, 5, dtype=int)
@@ -342,7 +351,8 @@ def save_xrfdata(
     vmax_th: float = 99, 
     vmin: float = 0,
     plot_in_log_scale: bool = False,
-    return_image_array: bool = False
+    return_image_array: bool = False,
+    show_colorbar_in_image: bool = False
 ) -> str | None:
     """
     Save the XRF data in png format.
@@ -366,7 +376,9 @@ def save_xrfdata(
     return_image_array : bool
         If True, an numpy array of the image will be returned
         in addition to the path to the saved image.
-
+    show_colorbar_in_image : bool
+        Whether to show the colorbar in the image.
+    
     Returns
     -------
     str | None
@@ -386,7 +398,11 @@ def save_xrfdata(
         for e in plot_elms:
             plotarr = data_arr[data_ch.index(e)]
             vmax = np.nanpercentile(plotarr, vmax_th)
-            fig = plot_xrfdata(plotarr, xaxis, yaxis, data["scan"], e, cmap, vmax, vmin, plot_in_log_scale=plot_in_log_scale)
+            fig = plot_xrfdata(
+                plotarr, xaxis, yaxis, data["scan"], e, cmap, vmax, vmin, 
+                plot_in_log_scale=plot_in_log_scale,
+                show_colorbar=show_colorbar_in_image
+            )
             fname = f"{output_dir}/{data['scan']}_{e}.png"
             fig.savefig(fname)
             plt.close(fig)

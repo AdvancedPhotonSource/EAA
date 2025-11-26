@@ -47,6 +47,7 @@ class BlueSkyAcquireImage(AcquireImage):
         allowable_y_range: Optional[Tuple[float, float]] = None,
         allowable_z_range: Optional[Tuple[float, float]] = None,
         plot_image_in_log_scale: bool = False,
+        show_colorbar_in_image: bool = False,
         require_approval: bool = False,
         *args, **kwargs
     ):
@@ -74,6 +75,8 @@ class BlueSkyAcquireImage(AcquireImage):
             The allowable range of scan center position in the y direction.
         plot_image_in_log_scale: bool, optional
             Whether to plot the image in log scale.
+        show_colorbar_in_image: bool, optional
+            Whether to show the colorbar in the image.
         
         Raises
         ------
@@ -93,6 +96,7 @@ class BlueSkyAcquireImage(AcquireImage):
         self.allowable_y_range = allowable_y_range
         self.allowable_z_range = allowable_z_range
         self.plot_image_in_log_scale = plot_image_in_log_scale
+        self.show_colorbar_in_image = show_colorbar_in_image
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
         self.exposed_tools = [
@@ -192,8 +196,12 @@ class BlueSkyAcquireImage(AcquireImage):
                     f"{current_mda_file}.h50")
 
                 img_path, img_arr = save_xrfdata(
-                    img_h5_path, png_output_dir, elms=self.xrf_elms, return_image_array=True,
-                    plot_in_log_scale=self.plot_image_in_log_scale
+                    img_h5_path, 
+                    png_output_dir, 
+                    elms=self.xrf_elms, 
+                    return_image_array=True,
+                    plot_in_log_scale=self.plot_image_in_log_scale,
+                    show_colorbar_in_image=self.show_colorbar_in_image
                 )
                 wait_for_file(img_path, duration=5)
 
