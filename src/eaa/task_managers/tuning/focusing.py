@@ -375,13 +375,6 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         additional_prompt : Optional[str]
             If provided, this prompt will be added to the initial prompt.
         """
-        if reference_image_path is None:
-            user_image_input = self.get_user_input(
-                prompt="Please provide the reference image as: <img /path/to/image.png>.",
-                display_prompt_in_webui=True
-            )
-            reference_image_path = get_image_path_from_text(user_image_input)
-        
         if reference_image_path is None and reference_feature_description is None:
             raise ValueError(
                 "Either `reference_image_path` or `reference_feature_description` must be provided."
@@ -392,12 +385,23 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 "`image_registration_tool` should be provided in the class constructor "
                 "if `use_registration_in_workflow` is True."
             )
+            
+        if reference_image_path is None:
+            reference_image_prompts = ""
+        else:
+            reference_image_prompts = (
+                f"<img {reference_image_path}>\n"
+                f"You will see a reference 2D scan image in this message. "
+                f"This image is acquired in the region of interest that "
+                f"contains the thin feature to be line-scanned. The line scan path "
+                f"across that feature is indicated by a marker."
+            )
 
         if initial_prompt is None:
             feat_text_description = ""
             if reference_feature_description is not None:
                 feat_text_description = (
-                    f"Also, here is the description of the feature: **{reference_feature_description}**. "
+                    f"Here is the description of the feature: **{reference_feature_description}**. "
                 )
             param_step_size_prompt = ""
             if suggested_parameter_step_size is not None:
@@ -441,11 +445,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 f"But each time you adjust the focus, the image may drift due to "
                 f"the change of the optics. You will need to perform a 2D scan "
                 f"prior to the line scan to locate the feature that is line-scanned.\n"
-                f"<img {reference_image_path}>\n"
-                f"You will see a reference 2D scan image in this message. "
-                f"This image is acquired in the region of interest that "
-                f"contains the thin feature to be line-scanned. The line scan path "
-                f"across that feature is indicated by a marker. {feat_text_description}\n\n"
+                f"{reference_image_prompts}\n"
+                f"{feat_text_description}\n\n"
                 f"Follow the procedure below to focus the microscope:\n\n"
                 f"1. First, perform a 2D scan of the region of interest using the "
                 f"\"acquire_image\" tool and the following arguments: "
