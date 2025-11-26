@@ -121,7 +121,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         Parameters
         ----------
         feature_description : str
-            A text description of the feature to search for.
+            A text description of the feature to search for. The message
+            can contain the <img /path/to/image.png> tag to include a 
+            reference image of the feature.
         y_range : tuple[float, float]
             The range of y coordinates to search for the feature.
         x_range : tuple[float, float]
@@ -157,10 +159,11 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 f"but go back to this size when you find the feature and acquire a "
                 f"final image of it.\n"
                 f"- Start from position (y={y_range[0]}, x={x_range[0]}), and gradually "
-                f"move the FOV to find the feature. Positions should not go beyond "
-                f"y={y_range[1]} and x={x_range[1]}. When moving the FOV, you can start "
-                f"with the step size of {step_size[0]} in the y direction and {step_size[1]} "
-                f"in the x direction. You can change the step sizes during the process.\n"
+                f"move the FOV to find the feature. Positions should stay in the range of "
+                f"y={y_range[0]} to {y_range[1]} and x={x_range[0]} to {x_range[1]}. \n"
+                f"- Use a regular grid search pattern at the beginning. Use a step size of {step_size[0]} "
+                f"in the y direction and {step_size[1]} in the x direction. When you see the\n"
+                f"feature, you can move the FOV more arbitrarily to make it better centered.\n"
                 f"- When you find the feature, adjust the positions of the FOV to make the "
                 f"feature centered in the FOV. If the feature is off to the left, move "
                 f"the FOV to the left; if the feature is off to the top, move the FOV "
@@ -170,6 +173,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 f"stop the process.\n"
                 f"- When you find the feature of interest, report the coordinates of the "
                 f"FOV.\n" 
+                f"- Explain every tool call you make."
                 f"- When calling tools, make only one call at a time. Do not make "
                 f"another call before getting the response of a previous one. \n"
                 f"- When you finish the search or need user response, say 'TERMINATE'.\n"
