@@ -53,8 +53,18 @@ def fit_gaussian_1d(
     x_max = x[np.argmax(y)]
     offset = x_max
     x = x - offset
+    x_max = 0
     mask = y >= y_min + y_threshold * (y_max - y_min)
-    p0 = [y_max - y_min, x_max, np.count_nonzero(mask) / (x[-1] - x[0]) / 2, y_min]
+    a_guess = y_max - y_min
+    mu_guess = x_max
+    x_above_thresh = x[y > y_min + a_guess * 0.2]
+    if len(x_above_thresh) >= 3:
+        sigma_guess = (x_above_thresh.max() - x_above_thresh.min()) / 2
+    else:
+        sigma_guess = (x.max() - x.min()) / 2
+    c_guess = y_min
+    p0 = [a_guess, mu_guess, sigma_guess, c_guess]
     popt, _ = scipy.optimize.curve_fit(gaussian_1d, x[mask], y[mask], p0=p0)
     popt[1] += offset
     return tuple(popt)
+
