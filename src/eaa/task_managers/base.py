@@ -441,6 +441,8 @@ class BaseTaskManager:
             f"tools:\n{tool_catalog_json}\n"
             f"User request: {request_text}"
         )
+        # Escape image tag
+        parsing_prompt = parsing_prompt.replace("<img", "<img\\")
 
         local_context: List[Dict[str, Any]] = []
         parsed_result: Dict[str, Any] = {}
@@ -451,7 +453,6 @@ class BaseTaskManager:
                 context=local_context,
                 return_outgoing_message=True,
             )
-            self.update_message_history(outgoing, update_context=False, update_full_history=True)
             self.update_message_history(response, update_context=False, update_full_history=True)
             local_context.append(outgoing)
             local_context.append(response)
@@ -560,6 +561,12 @@ class BaseTaskManager:
             init_kwargs[key] = value
 
         try:
+            log_message = generate_openai_message(
+                content=f"Instantiating task manager '{manager_name}' with init_kwargs: {init_kwargs}",
+                role="system",
+            )
+            self.update_message_history(log_message, update_context=True, update_full_history=True)
+            print_message(log_message)
             sub_manager = manager_class(**init_kwargs)
         except Exception as exc:  # noqa: BLE001 - surface configuration errors
             logger.exception("Failed to instantiate task manager '%s'", manager_name)
@@ -577,6 +584,16 @@ class BaseTaskManager:
                 result = sub_manager.run_conversation()
             else:
                 method_callable = getattr(sub_manager, resolved_method_name)
+                log_message = generate_openai_message(
+                    content=f"Running method '{resolved_method_name}' with method_kwargs: {method_kwargs}. Proceed? (yes/no)",
+                    role="system",
+                )
+                proceed = self.get_user_input(
+                    prompt=log_message["content"],
+                    display_prompt_in_webui=bool(self.message_db_conn),
+                )
+                if proceed.strip().lower() != "yes":
+                    return
                 result = method_callable(**method_kwargs)
             last_of_sub_manager_context = sub_manager.context[-1] if len(sub_manager.context) > 0 else None
         except Exception as exc:  # noqa: BLE001
@@ -625,77 +642,90 @@ class BaseTaskManager:
         """
         response = None
         while True:
-            if response is None or (response is not None and not has_tool_call(response)):
-                message = self.get_user_input(
-                    prompt=(
-                        "Enter a message (/exit: exit; /return: return to upper level task; "
-                        "/help: show command help): "
+            try:
+                if response is None or (response is not None and not has_tool_call(response)):
+                    message = self.get_user_input(
+                        prompt=(
+                            "Enter a message (/exit: exit; /return: return to upper level task; "
+                            "/help: show command help): "
+                        )
                     )
-                )
-                stripped_message = message.strip()
-                command, _, remainder = stripped_message.partition(" ")
-                command_lower = command.lower()
+                    stripped_message = message.strip()
+                    command, _, remainder = stripped_message.partition(" ")
+                    command_lower = command.lower()
 
-                if command_lower == "/exit" and remainder == "":
-                    break
-                elif command_lower == "/return" and remainder == "":
-                    return
-                elif command_lower == "/monitor":
-                    if len(remainder.strip()) == 0:
-                        logger.info("Monitoring command requires a task description.")
-                    else:
-                        self.enter_monitoring_mode(remainder.strip())
-                    continue
-                elif command_lower == "/subtask":
-                    self.launch_task_manager(remainder.strip())
-                    continue
-                elif command_lower == "/help" and remainder == "":
-                    self.display_command_help()
-                    continue
-            
-                # Send message and get response
-                response, outgoing_message = self.agent.receive(
-                    message, 
-                    context=self.context, 
-                    return_outgoing_message=True
-                )
-                # If message DB is used, user input should come from WebUI which writes
-                # to the DB, so we don't update DB again.
-                self.update_message_history(
-                    outgoing_message, 
-                    update_context=True, 
-                    update_full_history=True, 
-                    update_db=(self.message_db_conn is None)
-                )
-                self.update_message_history(response, update_context=True, update_full_history=True)
-            
-            # Handle tool calls
-            tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
-            for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
-                print_message(tool_response)
-                self.update_message_history(tool_response, update_context=True, update_full_history=True)
-            
-            if len(tool_responses) >= 1:
+                    if command_lower == "/exit" and remainder == "":
+                        break
+                    elif command_lower == "/return" and remainder == "":
+                        return
+                    elif command_lower == "/monitor":
+                        if len(remainder.strip()) == 0:
+                            logger.info("Monitoring command requires a task description.")
+                        else:
+                            self.enter_monitoring_mode(remainder.strip())
+                        continue
+                    elif command_lower == "/subtask":
+                        self.launch_task_manager(remainder.strip())
+                        continue
+                    elif command_lower == "/help" and remainder == "":
+                        self.display_command_help()
+                        continue
+                
+                    # Send message and get response
+                    response, outgoing_message = self.agent.receive(
+                        message, 
+                        context=self.context, 
+                        return_outgoing_message=True
+                    )
+                    # If message DB is used, user input should come from WebUI which writes
+                    # to the DB, so we don't update DB again.
+                    self.update_message_history(
+                        outgoing_message, 
+                        update_context=True, 
+                        update_full_history=True, 
+                        update_db=(self.message_db_conn is None)
+                    )
+                    self.update_message_history(response, update_context=True, update_full_history=True)
+                
+                # Handle tool calls
+                tool_responses, tool_response_types = self.agent.handle_tool_call(response, return_tool_return_types=True)
                 for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
-                    # If the tool returns an image path, load the image and send it to 
-                    # the assistant in a follow-up message as user.
-                    if tool_response_type == ToolReturnType.IMAGE_PATH:
-                        image_path = tool_response["content"]
-                        image_message = generate_openai_message(
-                            content="Here is the image the tool returned.",
-                            image_path=image_path,
-                            role="user",
-                        )
-                        self.update_message_history(
-                            image_message, update_context=store_all_images_in_context, update_full_history=True
-                        )
-                # Send tool responses stored in the context
-                response = self.agent.receive(
-                    message=None, 
-                    context=self.context, 
-                    return_outgoing_message=False
+                    print_message(tool_response)
+                    self.update_message_history(tool_response, update_context=True, update_full_history=True)
+                
+                if len(tool_responses) >= 1:
+                    for tool_response, tool_response_type in zip(tool_responses, tool_response_types):
+                        # If the tool returns an image path, load the image and send it to 
+                        # the assistant in a follow-up message as user.
+                        if tool_response_type == ToolReturnType.IMAGE_PATH:
+                            image_path = tool_response["content"]
+                            image_message = generate_openai_message(
+                                content="Here is the image the tool returned.",
+                                image_path=image_path,
+                                role="user",
+                            )
+                            self.update_message_history(
+                                image_message, update_context=store_all_images_in_context, update_full_history=True
+                            )
+                    # Send tool responses stored in the context
+                    response = self.agent.receive(
+                        message=None, 
+                        context=self.context, 
+                        return_outgoing_message=False
+                    )
+                    self.update_message_history(response, update_context=True, update_full_history=True)
+            except KeyboardInterrupt:
+                self.context = complete_unresponded_tool_calls(self.context)
+                response = generate_openai_message(
+                    content="Workflow interrupted by keyboard interrupt. TERMINATE",
+                    role="system"
                 )
-                self.update_message_history(response, update_context=True, update_full_history=True)
+                self.update_message_history(
+                    response, 
+                    update_context=True, 
+                    update_full_history=True
+                )
+                continue
 
     def enter_monitoring_mode(
         self,
