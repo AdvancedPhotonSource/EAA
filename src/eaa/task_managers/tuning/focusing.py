@@ -432,7 +432,12 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     "Use the offset given by image registration to adjust the line scan positions."
                 )
             else:
-                registration_prompt = ""
+                registration_prompt = (
+                    "Use your registration tool to find the offset between the new image "
+                    "and the previous one. Use this offset to adjust the line scan positions "
+                    "by **adding** it to both the x and y coordinates of the start and end "
+                    "points of the previous line scan. "
+                )
                 line_scan_positioning_prompt = (
                     "Read the coordinates of the line scan path from the axis ticks."
                 )
