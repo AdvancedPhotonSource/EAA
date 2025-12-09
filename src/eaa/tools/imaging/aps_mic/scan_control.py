@@ -22,7 +22,7 @@ class BlueskyScanControl(BaseTool):
         super().__init__(require_approval=require_approval, *args, **kwargs)
         
         try: 
-            from s2idd_uprobe.startup import RE, oregistry, fly2d_scanrecord, step1d_scanrecord, bps
+            from s2idd_uprobe.startup import RE, oregistry, fly2d_scanrecord, step1d_scanrecord
         except ImportError:
             raise ImportError(
                 "Bluesky control initialization failed. Please check that the bluesky-mic package is installed "
