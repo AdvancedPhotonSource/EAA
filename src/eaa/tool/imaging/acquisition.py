@@ -7,9 +7,9 @@ import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
 
-from eaa.tools.base import BaseTool, check, ToolReturnType, ExposedToolSpec
-import eaa.comms
-import eaa.util
+from sciagent.tool.base import BaseTool, check, ToolReturnType, ExposedToolSpec
+from sciagent.util import get_timestamp
+
 import eaa.maths
 import eaa.image_proc as ip
 
@@ -344,7 +344,7 @@ class SimulatedAcquireImage(AcquireImage):
         self.update_image_buffers(arr, psize=1)
             
         if self.return_message:
-            filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{eaa.util.get_timestamp()}.png"
+            filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{get_timestamp()}.png"
             fig = ip.plot_2d_image(
                 arr if not self.plot_image_in_log_scale else np.log10(arr + 1),
                 add_axis_ticks=self.add_axis_ticks,
@@ -429,7 +429,7 @@ class SimulatedAcquireImage(AcquireImage):
             os.makedirs(".tmp")
         fname = os.path.join(
             ".tmp",
-            f"line_scan_{start_y}_{end_y}_{start_x}_{end_x}_{scan_step}_{eaa.util.get_timestamp()}.png"
+            f"line_scan_{start_y}_{end_y}_{start_x}_{end_x}_{scan_step}_{get_timestamp()}.png"
         )
         fig.savefig(fname)
         plt.close(fig)

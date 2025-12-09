@@ -19,8 +19,8 @@ from pathlib import Path
 # Add the src directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from eaa.tools.example_calculator import CalculatorTool
-from eaa.mcp import run_mcp_server_from_tools
+from sciagent.tool.example_calculator import CalculatorTool
+from sciagent.mcp import run_mcp_server_from_tools
 
 # Configure logging
 logging.basicConfig(

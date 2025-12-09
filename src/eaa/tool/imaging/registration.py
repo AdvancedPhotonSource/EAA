@@ -4,8 +4,9 @@ import logging
 import numpy as np
 import scipy.ndimage as ndi
 
-from eaa.tools.base import BaseTool, check, ToolReturnType, ExposedToolSpec
-from eaa.tools.imaging.acquisition import AcquireImage
+from sciagent.tool.base import BaseTool, check, ToolReturnType, ExposedToolSpec
+
+from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.image_proc import windowed_phase_cross_correlation
 
 logger = logging.getLogger(__name__)

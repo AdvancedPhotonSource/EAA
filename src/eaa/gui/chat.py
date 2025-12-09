@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from eaa.util import get_timestamp
+from sciagent.util import get_timestamp
 
 
 _message_db_path = None

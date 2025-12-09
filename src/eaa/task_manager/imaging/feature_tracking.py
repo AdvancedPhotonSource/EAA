@@ -1,12 +1,13 @@
 from typing import Optional, Callable, Literal
 
-from eaa.tools.base import BaseTool
-from eaa.tools.imaging.acquisition import AcquireImage
-from eaa.tools.imaging.registration import ImageRegistration
-from eaa.task_managers.imaging.base import ImagingBaseTaskManager
-from eaa.api.llm_config import LLMConfig
-from eaa.api.memory import MemoryManagerConfig
-from eaa.util import get_image_path_from_text
+from sciagent.tool.base import BaseTool
+from sciagent.api.llm_config import LLMConfig
+from sciagent.api.memory import MemoryManagerConfig
+from sciagent.util import get_image_path_from_text
+
+from eaa.tool.imaging.acquisition import AcquireImage
+from eaa.tool.imaging.registration import ImageRegistration
+from eaa.task_manager.imaging.base import ImagingBaseTaskManager
 
 
 class FeatureTrackingTaskManager(ImagingBaseTaskManager):

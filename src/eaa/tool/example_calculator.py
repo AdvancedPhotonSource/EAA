@@ -7,7 +7,7 @@ This module provides a simple calculator tool that can be exposed via MCP.
 from typing import List
 import logging
 
-from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec, check
+from sciagent.tool.base import BaseTool, ToolReturnType, ExposedToolSpec, check
 
 logger = logging.getLogger(__name__)
 

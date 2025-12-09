@@ -7,8 +7,8 @@ import botorch
 import gpytorch
 import torch
 
-from eaa.tools.bo import BayesianOptimizationTool
-from eaa.task_managers.tuning.bo import BayesianOptimizationTaskManager
+from eaa.tool.bo import BayesianOptimizationTool
+from eaa.task_manager.tuning.bo import BayesianOptimizationTaskManager
 
 import test_utils as tutils
 

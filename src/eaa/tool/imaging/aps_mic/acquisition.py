@@ -10,7 +10,6 @@ from eaa.tools.imaging.aps_mic.util import (
     save_xrfdata
 )
 from eaa.util import wait_for_file
-# from eaa.tools.imaging.aps_mic.bluesky_init import BlueskyScanControl
 from eaa.tools.imaging.acquisition import AcquireImage
 
 logger = logging.getLogger(__name__)
@@ -83,7 +82,6 @@ class BlueSkyAcquireImage(AcquireImage):
         ImportError
             If Bluesky control initialization fails.
         """
-
         self.sample_name = sample_name
         self.dwell_imaging = dwell_imaging
         self.dwell_line_scan = dwell_line_scan

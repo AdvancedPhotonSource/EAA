@@ -74,13 +74,13 @@ section of `pyproject.toml`.
 First, choose a task manager that contains the workflow you need. In this example,
 we use `FeatureTrackingTaskManager` for a field-of-view search task.
 ```
-from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa.api.llm_config import OpenAIConfig
 ```
 
 This task manager needs an image acquisition tool. We use a simulated one:
 ```
-from eaa.tools.imaging.acquisition import SimulatedAcquireImage
+from eaa.tool.imaging.acquisition import SimulatedAcquireImage
 acquisition_tool = SimulatedAcquireImage(whole_image=<ndarray of simulation image>)
 ```
 
@@ -166,8 +166,8 @@ Claude Code and Gemini CLI.
 
 We will illustrate how an MCP server can be set up using a simple example. A
 calculator tool, subclassing `BaseTool`, is created in 
-`src/eaa/tools/example_calculator.py`. To turn it into an MCP server, we
-use `eaa.mcp.run_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
+`sciagent/tool/example_calculator.py`. To turn it into an MCP server, we
+use `sciagent.mcp.run_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
 for an example.
 
 After the server script is created, add it to the config JSON of your MCP client.
@@ -214,7 +214,7 @@ The object should then be passed to the task manager in the same way as other `B
 objects.
 
 ```python
-from eaa.tools.mcp import MCPTool
+from sciagent.tool.mcp import MCPTool
 
 config = {
     "mcpServers": {
@@ -231,4 +231,3 @@ mcp_tool = MCPTool(config)
 Known issue(s):
 - EAA currently cannot tell if an MCP tool returns an image path, and as such,
   routines in task managers that handle images will not work properly. 
-

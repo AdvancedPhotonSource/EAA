@@ -3,10 +3,11 @@ from typing import Optional
 
 from PIL import Image
 
-from eaa.task_managers.base import BaseTaskManager
-from eaa.tools.base import BaseTool
-from eaa.api.llm_config import LLMConfig
-from eaa.api.memory import MemoryManagerConfig
+from sciagent.task_manager.base import BaseTaskManager
+from sciagent.tool.base import BaseTool
+from sciagent.api.llm_config import LLMConfig
+from sciagent.api.memory import MemoryManagerConfig
+
 from eaa.image_proc import stitch_images
 
 logger = logging.getLogger(__name__)

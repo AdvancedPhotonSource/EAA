@@ -5,8 +5,8 @@ import argparse
 import tifffile
 import numpy as np
 
-from eaa.tools.imaging.acquisition import SimulatedAcquireImage
-from eaa.tools.imaging.param_tuning import SimulatedSetParameters
+from eaa.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa.tool.imaging.param_tuning import SimulatedSetParameters
 
 import test_utils as tutils
 

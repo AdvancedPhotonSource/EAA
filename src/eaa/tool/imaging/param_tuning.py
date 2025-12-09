@@ -2,8 +2,9 @@ from typing import Annotated
 
 import numpy as np
 
-from eaa.tools.base import BaseTool, check, ToolReturnType, ExposedToolSpec
-from eaa.tools.imaging.acquisition import SimulatedAcquireImage
+from sciagent.tool.base import BaseTool, check, ToolReturnType, ExposedToolSpec
+
+from eaa.tool.imaging.acquisition import SimulatedAcquireImage
 
 
 class SetParameters(BaseTool):

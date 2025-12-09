@@ -1157,6 +1157,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "sci-agent" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "tqdm" },
@@ -1200,6 +1201,7 @@ requires-dist = [
     { name = "openai" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgresql-vector-store'", specifier = ">=3.2.10" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "sci-agent", git = "https://github.com/mdw771/sci-agent" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "sphinx", marker = "extra == 'docs'" },
@@ -4897,6 +4899,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/87/b8/01c29b924dcbbed75cc45b30c30d565d763b9c4d540545a0eeecffb8f09c/ruamel.yaml.clib-0.2.12-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:4f6f3eac23941b32afccc23081e1f50612bdbe4e982012ef4f5797986828cd01", size = 709059, upload-time = "2024-12-11T19:58:18.846Z" },
     { url = "https://files.pythonhosted.org/packages/30/8c/ed73f047a73638257aa9377ad356bea4d96125b305c34a28766f4445cc0f/ruamel.yaml.clib-0.2.12-cp313-cp313-win32.whl", hash = "sha256:6442cb36270b3afb1b4951f060eccca1ce49f3d087ca1ca4563a6eb479cb3de6", size = 98583, upload-time = "2024-10-20T10:13:09.658Z" },
     { url = "https://files.pythonhosted.org/packages/b0/85/e8e751d8791564dd333d5d9a4eab0a7a115f7e349595417fd50ecae3395c/ruamel.yaml.clib-0.2.12-cp313-cp313-win_amd64.whl", hash = "sha256:e5b8daf27af0b90da7bb903a876477a9e6d7270be6146906b276605997c7e9a3", size = 115190, upload-time = "2024-10-20T10:13:10.66Z" },
+]
+
+[[package]]
+name = "sci-agent"
+version = "0.1.dev1+g86ff1483f"
+source = { git = "https://github.com/mdw771/sci-agent#86ff1483f86d5a206b054c829797d6d97865c0fd" }
+dependencies = [
+    { name = "chromadb" },
+    { name = "fastapi" },
+    { name = "fastmcp" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "scikit-image" },
+    { name = "tqdm" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [[package]]

@@ -4,19 +4,23 @@ import copy
 
 import numpy as np
 
-from eaa.message_proc import generate_openai_message, purge_context_images
-from eaa.tools.imaging.acquisition import AcquireImage
-from eaa.tools.imaging.param_tuning import SetParameters
-from eaa.task_managers.tuning.base import BaseParameterTuningTaskManager
-from eaa.task_managers.imaging.base import ImagingBaseTaskManager
-from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
-from eaa.tools.base import ToolReturnType, BaseTool
-from eaa.tools.imaging.registration import ImageRegistration
-from eaa.message_proc import print_message
-from eaa.api.llm_config import LLMConfig
-from eaa.api.memory import MemoryManagerConfig
+from sciagent.message_proc import (
+    generate_openai_message,
+    purge_context_images,
+    print_message,
+)
+from sciagent.tool.base import ToolReturnType, BaseTool
+from sciagent.api.llm_config import LLMConfig
+from sciagent.api.memory import MemoryManagerConfig
+from sciagent.exceptions import MaxRoundsReached
+
+from eaa.tool.imaging.acquisition import AcquireImage
+from eaa.tool.imaging.param_tuning import SetParameters
+from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
+from eaa.task_manager.imaging.base import ImagingBaseTaskManager
+from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.tool.imaging.registration import ImageRegistration
 import eaa.image_proc as ip
-from eaa.exceptions import MaxRoundsReached
 
 logger = logging.getLogger(__name__)
 

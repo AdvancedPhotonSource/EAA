@@ -3,7 +3,7 @@ import textwrap
 
 import numpy as np
 
-from eaa.tools.coding import PythonCodingTool
+from sciagent.tool.coding import PythonCodingTool
 
 import test_utils as tutils
 

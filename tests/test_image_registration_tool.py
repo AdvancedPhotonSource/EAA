@@ -5,8 +5,8 @@ import argparse
 import tifffile
 import numpy as np
 
-from eaa.tools.imaging.acquisition import SimulatedAcquireImage
-from eaa.tools.imaging.registration import ImageRegistration
+from eaa.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa.tool.imaging.registration import ImageRegistration
 import test_utils as tutils
 
 

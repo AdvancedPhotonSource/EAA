@@ -5,12 +5,13 @@ import torch
 import numpy as np
 from PIL import Image
 
-from eaa.task_managers.tuning.bo import BayesianOptimizationTaskManager
-from eaa.task_managers.imaging.feature_tracking import FeatureTrackingTaskManager
-from eaa.tools.base import BaseTool
-from eaa.tools.bo import BayesianOptimizationTool
-from eaa.api.llm_config import LLMConfig
-from eaa.api.memory import MemoryManagerConfig
+from sciagent.tool.base import BaseTool
+from sciagent.api.llm_config import LLMConfig
+from sciagent.api.memory import MemoryManagerConfig
+
+from eaa.task_manager.tuning.bo import BayesianOptimizationTaskManager
+from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.tool.bo import BayesianOptimizationTool
 
 logger = logging.getLogger(__name__)
 

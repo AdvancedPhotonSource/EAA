@@ -10,7 +10,8 @@ from botorch.acquisition import AcquisitionFunction
 import gpytorch
 import torch
 
-from eaa.tools.base import BaseTool, ToolReturnType, ExposedToolSpec
+from sciagent.tool.base import BaseTool, ToolReturnType, ExposedToolSpec
+
 from eaa.util import to_tensor
 
 logger = logging.getLogger(__name__)

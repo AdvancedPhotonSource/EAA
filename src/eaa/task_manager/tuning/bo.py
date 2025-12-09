@@ -3,11 +3,12 @@ from typing import Optional, Callable
 
 import torch
 
-from eaa.task_managers.base import BaseTaskManager
-from eaa.tools.base import BaseTool
-from eaa.tools.bo import BayesianOptimizationTool
-from eaa.api.llm_config import LLMConfig
-from eaa.api.memory import MemoryManagerConfig
+from sciagent.task_manager.base import BaseTaskManager
+from sciagent.tool.base import BaseTool
+from sciagent.api.llm_config import LLMConfig
+from sciagent.api.memory import MemoryManagerConfig
+
+from eaa.tool.bo import BayesianOptimizationTool
 
 logger = logging.getLogger(__name__)
 
