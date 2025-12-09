@@ -9,8 +9,7 @@ from botorch.models.transforms.input import Normalize
 from botorch.acquisition import AcquisitionFunction
 import gpytorch
 import torch
-
-from sciagent.tool.base import BaseTool, ToolReturnType, ExposedToolSpec
+from sciagent.tool.base import BaseTool, ToolReturnType, tool
 
 from eaa.util import to_tensor
 
@@ -115,19 +114,6 @@ class BayesianOptimizationTool(BaseTool):
         self.outcome_transform = None
 
         super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
-        
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="update",
-                function=self.update,
-                return_type=ToolReturnType.NUMBER,
-            ),
-            ExposedToolSpec(
-                name="suggest",
-                function=self.suggest,
-                return_type=ToolReturnType.NUMBER,
-            ),
-        ]
 
     def check_x_data(self, data: torch.Tensor):
         if not (data.ndim == 2 and data.shape[1] == self.n_dims_in):
@@ -412,6 +398,7 @@ class BayesianOptimizationTool(BaseTool):
         """
         return y * self.outcome_transform.stdvs[dim]
 
+    @tool(name="update", return_type=ToolReturnType.NUMBER)
     def update(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
@@ -467,6 +454,7 @@ class BayesianOptimizationTool(BaseTool):
                 "already done so, this is unexpected."
             )
 
+    @tool(name="suggest", return_type=ToolReturnType.NUMBER)
     def suggest(
         self, 
         n_suggestions: Annotated[int, "The number of suggestions to make."] = 1

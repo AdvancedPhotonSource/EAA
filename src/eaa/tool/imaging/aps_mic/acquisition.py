@@ -2,15 +2,16 @@ from typing import Annotated, Tuple, Optional
 import logging
 import os
 
-from eaa.tools.base import ToolReturnType, ExposedToolSpec
-from eaa.tools.imaging.aps_mic.util import (
+from sciagent.tool.base import ToolReturnType, tool
+
+from eaa.tool.imaging.aps_mic.util import (
     process_xrfdata,
     save_xrf_line_scan,
     validate_position_in_range,
     save_xrfdata
 )
 from eaa.util import wait_for_file
-from eaa.tools.imaging.acquisition import AcquireImage
+from eaa.tool.imaging.acquisition import AcquireImage
 
 logger = logging.getLogger(__name__)
 
@@ -97,19 +98,8 @@ class BlueSkyAcquireImage(AcquireImage):
         self.show_colorbar_in_image = show_colorbar_in_image
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="acquire_image",
-                function=self.acquire_image,
-                return_type=ToolReturnType.IMAGE_PATH,
-            ),
-            ExposedToolSpec(
-                name="acquire_line_scan",
-                function=self.acquire_line_scan,
-                return_type=ToolReturnType.IMAGE_PATH,
-            ),
-        ]
         
+    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_image(
         self,
         width: Annotated[float, "The width of the scan area in microns"] = 0,
@@ -217,6 +207,7 @@ class BlueSkyAcquireImage(AcquireImage):
             raise e
 
 
+    @tool(name="acquire_line_scan", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_line_scan(
         self,
         width: Annotated[float, "The width of the scan area in microns"] = 0,

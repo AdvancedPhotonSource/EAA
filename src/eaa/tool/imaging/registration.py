@@ -3,8 +3,7 @@ import logging
 
 import numpy as np
 import scipy.ndimage as ndi
-
-from sciagent.tool.base import BaseTool, check, ToolReturnType, ExposedToolSpec
+from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.image_proc import windowed_phase_cross_correlation
@@ -62,14 +61,6 @@ class ImageRegistration(BaseTool):
         self.reference_pixel_size = reference_pixel_size
         self.image_coordinates_origin = image_coordinates_origin
 
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="get_offset_of_latest_image",
-                function=self.get_offset_of_latest_image,
-                return_type=ToolReturnType.LIST,
-            )
-        ]
-
     def set_reference_image(
         self, reference_image: np.ndarray, 
         reference_pixel_size: float = 1.0
@@ -100,6 +91,7 @@ class ImageRegistration(BaseTool):
             image = np.mean(image, axis=-1)
         return image
 
+    @tool(name="get_offset_of_latest_image", return_type=ToolReturnType.LIST)
     def get_offset_of_latest_image(
         self,
         register_with: Annotated[

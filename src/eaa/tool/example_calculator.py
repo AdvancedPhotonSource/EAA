@@ -7,7 +7,7 @@ This module provides a simple calculator tool that can be exposed via MCP.
 from typing import List
 import logging
 
-from sciagent.tool.base import BaseTool, ToolReturnType, ExposedToolSpec, check
+from sciagent.tool.base import BaseTool, ToolReturnType, check, tool
 
 logger = logging.getLogger(__name__)
 
@@ -33,40 +33,8 @@ class CalculatorTool(BaseTool):
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
         self.calculation_history: List[str] = []
-        
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="add",
-                function=self.add,
-                return_type=ToolReturnType.NUMBER,
-            ),
-            ExposedToolSpec(
-                name="subtract",
-                function=self.subtract,
-                return_type=ToolReturnType.NUMBER,
-            ),
-            ExposedToolSpec(
-                name="multiply",
-                function=self.multiply,
-                return_type=ToolReturnType.NUMBER,
-            ),
-            ExposedToolSpec(
-                name="divide",
-                function=self.divide,
-                return_type=ToolReturnType.NUMBER,
-            ),
-            ExposedToolSpec(
-                name="get_history",
-                function=self.get_history,
-                return_type=ToolReturnType.LIST,
-            ),
-            ExposedToolSpec(
-                name="clear_history",
-                function=self.clear_history,
-                return_type=ToolReturnType.TEXT,
-            ),
-        ]
     
+    @tool(name="add", return_type=ToolReturnType.NUMBER)
     def add(self, a: float, b: float) -> float:
         """
         Add two numbers together.
@@ -88,6 +56,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Added {a} + {b} = {result}")
         return result
     
+    @tool(name="subtract", return_type=ToolReturnType.NUMBER)
     def subtract(self, a: float, b: float) -> float:
         """
         Subtract the second number from the first.
@@ -109,6 +78,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Subtracted {a} - {b} = {result}")
         return result
     
+    @tool(name="multiply", return_type=ToolReturnType.NUMBER)
     def multiply(self, a: float, b: float) -> float:
         """
         Multiply two numbers together.
@@ -130,6 +100,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Multiplied {a} * {b} = {result}")
         return result
     
+    @tool(name="divide", return_type=ToolReturnType.NUMBER)
     def divide(self, a: float, b: float) -> float:
         """
         Divide the first number by the second.
@@ -159,6 +130,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Divided {a} / {b} = {result}")
         return result
     
+    @tool(name="get_history", return_type=ToolReturnType.LIST)
     def get_history(self) -> List[str]:
         """
         Get the calculation history.
@@ -171,6 +143,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Retrieved calculation history with {len(self.calculation_history)} entries")
         return self.calculation_history.copy()
     
+    @tool(name="clear_history", return_type=ToolReturnType.TEXT)
     def clear_history(self) -> str:
         """
         Clear the calculation history.

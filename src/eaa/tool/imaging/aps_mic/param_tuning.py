@@ -1,9 +1,10 @@
 from typing import Annotated, Optional, Tuple
 import logging
 
-from eaa.tools.base import ToolReturnType, ExposedToolSpec
-from eaa.tools.imaging.param_tuning import SetParameters
-from eaa.tools.imaging.aps_mic.util import validate_position_in_range
+from sciagent.tool.base import ToolReturnType, tool
+
+from eaa.tool.imaging.param_tuning import SetParameters
+from eaa.tool.imaging.aps_mic.util import validate_position_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +56,8 @@ class BlueskySetParameters(SetParameters):
             **kwargs
         )
         
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="set_parameters",
-                function=self.set_parameters,
-                return_type=ToolReturnType.TEXT,
-            )
-        ]
         
+    @tool(name="set_parameters", return_type=ToolReturnType.TEXT)
     def set_parameters(
         self, 
         parameters: Annotated[

@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
-
-from sciagent.tool.base import BaseTool, check, ToolReturnType, ExposedToolSpec
+from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
 from sciagent.util import get_timestamp
 
 import eaa.maths
@@ -32,14 +31,6 @@ class AcquireImage(BaseTool):
         
         self.show_image_in_real_time = show_image_in_real_time
         self.rt_fig = None
-        
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="acquire_image",
-                function=self.acquire_image,
-                return_type=ToolReturnType.IMAGE_PATH,
-            )
-        ]
         
         # Buffered images:
         # image_0 - the first image
@@ -122,6 +113,7 @@ class AcquireImage(BaseTool):
         self.image_k = new_image
         self.psize_k = psize
 
+    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_image(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -191,14 +183,7 @@ class SimulatedAcquireImage(AcquireImage):
 
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
-        self.exposed_tools.append(
-            ExposedToolSpec(
-                name="scan_line",
-                function=self.scan_line,
-                return_type=ToolReturnType.IMAGE_PATH,
-            )
-        )
-                
+    
     def build(self):
         self.build_interpolator()
         
@@ -302,6 +287,7 @@ class SimulatedAcquireImage(AcquireImage):
         ax.set_ylim(ylim)
         return fig
 
+    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_image(
         self, 
         loc_y: Annotated[float, "The y-coordinate of the top-left corner of the image to acquire."], 
@@ -361,6 +347,7 @@ class SimulatedAcquireImage(AcquireImage):
         else:
             return arr
 
+    @tool(name="scan_line", return_type=ToolReturnType.IMAGE_PATH)
     def scan_line(
         self,
         start_x: Annotated[float, "The x-coordinate of the starting point of the line scan."],

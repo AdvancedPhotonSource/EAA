@@ -1,8 +1,7 @@
 from typing import Annotated
 
 import numpy as np
-
-from sciagent.tool.base import BaseTool, check, ToolReturnType, ExposedToolSpec
+from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import SimulatedAcquireImage
 
@@ -54,13 +53,6 @@ class SetParameters(BaseTool):
             parameter_names
         )
         
-        self.exposed_tools = [
-            ExposedToolSpec(
-                name="set_parameters",
-                function=self.set_parameters,
-                return_type=ToolReturnType.TEXT,
-            )
-        ]
         
     @property
     def parameter_names(self) -> list[str]:
@@ -96,6 +88,7 @@ class SetParameters(BaseTool):
     def get_initial_parameter_history(self, parameter_names: list[str]):
         return {name: [] for name in parameter_names}
         
+    @tool(name="set_parameters", return_type=ToolReturnType.TEXT)
     def set_parameters(*args, **kwargs):
         raise NotImplementedError
     
@@ -165,6 +158,7 @@ class SimulatedSetParameters(SetParameters):
         self.blur_factor = blur_factor
         self.drift_factor = drift_factor
         
+    @tool(name="set_parameters", return_type=ToolReturnType.TEXT)
     def set_parameters(
         self, 
         parameters: Annotated[list[float], "The parameters to set the optics to"],
