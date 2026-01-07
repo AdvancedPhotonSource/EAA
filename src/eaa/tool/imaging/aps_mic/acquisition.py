@@ -1,6 +1,7 @@
 from typing import Annotated, Tuple, Optional
 import logging
 import os
+import json
 
 from sciagent.tool.base import ToolReturnType, tool
 
@@ -49,6 +50,7 @@ class BlueSkyAcquireImage(AcquireImage):
         plot_image_in_log_scale: bool = False,
         show_colorbar_in_image: bool = False,
         require_approval: bool = False,
+        line_scan_return_gaussian_fit: bool = False,
         *args, **kwargs
     ):
         """Image acquisition tool with Bluesky.
@@ -77,6 +79,9 @@ class BlueSkyAcquireImage(AcquireImage):
             Whether to plot the image in log scale.
         show_colorbar_in_image: bool, optional
             Whether to show the colorbar in the image.
+        line_scan_return_gaussian_fit: bool, optional
+            If True, the function returns a stringified JSON object containing the image path
+            and the Gaussian fit FWHM.
         
         Raises
         ------
@@ -96,6 +101,7 @@ class BlueSkyAcquireImage(AcquireImage):
         self.allowable_z_range = allowable_z_range
         self.plot_image_in_log_scale = plot_image_in_log_scale
         self.show_colorbar_in_image = show_colorbar_in_image
+        self.line_scan_return_gaussian_fit = line_scan_return_gaussian_fit
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
         
@@ -276,7 +282,7 @@ class BlueSkyAcquireImage(AcquireImage):
                 if not os.path.exists(png_output_dir):
                     os.makedirs(png_output_dir)
                 
-                img_path, _ = save_xrf_line_scan(
+                img_path, [_, _, _, fwhm] = save_xrf_line_scan(
                     mda_file_path, png_output_dir, roi_num=self.xrf_roi_num, 
                     return_line_array=True
                 )
@@ -284,7 +290,11 @@ class BlueSkyAcquireImage(AcquireImage):
 
                 # self.update_line_scan_buffers(img_arr, psize=stepsize_x)
                 if img_path:
-                    return img_path
+                    if self.line_scan_return_gaussian_fit:
+                        return json.dumps({
+                            "image_path": img_path,
+                            "fwhm": fwhm,
+                        })
                 else:
                     logger.error(f"Failed to save images for {current_mda_file}")
                     return f"Failed to save images for {current_mda_file}"
