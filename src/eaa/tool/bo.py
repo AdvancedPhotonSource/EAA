@@ -151,7 +151,7 @@ class BayesianOptimizationTool(BaseTool):
             + self.bounds[0]
         )
 
-    def build(self) -> None:
+    def build(self, acquisition_function_kwargs: dict = None) -> None:
         """Build the Gaussian process model and data transform modules. This function
         should be called after the initial data are collected and updated to the tool
         using the `update` method.
@@ -160,7 +160,7 @@ class BayesianOptimizationTool(BaseTool):
         self.train_transforms_and_transform_data()
         self.initialize_model(self.xs_transformed, self.ys_transformed)
         self.fit_kernel_hyperparameters()
-        self.build_acquisition_function()
+        self.build_acquisition_function(acquisition_function_kwargs)
 
     def initialize_model(self, x_train: torch.Tensor, y_train: torch.Tensor):
         """Initialize the Gaussian process model with recorded data.
@@ -202,8 +202,10 @@ class BayesianOptimizationTool(BaseTool):
                     )
                 )
 
-    def build_acquisition_function(self):
+    def build_acquisition_function(self, acquisition_function_kwargs: dict = None):
         """Build the acquisition function."""
+        if acquisition_function_kwargs is not None:
+            self.acquisition_function_kwargs.update(acquisition_function_kwargs)
         self.acquisition_function = self.acquisition_function_class(
             model=self.model,
             **self.acquisition_function_kwargs,

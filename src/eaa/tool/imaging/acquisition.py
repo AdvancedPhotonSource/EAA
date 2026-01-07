@@ -1,6 +1,7 @@
 from typing import Annotated, Dict, List, Any
 import logging
 import os
+import json
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -133,6 +134,7 @@ class SimulatedAcquireImage(AcquireImage):
         line_scan_gaussian_fit_y_threshold: float = 0,
         add_line_scan_candidates_to_image: bool = False,
         plot_image_in_log_scale: bool = False,
+        line_scan_return_gaussian_fit: bool = False,
         *args,
         require_approval: bool = False,
         **kwargs
@@ -164,6 +166,9 @@ class SimulatedAcquireImage(AcquireImage):
             If True, the tool adds line scan candidates to the image.
         plot_image_in_log_scale : bool, optional
             If True, 2D images are plotted in log scale.
+        line_scan_return_gaussian_fit : bool, optional
+            If True, the function returns a stringified JSON object containing the image path
+            and the Gaussian fit FWHM.
         """
         self.whole_image = whole_image
         self.interpolator = None
@@ -178,6 +183,7 @@ class SimulatedAcquireImage(AcquireImage):
         self.invert_yaxis = invert_yaxis
         self.add_line_scan_candidates_to_image = add_line_scan_candidates_to_image
         self.plot_image_in_log_scale = plot_image_in_log_scale
+        self.line_scan_return_gaussian_fit = line_scan_return_gaussian_fit
         
         self.line_scan_candidates: Dict[int, list[int]] = {}
 
@@ -222,6 +228,7 @@ class SimulatedAcquireImage(AcquireImage):
             of (y, x) coordinates.
         """
         self.offset = offset
+        logging.info(f"Offset set to {self.offset}")
         
     def add_line_scan_candidates(
         self, 
@@ -347,8 +354,8 @@ class SimulatedAcquireImage(AcquireImage):
         else:
             return arr
 
-    @tool(name="scan_line", return_type=ToolReturnType.IMAGE_PATH)
-    def scan_line(
+    @tool(name="acquire_line_scan", return_type=ToolReturnType.IMAGE_PATH)
+    def acquire_line_scan(
         self,
         start_x: Annotated[float, "The x-coordinate of the starting point of the line scan."],
         start_y: Annotated[float, "The y-coordinate of the starting point of the line scan."],
@@ -368,7 +375,7 @@ class SimulatedAcquireImage(AcquireImage):
             The ending point of the line scan.
         scan_step : float
             The step size of the line scan.
-
+        
         Returns
         -------
         str
@@ -420,7 +427,17 @@ class SimulatedAcquireImage(AcquireImage):
         )
         fig.savefig(fname)
         plt.close(fig)
-        return fname
+        if self.line_scan_return_gaussian_fit:
+            return json.dumps({
+                "image_path": fname,
+                "fwhm": fwhm,
+                "a": a,
+                "mu": mu,
+                "sigma": sigma,
+                "c": c
+            })
+        else:
+            return fname
 
     def scan_line_by_choice(
         self, 
@@ -447,4 +464,4 @@ class SimulatedAcquireImage(AcquireImage):
         """
         start_x, start_y, end_x, end_y = self.line_scan_candidates[choice]
         self.update_line_scan_call_history(start_x, start_y, end_x, end_y, scan_step)
-        return self.scan_line(start_x, start_y, end_x, end_y, scan_step=scan_step)
+        return self.acquire_line_scan(start_x, start_y, end_x, end_y, scan_step=scan_step)
