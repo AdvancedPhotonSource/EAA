@@ -241,11 +241,18 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         # Run Bayesian optimization.
         for i_iter in range(n_max_bo_iterations):
-            logger.info(f"Running Bayesian optimization iteration {i_iter}...")
+            iter_message = f"Running Bayesian optimization iteration {i_iter}..."
+            logger.info(iter_message)
+            self.record_system_message(iter_message)
             p_suggested = self.get_suggested_next_parameters(parameter_change_step_limit)
-            logger.info(f"Suggested parameter: {p_suggested}")
+            suggestion_message = f"Suggested parameter: {p_suggested}"
+            logger.info(suggestion_message)
+            self.record_system_message(suggestion_message)
             self.run_tuning_iteration(p_suggested)
-        logger.info(f"Final report:\n{self.generate_report_csv()}")
+        report = self.generate_report_csv()
+        final_report_message = f"Final report:\n{report}"
+        logger.info(final_report_message)
+        self.record_system_message(final_report_message)
         
     def initialize_kwargs_buffers(
         self, initial_line_scan_kwargs: dict, initial_2d_scan_kwargs: dict
@@ -272,6 +279,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             raise ValueError(
                 f"The stringified JSON object should contain the 'fwhm' key, but got {res}."
             )
+        content = f"Line scan completed with kwargs {self.line_scan_kwargs}. FWHM = {res['fwhm']:.4f}"
+        image_path = res.get("image_path")
+        if isinstance(image_path, str):
+            self.record_system_message(content, image_path=image_path)
+        else:
+            self.record_system_message(content)
         return res["fwhm"]
     
     def update_bo_model(self, fwhm: float):
@@ -281,7 +294,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.bo_tool.update(x, -np.array([[fwhm]]))
         
     def run_2d_scan(self):
-        self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
+        image_path = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
+        content = f"Acquired 2D scan with kwargs: {self.image_acquisition_kwargs}"
+        if isinstance(image_path, str):
+            self.record_system_message(content, image_path=image_path)
+        else:
+            self.record_system_message(content)
 
     def get_suggested_next_parameters(self, step_size_limit: Optional[float | Tuple[float, ...]] = None):
         p_suggested = to_numpy(self.bo_tool.suggest(n_suggestions=1)[0])
@@ -318,7 +336,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             for dir in ["y", "x"]
         ])
         shift += scan_pos_diff
-        logging.info(f"Offset: {shift}")
         return shift
     
     def apply_offset_to_kwargs_buffers(self, offset: np.ndarray):
