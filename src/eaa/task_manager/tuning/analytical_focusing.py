@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Tuple, Sequence
+from typing import Optional, Tuple, Sequence
 import logging
 import copy
 import json
@@ -6,24 +6,15 @@ import json
 import numpy as np
 import botorch.acquisition
 
-from sciagent.message_proc import (
-    generate_openai_message,
-    purge_context_images,
-    print_message,
-)
-from sciagent.tool.base import ToolReturnType, BaseTool
 from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
-from sciagent.exceptions import MaxRoundsReached
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
-from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
-from eaa.task_manager.imaging.base import ImagingBaseTaskManager
 from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
 from eaa.tool.bo import BayesianOptimizationTool
-import eaa.image_proc as ip
 from eaa.util import to_numpy
 
 logger = logging.getLogger(__name__)
