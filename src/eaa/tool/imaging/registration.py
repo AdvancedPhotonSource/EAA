@@ -218,6 +218,6 @@ class ImageRegistration(BaseTool):
         # as the reference image.
         offset = offset * psize_r
         if return_correlation_value:
-            return json.dumps({"offset": list(offset), "correlation_value": correlation_value})
+            return json.dumps({"offset": offset.tolist(), "correlation_value": float(correlation_value)})
         else:
             return offset
