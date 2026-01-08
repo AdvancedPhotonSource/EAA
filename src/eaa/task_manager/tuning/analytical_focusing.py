@@ -11,7 +11,7 @@ from sciagent.api.memory import MemoryManagerConfig
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
-from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.task_manager.imaging.analytical_feature_tracking import AnalyticalFeatureTrackingTaskManager
 from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
 from eaa.tool.bo import BayesianOptimizationTool
@@ -30,8 +30,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
-        use_feature_tracking_subtask: bool = False,
-        feature_tracking_kwargs: Optional[dict] = None,
         message_db_path: Optional[str] = None,
         build: bool = True,
         line_scan_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
@@ -83,18 +81,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             2 tuples, where the first tuple gives the lower bounds and the
             second tuple gives the upper bounds. The order of the parameters
             should match the order of the initial parameters.
-        use_feature_tracking_subtask : bool, optional
-            If True, a feature tracking sub-task manager will be created and
-            runs when a 2D image is acquired to restore drifted FOV.
-        feature_tracking_kwargs : dict, optional
-            The kwargs for the feature tracking sub-task manager. Required
-            if `use_feature_tracking_subtask` is True. The dictionary should
-            contain:
-            - `y_range`: Tuple[float, float] The range of the y-coordinate of the feature.
-            - `x_range`: Tuple[float, float] The range of the x-coordinate of the feature.
-
-            Initial positions should not be included in the dictionary because
-            they will be determined by the logic.
         message_db_path : Optional[str], optional
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
@@ -130,9 +116,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.last_acquisition_count_registered = 0
         self.last_acquisition_count_stitched = 0
         
-        self.use_feature_tracking_subtask = use_feature_tracking_subtask
-        self.feature_tracking_task_manager: Optional[FeatureTrackingTaskManager] = None
-        self.feature_tracking_kwargs = feature_tracking_kwargs
+        self.feature_tracking_task_manager: Optional[AnalyticalFeatureTrackingTaskManager] = None
         
         self.line_scan_tool_x_coordinate_args = line_scan_tool_x_coordinate_args
         self.line_scan_tool_y_coordinate_args = line_scan_tool_y_coordinate_args
@@ -200,6 +184,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         initial_sampling_window_size: Optional[Tuple[float, ...]] = None,
         n_max_bo_iterations: int = 99,
         parameter_change_step_limit: Optional[float | Tuple[float, ...]] = None,
+        correlation_threshold: float = 0.2,
         *args, **kwargs
     ):
         """Run the focusing task.
@@ -224,6 +209,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             are clipped to this limit if the absolute difference between the one
             suggested by BO and the current parameter value is larger than this limit.
             If None, no limit is applied.
+        correlation_threshold: float
+            The threshold of the correlation value to consider the feature present
+            in the current image.
         """
         self.prerun_check(initial_sampling_window_size, parameter_change_step_limit)
         self.initialize_kwargs_buffers(initial_line_scan_kwargs, initial_2d_scan_kwargs)
@@ -236,6 +224,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             current_x=np.array(list(self.initial_parameters.values())),
             sampling_range=initial_sampling_window_size,
             n=n_initial_points,
+            correlation_threshold=correlation_threshold,
         )
         self.bo_tool.build(acquisition_function_kwargs=None)
         
@@ -248,7 +237,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             suggestion_message = f"Suggested parameter: {p_suggested}"
             logger.info(suggestion_message)
             self.record_system_message(suggestion_message)
-            self.run_tuning_iteration(p_suggested)
+            self.run_tuning_iteration(p_suggested, correlation_threshold=correlation_threshold)
         report = self.generate_report_csv()
         final_report_message = f"Final report:\n{report}"
         logger.info(final_report_message)
@@ -311,23 +300,31 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             p_suggested = p_current + signs * step_sizes
         return p_suggested
     
-    def find_offset(self) -> np.ndarray:
-        """Find the offset between the latest image and the previous image.
+    def find_offset_and_feature_presence(
+        self, 
+        correlation_threshold: float = 0.2
+    ) -> Tuple[np.ndarray, bool]:
+        """Find the offset between the latest image and the previous image 
+        and check if the feature is present.
 
         Returns
         -------
         np.ndarray
             The offset between the latest image and the previous image.
             Offset is in physical units, i.e., pixel size is already accounted for.
+        bool
+            Whether the feature is present in the current image.
         """
         image_k = self.acquisition_tool.image_k
         image_km1 = self.acquisition_tool.image_km1
-        shift = self.image_registration_tool.register_images(
+        res = self.image_registration_tool.register_images(
             image_t=self.image_registration_tool.process_image(image_k),
             image_r=self.image_registration_tool.process_image(image_km1),
             psize_t=self.acquisition_tool.psize_k,
-            psize_r=self.acquisition_tool.psize_km1
-        ).astype(float)
+            psize_r=self.acquisition_tool.psize_km1,
+            return_correlation_value=True,
+        )
+        shift, correlation_value = json.loads(res)["offset"], json.loads(res)["correlation_value"]
         
         # Count in the difference of scan positions.
         scan_pos_diff = np.array([
@@ -336,7 +333,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             for dir in ["y", "x"]
         ])
         shift += scan_pos_diff
-        return shift
+        return shift, correlation_value >= correlation_threshold
     
     def apply_offset_to_kwargs_buffers(self, offset: np.ndarray):
         for arg in self.line_scan_tool_x_coordinate_args:
@@ -353,6 +350,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         current_x: np.ndarray,
         sampling_range: np.ndarray,
         n: int = 5,
+        correlation_threshold: float = 0.2,
     ):
         if len(sampling_range) != len(self.parameter_names):
             raise ValueError(
@@ -369,9 +367,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         xs = np.linspace(current_x - sampling_range, current_x + sampling_range, n)
         for x in xs:
-            self.run_tuning_iteration(x)
+            self.run_tuning_iteration(x, correlation_threshold=correlation_threshold)
 
-    def run_tuning_iteration(self, x: np.ndarray):
+    def run_tuning_iteration(self, x: np.ndarray, correlation_threshold: float = 0.2):
         if len(x) != len(self.parameter_names):
             raise ValueError(
                 f"The length of x must be the same as the number of parameters, "
@@ -380,7 +378,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         x = np.array(x)
         self.param_setting_tool.set_parameters(x)
         self.run_2d_scan()
-        offset = self.find_offset()
+        offset, is_present = self.find_offset_and_feature_presence(correlation_threshold)
+        if not is_present:
+            msg = f"Feature is not present in the current image. Running feature tracking sub-task."
+            logger.info(msg)
+            self.record_system_message(msg)
+            offset = self.run_feature_tracking_subtask(correlation_threshold)
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
         self.update_bo_model(fwhm)
@@ -392,3 +395,24 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         for x, fwhm in zip(xs, fwhms):
             report += f"{x[0]},{fwhm[0]}\n"
         return report
+
+    def run_feature_tracking_subtask(self, correlation_threshold: float = 0.2):
+        if self.feature_tracking_task_manager is None:
+            self.feature_tracking_task_manager = AnalyticalFeatureTrackingTaskManager(
+                image_acquisition_tool=self.acquisition_tool,
+                image_acquisition_tool_x_coordinate_args=self.image_acquisition_tool_x_coordinate_args,
+                image_acquisition_tool_y_coordinate_args=self.image_acquisition_tool_y_coordinate_args,
+                message_db_path=self.message_db_path,
+            )
+        offset = self.feature_tracking_task_manager.run(
+            current_acquisition_kwargs=self.image_acquisition_kwargs,
+            reference_image=self.acquisition_tool.image_km1,
+            step_size=[
+                self.acquisition_tool.image_acquisition_call_history[-1]["size_y"] * 0.8, 
+                self.acquisition_tool.image_acquisition_call_history[-1]["size_x"] * 0.8
+            ],
+            reference_image_pixel_size=self.acquisition_tool.psize_km1,
+            n_max_rounds=20,
+            correlation_threshold=correlation_threshold,
+        )
+        return offset
