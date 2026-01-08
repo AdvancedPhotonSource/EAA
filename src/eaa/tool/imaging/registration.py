@@ -1,12 +1,13 @@
-from typing import Annotated, List, Literal
+from typing import Annotated, List, Literal, Tuple
 import logging
+import json
 
 import numpy as np
 import scipy.ndimage as ndi
 from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
-from eaa.image_proc import windowed_phase_cross_correlation
+from eaa.image_proc import phase_cross_correlation
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +141,10 @@ class ImageRegistration(BaseTool):
         image_t: np.ndarray, 
         image_r: np.ndarray, 
         psize_t: float, 
-        psize_r: float
-    ) -> np.ndarray:
+        psize_r: float,
+        return_correlation_value: bool = False,
+        use_hanning_window: bool = True,
+    ) -> np.ndarray | Tuple[np.ndarray, float] | str:
         """
         Register the target image with the reference image.
         
@@ -155,15 +158,23 @@ class ImageRegistration(BaseTool):
             The pixel size of the target image.
         psize_r : float
             The pixel size of the reference image.
+        return_correlation_value : bool, optional
+            If True, the correlation value is returned along with the offset.
+        use_hanning_window : bool, optional
+            If True, a Hanning window is used to smooth the images before the
+            correlation is computed.
 
         Returns
         -------
-        np.ndarray
-            The offset of the target image with respect to the reference image. If the
+        np.ndarray | str
+            If `return_correlation_value` is False, the offset of the target 
+            image with respect to the reference image is returned. If the
             target image is shifted to the right compared to the reference image, the
             result will have a positive x-component; if the target image is shifted
             to the bottom, the result will have a positive y-component. The returned
             values are in physical units, i.e., pixel size is already accounted for.
+            If `return_correlation_value` is True, a stringified JSON object with the
+            keys "offset" and "correlation_value" is returned.
         """
         # Handle pixel size and image size differences
         if psize_t != psize_r:
@@ -198,10 +209,15 @@ class ImageRegistration(BaseTool):
                         f"Invalid value for image_coordinates_origin: {self.image_coordinates_origin}"
                     )
         
-        offset = windowed_phase_cross_correlation(image_t, image_r)
+        offset, correlation_value = phase_cross_correlation(
+            image_t, image_r, return_correlation_value=return_correlation_value, use_hanning_window=use_hanning_window
+        )
         
         # Convert the offset from pixel units to physical units. We use psize_r here
         # since the target image has already been resized to have the same pixel size
         # as the reference image.
         offset = offset * psize_r
-        return offset
+        if return_correlation_value:
+            return json.dumps({"offset": list(offset), "correlation_value": correlation_value})
+        else:
+            return offset

@@ -1,4 +1,4 @@
-from typing import Literal, Optional, List
+from typing import Literal, Optional, List, Tuple
 
 import numpy as np
 from PIL import Image
@@ -50,10 +50,12 @@ def stitch_images(
     return buffer
 
 
-def windowed_phase_cross_correlation(
+def phase_cross_correlation(
     moving: np.ndarray, 
     ref: np.ndarray, 
-) -> np.ndarray:
+    return_correlation_value: bool = False,
+    use_hanning_window: bool = True,
+) -> np.ndarray | Tuple[np.ndarray, float]:
     """Phase correlation with windowing. The result gives
     the offset of the moving image with respect to the reference image.
     If the moving image is shifted to the right, the result will have a
@@ -66,6 +68,11 @@ def windowed_phase_cross_correlation(
         A 2D image.
     ref : np.ndarray
         A 2D image.
+    return_correlation_value : bool, optional
+        If True, the correlation value is returned along with the offset.
+    use_hanning_window : bool, optional
+        If True, a Hanning window is used to smooth the images before the
+        correlation is computed.
 
     Returns
     -------
@@ -75,12 +82,16 @@ def windowed_phase_cross_correlation(
     assert np.all(np.array(moving.shape) == np.array(ref.shape)), (
         "The shapes of the moving and reference images must be the same."
     )
-    win_y = np.hanning(moving.shape[0])
-    win_x = np.hanning(moving.shape[1])
-    win = np.outer(win_y, win_x)
+    if use_hanning_window:
+        win_y = np.hanning(moving.shape[0])
+        win_x = np.hanning(moving.shape[1])
+        win = np.outer(win_y, win_x)
     
-    f_moving = np.fft.fft2(moving * win)
-    f_ref = np.fft.fft2(ref * win)
+        f_moving = np.fft.fft2(moving * win)
+        f_ref = np.fft.fft2(ref * win)
+    else:
+        f_moving = np.fft.fft2(moving)
+        f_ref = np.fft.fft2(ref)
     
     f_corr = f_moving * f_ref.conj()
     f_corr = f_corr / np.abs(f_corr)
@@ -90,7 +101,10 @@ def windowed_phase_cross_correlation(
     for i in range(2):
         if shift[i] > map.shape[i] / 2:
             shift[i] -= map.shape[i]
-    return shift
+    if return_correlation_value:
+        return shift, np.max(map)
+    else:
+        return shift
 
 
 def physical_pos_to_pixel(
