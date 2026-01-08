@@ -205,6 +205,7 @@ class SimulatedAcquireImage(AcquireImage):
                 np.arange(self.whole_image.shape[1])
             ),
             self.whole_image,
+            bounds_error=False,
         )
         
     def set_blur(self, blur: float):
