@@ -3,6 +3,8 @@ from typing import Literal, Optional, List, Tuple
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+from sciagent.message_proc import generate_openai_message
+from sciagent.task_manager.base import BaseTaskManager
 
 
 def stitch_images(
@@ -290,3 +292,45 @@ def add_marker_to_imgae(
         raise ValueError(f"Invalid marker type: {marker_type}")
         
     return ax.get_figure()
+
+
+def check_feature_presence_llm(
+    task_manager: Optional[BaseTaskManager],
+    image: np.ndarray,
+    reference_image: np.ndarray,
+    n_votes: int = 1,
+) -> bool:
+    """Lets an LLM judge if the features in the reference image 
+    are present in the current image.
+    
+    Returns
+    -------
+    bool
+        Whether the feature is present in the current image.
+    """
+    stitched_image = stitch_images([reference_image, image], gap=10)
+    message = generate_openai_message(\
+        role="system",
+        content=(
+            "Are the non-periodic features in the image on the left also present in the image on the right?\n"
+            "- Features don't have to be exactly aligned, and one may be blurrier than another.\n"
+            "- 'Periodic features' refers to repeating patterns like grids, repeating dots, etc. "
+            "They should not be considered as features.\n"
+            "- Just answer with 'yes' or 'no'."
+        ),
+        image=stitched_image
+    )
+    votes = []
+    for _ in range(n_votes):
+        while True:
+            response, outgoing = task_manager.agent.receive(
+                message,
+                return_outgoing_message=True
+            )
+            if task_manager is not None:
+                task_manager.update_message_history(outgoing, update_context=False, update_full_history=True)
+                task_manager.update_message_history(response, update_context=False, update_full_history=True)
+            if "yes" in response["content"].lower() or "no" in response["content"].lower():
+                votes.append(True if "yes" in response["content"].lower() else False)
+                break
+    return np.mean(votes) >= 0.5
