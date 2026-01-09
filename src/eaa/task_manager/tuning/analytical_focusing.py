@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Sequence
+from typing import Optional, Tuple, Sequence, Literal
 import logging
 import copy
 import json
@@ -16,6 +16,7 @@ from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
 from eaa.tool.bo import BayesianOptimizationTool
 from eaa.util import to_numpy
+from eaa.image_proc import check_feature_presence_llm
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         initial_sampling_window_size: Optional[Tuple[float, ...]] = None,
         n_max_bo_iterations: int = 99,
         parameter_change_step_limit: Optional[float | Tuple[float, ...]] = None,
-        correlation_threshold: float = 0.2,
+        termination_behavior: Literal["ask", "return"] = "ask",
         *args, **kwargs
     ):
         """Run the focusing task.
@@ -209,39 +210,52 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             are clipped to this limit if the absolute difference between the one
             suggested by BO and the current parameter value is larger than this limit.
             If None, no limit is applied.
-        correlation_threshold: float
-            The threshold of the correlation value to consider the feature present
-            in the current image.
+        termination_behavior: Literal["ask", "return"]
+            The behavior when the task manager reaches the maximum number of Bayesian
+            optimization iterations. If "ask", the task manager will ask the user for
+            input. If "return", the task manager will return.
         """
-        self.prerun_check(initial_sampling_window_size, parameter_change_step_limit)
-        self.initialize_kwargs_buffers(initial_line_scan_kwargs, initial_2d_scan_kwargs)
+        try:
+            self.prerun_check(initial_sampling_window_size, parameter_change_step_limit)
+            self.initialize_kwargs_buffers(initial_line_scan_kwargs, initial_2d_scan_kwargs)
+            
+            # Initial 2D scan to populate image buffer of acquisition tool.
+            self.run_2d_scan()
+            
+            # Initialize BO tool.
+            self.collect_initial_data_for_bo(
+                current_x=np.array(list(self.initial_parameters.values())),
+                sampling_range=initial_sampling_window_size,
+                n=n_initial_points,
+            )
+            self.bo_tool.build(acquisition_function_kwargs=None)
+            
+            # Run Bayesian optimization.
+            for i_iter in range(n_max_bo_iterations):
+                iter_message = f"Running Bayesian optimization iteration {i_iter}..."
+                logger.info(iter_message)
+                self.record_system_message(iter_message)
+                p_suggested = self.get_suggested_next_parameters(parameter_change_step_limit)
+                suggestion_message = f"Suggested parameter: {p_suggested}"
+                logger.info(suggestion_message)
+                self.record_system_message(suggestion_message)
+                self.run_tuning_iteration(p_suggested)
+            report = self.generate_report_csv()
+            final_report_message = f"Final report:\n{report}"
+            logger.info(final_report_message)
+            self.record_system_message(final_report_message, update_context=True)
+        except KeyboardInterrupt:
+            pass
         
-        # Initial 2D scan to populate image buffer of acquisition tool.
-        self.run_2d_scan()
-        
-        # Initialize BO tool.
-        self.collect_initial_data_for_bo(
-            current_x=np.array(list(self.initial_parameters.values())),
-            sampling_range=initial_sampling_window_size,
-            n=n_initial_points,
-            correlation_threshold=correlation_threshold,
-        )
-        self.bo_tool.build(acquisition_function_kwargs=None)
-        
-        # Run Bayesian optimization.
-        for i_iter in range(n_max_bo_iterations):
-            iter_message = f"Running Bayesian optimization iteration {i_iter}..."
-            logger.info(iter_message)
-            self.record_system_message(iter_message)
-            p_suggested = self.get_suggested_next_parameters(parameter_change_step_limit)
-            suggestion_message = f"Suggested parameter: {p_suggested}"
-            logger.info(suggestion_message)
-            self.record_system_message(suggestion_message)
-            self.run_tuning_iteration(p_suggested, correlation_threshold=correlation_threshold)
-        report = self.generate_report_csv()
-        final_report_message = f"Final report:\n{report}"
-        logger.info(final_report_message)
-        self.record_system_message(final_report_message)
+        if termination_behavior == "ask":
+            self.run_conversation()
+        elif termination_behavior == "return":
+            return
+        else:
+            raise ValueError(
+                f"Invalid termination behavior: {termination_behavior}. "
+                "Must be one of 'ask' or 'return'."
+            )
         
     def initialize_kwargs_buffers(
         self, initial_line_scan_kwargs: dict, initial_2d_scan_kwargs: dict
@@ -300,10 +314,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             p_suggested = p_current + signs * step_sizes
         return p_suggested
     
-    def find_offset_and_feature_presence(
-        self, 
-        correlation_threshold: float = 0.2
-    ) -> Tuple[np.ndarray, bool]:
+    def find_offset_and_feature_presence(self) -> Tuple[np.ndarray, bool]:
         """Find the offset between the latest image and the previous image 
         and check if the feature is present.
 
@@ -317,14 +328,24 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         """
         image_k = self.acquisition_tool.image_k
         image_km1 = self.acquisition_tool.image_km1
-        res = self.image_registration_tool.register_images(
+        
+        if self.llm_config is None:
+            logger.warning("`llm_config` is not provided. Unable to check if the feature is present.")
+            is_present = True
+        else:
+            is_present = check_feature_presence_llm(
+                task_manager=self,
+                image=image_k,
+                reference_image=image_km1,
+            )
+        
+        shift = self.image_registration_tool.register_images(
             image_t=self.image_registration_tool.process_image(image_k),
             image_r=self.image_registration_tool.process_image(image_km1),
             psize_t=self.acquisition_tool.psize_k,
             psize_r=self.acquisition_tool.psize_km1,
-            return_correlation_value=True,
+            return_correlation_value=False,
         )
-        shift, correlation_value = json.loads(res)["offset"], json.loads(res)["correlation_value"]
         
         # Count in the difference of scan positions.
         scan_pos_diff = np.array([
@@ -333,7 +354,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             for dir in ["y", "x"]
         ])
         shift += scan_pos_diff
-        return shift, correlation_value >= correlation_threshold
+        return shift, is_present
     
     def apply_offset_to_kwargs_buffers(self, offset: np.ndarray):
         for arg in self.line_scan_tool_x_coordinate_args:
@@ -350,7 +371,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         current_x: np.ndarray,
         sampling_range: np.ndarray,
         n: int = 5,
-        correlation_threshold: float = 0.2,
     ):
         if len(sampling_range) != len(self.parameter_names):
             raise ValueError(
@@ -367,9 +387,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         xs = np.linspace(current_x - sampling_range, current_x + sampling_range, n)
         for x in xs:
-            self.run_tuning_iteration(x, correlation_threshold=correlation_threshold)
+            self.run_tuning_iteration(x)
 
-    def run_tuning_iteration(self, x: np.ndarray, correlation_threshold: float = 0.2):
+    def run_tuning_iteration(self, x: np.ndarray):
         if len(x) != len(self.parameter_names):
             raise ValueError(
                 f"The length of x must be the same as the number of parameters, "
@@ -378,12 +398,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         x = np.array(x)
         self.param_setting_tool.set_parameters(x)
         self.run_2d_scan()
-        offset, is_present = self.find_offset_and_feature_presence(correlation_threshold)
+        offset, is_present = self.find_offset_and_feature_presence()
         if not is_present:
-            msg = f"Feature is not present in the current image. Running feature tracking sub-task."
+            msg = "Feature is not present in the current image. Running feature tracking sub-task."
             logger.info(msg)
             self.record_system_message(msg)
-            offset = self.run_feature_tracking_subtask(correlation_threshold)
+            offset = self.run_feature_tracking_subtask()
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
         self.update_bo_model(fwhm)
@@ -396,9 +416,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             report += f"{x[0]},{fwhm[0]}\n"
         return report
 
-    def run_feature_tracking_subtask(self, correlation_threshold: float = 0.2):
+    def run_feature_tracking_subtask(self):
         if self.feature_tracking_task_manager is None:
             self.feature_tracking_task_manager = AnalyticalFeatureTrackingTaskManager(
+                llm_config=self.llm_config,
                 image_acquisition_tool=self.acquisition_tool,
                 image_acquisition_tool_x_coordinate_args=self.image_acquisition_tool_x_coordinate_args,
                 image_acquisition_tool_y_coordinate_args=self.image_acquisition_tool_y_coordinate_args,
@@ -413,6 +434,5 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             ],
             reference_image_pixel_size=self.acquisition_tool.psize_km1,
             n_max_rounds=20,
-            correlation_threshold=correlation_threshold,
         )
         return offset

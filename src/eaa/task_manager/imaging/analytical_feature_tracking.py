@@ -1,6 +1,5 @@
 from typing import Optional, Tuple
 import copy
-import json
 import logging
 
 import numpy as np
@@ -10,6 +9,7 @@ from sciagent.api.memory import MemoryManagerConfig
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.registration import ImageRegistration
 from eaa.task_manager.imaging.base import ImagingBaseTaskManager
+from eaa.image_proc import check_feature_presence_llm
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,8 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
         """
         if image_acquisition_tool is None:
             raise ValueError("image_acquisition_tool must be provided.")
+        if llm_config is None:
+            raise ValueError("llm_config must be provided for feature presence detection.")
         
         self.image_acquisition_tool = image_acquisition_tool
         self.image_registration_tool = self.create_image_registration_tool(image_acquisition_tool)
@@ -143,7 +145,6 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
         step_size: Tuple[float, float],
         reference_image_pixel_size: float = 1.0,
         n_max_rounds: int = 20,
-        correlation_threshold: float = 0.7,
     ) -> np.ndarray:
         """Run the feature tracking task manager.
         
@@ -178,39 +179,22 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
             acquisition_kwargs = self.update_kwargs_buffers(
                 copy.deepcopy(initial_acquisition_kwargs), y_delta, x_delta
             )
-            current_image_path = self.image_acquisition_tool.acquire_image(**acquisition_kwargs)
+            self.image_acquisition_tool.acquire_image(**acquisition_kwargs)
             image = self.image_acquisition_tool.image_k
             
             # Get offset with windowing
-            res = json.loads(
-                self.image_registration_tool.register_images(
-                    image, 
-                    reference_image, 
-                    psize_t=self.image_acquisition_tool.psize_k,
-                    psize_r=self.image_registration_tool.reference_pixel_size,
-                    return_correlation_value=True,
-                    use_hanning_window=True
-                )
+            offset = self.image_registration_tool.register_images(
+                image, 
+                reference_image, 
+                psize_t=self.image_acquisition_tool.psize_k,
+                psize_r=self.image_registration_tool.reference_pixel_size,
+                return_correlation_value=False,
+                use_hanning_window=True
             )
-            offset = res["offset"]
-
-            # Get correlation value without windowing
-            res = json.loads(
-                self.image_registration_tool.register_images(
-                    image, 
-                    reference_image, 
-                    psize_t=self.image_acquisition_tool.psize_k,
-                    psize_r=self.image_registration_tool.reference_pixel_size,
-                    return_correlation_value=True,
-                    use_hanning_window=False
-                )
-            )
-            correlation_value = res["correlation_value"]
-            logger.info(f"Correlation value: {correlation_value}")
-            self.record_system_message(
-                f"Correlation value: {correlation_value}",
-                image_path=current_image_path,
-            )
-            if correlation_value > correlation_threshold:
+            if check_feature_presence_llm(
+                task_manager=self,
+                image=image,
+                reference_image=reference_image,
+            ):
                 break
         return np.array([y_delta, x_delta]) + offset
