@@ -499,3 +499,239 @@ class BayesianOptimizationTool(BaseTool):
 
         candidates = self.untransform_data(x=candidates)[0]
         return candidates.detach()
+
+
+class QuadraticOptimizationTool(BaseTool):
+    name: str = "quadratic_optimization"
+
+    def __init__(
+        self,
+        negative_definite_tolerance: float = 1e-10,
+        require_approval: bool = False,
+        *args,
+        **kwargs,
+    ):
+        """A lightweight optimizer that fits a quadratic surface to observations.
+
+        Unlike the Bayesian optimizer, this tool works purely with closed-form
+        quadratic regression and returns the maximizer of the fitted surface.
+        """
+        self.n_dims_in: int | None = None
+        self.n_observations: int = 1
+        self.negative_definite_tolerance = negative_definite_tolerance
+        self.xs_untransformed: torch.Tensor | None = None
+        self.ys_untransformed: torch.Tensor | None = None
+        super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
+        
+    @property
+    def xs_transformed(self) -> torch.Tensor:
+        return self.xs_untransformed
+
+    @property
+    def ys_transformed(self) -> torch.Tensor:
+        return self.ys_untransformed
+
+    def validate_x(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+        if x.ndim != 2:
+            raise ValueError(
+                f"Expected input data of shape (n_samples, n_features), but got {tuple(x.shape)}."
+            )
+        if self.n_dims_in is None:
+            self.n_dims_in = x.shape[1]
+        elif x.shape[1] != self.n_dims_in:
+            raise ValueError(
+                f"Expected input dimensionality {self.n_dims_in}, but received {x.shape[1]}."
+            )
+        return x
+
+    def validate_y(self, y: torch.Tensor, n_samples: int) -> torch.Tensor:
+        if y.ndim == 1:
+            y = y.unsqueeze(-1)
+        if y.ndim != 2:
+            raise ValueError(
+                f"Expected output data of shape (n_samples, 1), but got {tuple(y.shape)}."
+            )
+        if y.shape[1] != self.n_observations:
+            raise ValueError(
+                f"Quadratic optimization only supports a single objective value but received {y.shape[1]}."
+            )
+        if y.shape[0] != n_samples:
+            raise ValueError(
+                f"Mismatched number of samples between x ({n_samples}) and y ({y.shape[0]})."
+            )
+        return y
+
+    def build_design_matrix(self, x: torch.Tensor) -> torch.Tensor:
+        """Construct the design matrix for quadratic regression."""
+        n_samples, n_features = x.shape
+        features = [torch.ones((n_samples, 1), dtype=x.dtype, device=x.device), x]
+        quadratic_terms = []
+        for i in range(n_features):
+            for j in range(i, n_features):
+                term = (x[:, i] * x[:, j]).unsqueeze(-1)
+                quadratic_terms.append(term)
+        if quadratic_terms:
+            features.append(torch.cat(quadratic_terms, dim=1))
+        return torch.cat(features, dim=1)
+
+    def required_num_points(self) -> int:
+        n_quad_terms = self.n_dims_in * (self.n_dims_in + 1) // 2
+        return 1 + self.n_dims_in + n_quad_terms
+
+    def fit_quadratic(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Fit the quadratic surface y = x^T Q x + r^T x + c."""
+        design = self.build_design_matrix(self.xs_untransformed)
+        y = self.ys_untransformed
+        try:
+            solution = torch.linalg.lstsq(design, y).solution
+        except RuntimeError:
+            solution = torch.linalg.pinv(design) @ y
+        solution = solution.squeeze(-1)
+
+        idx = 0
+        constant = solution[idx]
+        idx += 1
+        linear = solution[idx : idx + self.n_dims_in]
+        idx += self.n_dims_in
+        quad_coeffs = solution[idx:]
+
+        Q = torch.zeros(
+            (self.n_dims_in, self.n_dims_in),
+            dtype=solution.dtype,
+            device=solution.device,
+        )
+        q_idx = 0
+        for i in range(self.n_dims_in):
+            for j in range(i, self.n_dims_in):
+                coeff = quad_coeffs[q_idx]
+                q_idx += 1
+                if i == j:
+                    Q[i, j] = coeff
+                else:
+                    half_coeff = coeff / 2
+                    Q[i, j] = half_coeff
+                    Q[j, i] = half_coeff
+        return Q, linear, constant
+
+    def evaluate_quadratic(
+        self,
+        x: torch.Tensor | np.ndarray,
+        Q: torch.Tensor | np.ndarray,
+        linear: torch.Tensor | np.ndarray,
+        constant: float | torch.Tensor | np.ndarray,
+    ) -> torch.Tensor:
+        """Evaluate y = x^T Q x + linear^T x + constant for each row in x.
+
+        Parameters
+        ----------
+        x : torch.Tensor | np.ndarray
+            A tensor or numpy array of shape (n_samples, n_features).
+        Q : torch.Tensor | np.ndarray
+            A square tensor or numpy array of shape (n_features, n_features).
+        linear : torch.Tensor | np.ndarray
+            A tensor or numpy array of shape (n_features,).
+        constant : float | torch.Tensor | np.ndarray
+            A scalar constant term.
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor of shape (n_samples, 1) containing quadratic values.
+        """
+        x_tensor = to_tensor(x).float()
+        Q_tensor = to_tensor(Q).float()
+        linear_tensor = to_tensor(linear).float()
+        constant_tensor = to_tensor(constant).float()
+
+        if x_tensor.ndim == 1:
+            x_tensor = x_tensor.unsqueeze(0)
+        if x_tensor.ndim != 2:
+            raise ValueError(
+                f"Expected x of shape (n_samples, n_features), but got {tuple(x_tensor.shape)}."
+            )
+        if Q_tensor.ndim != 2 or Q_tensor.shape[0] != Q_tensor.shape[1]:
+            raise ValueError(
+                f"Expected Q to be square, but got shape {tuple(Q_tensor.shape)}."
+            )
+        if x_tensor.shape[1] != Q_tensor.shape[0]:
+            raise ValueError(
+                f"Expected x features to match Q dimensions, but got {x_tensor.shape[1]} and {Q_tensor.shape[0]}."
+            )
+        if linear_tensor.ndim != 1 or linear_tensor.shape[0] != x_tensor.shape[1]:
+            raise ValueError(
+                f"Expected linear to have shape ({x_tensor.shape[1]},), but got {tuple(linear_tensor.shape)}."
+            )
+
+        quadratic = torch.einsum("bi,ij,bj->b", x_tensor, Q_tensor, x_tensor)
+        return (quadratic + x_tensor @ linear_tensor + constant_tensor)[:, None]
+
+    @tool(name="update", return_type=ToolReturnType.NUMBER)
+    def update(
+        self,
+        x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
+        y: Annotated[
+            torch.Tensor | np.ndarray, "The observations of the objective function."
+        ],
+    ) -> None:
+        """Update the quadratic optimizer with new observations.
+
+        Parameters
+        ----------
+        x : torch.Tensor | np.ndarray
+            A tensor or numpy array of shape (n_samples, n_features) giving the
+            *un-transformed* input parameters.
+        y : torch.Tensor | np.ndarray
+            A tensor or numpy array of shape (n_samples, 1) giving the
+            *un-transformed* objective values.
+        """
+        x_tensor = to_tensor(x).float()
+        y_tensor = to_tensor(y).float()
+        x_tensor = self.validate_x(x_tensor)
+        y_tensor = self.validate_y(y_tensor, x_tensor.shape[0])
+
+        if self.xs_untransformed is None:
+            self.xs_untransformed = x_tensor
+            self.ys_untransformed = y_tensor
+        else:
+            self.xs_untransformed = torch.cat([self.xs_untransformed, x_tensor], dim=0)
+            self.ys_untransformed = torch.cat([self.ys_untransformed, y_tensor], dim=0)
+
+    @tool(name="suggest", return_type=ToolReturnType.NUMBER)
+    def suggest(
+        self,
+    ) -> Annotated[torch.Tensor, "suggested_points"]:
+        """Return the maximizer of the fitted quadratic surface.
+
+        Returns
+        -------
+        torch.Tensor
+            A (1, n_features) tensor giving the suggested point.
+        """
+        if self.n_dims_in is None or self.xs_untransformed is None:
+            raise ValueError("No observations available. Please call `update` first.")
+
+        if self.xs_untransformed.shape[0] < self.required_num_points():
+            raise ValueError(
+                f"Quadratic fitting requires at least {self.required_num_points()} "
+                f"observations, but only {self.xs_untransformed.shape[0]} were given."
+            )
+
+        Q, linear, _ = self.fit_quadratic()
+        symmetric_Q = 0.5 * (Q + Q.transpose(0, 1))
+        eigenvalues = torch.linalg.eigvalsh(symmetric_Q)
+        if torch.max(eigenvalues) >= -self.negative_definite_tolerance:
+            raise ValueError(
+                "The fitted quadratic function is not concave; no maximum exists."
+            )
+
+        try:
+            maximizer = -0.5 * torch.linalg.solve(symmetric_Q, linear)
+        except RuntimeError as exc:
+            raise ValueError(
+                "Unable to solve for the maximizer because the quadratic is singular."
+            ) from exc
+
+        maximizer = maximizer.unsqueeze(0)
+        return maximizer.detach()
