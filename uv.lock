@@ -1538,7 +1538,6 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "openai" },
-    { name = "sci-agent" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "tqdm" },
@@ -1562,6 +1561,9 @@ docs = [
     { name = "sphinx" },
     { name = "sphinx-rtd-theme" },
 ]
+local = [
+    { name = "sci-agent" },
+]
 postgresql-vector-store = [
     { name = "psycopg", extra = ["binary"] },
 ]
@@ -1582,7 +1584,8 @@ requires-dist = [
     { name = "openai" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgresql-vector-store'", specifier = ">=3.2.10" },
     { name = "pytest", marker = "extra == 'dev'" },
-    { name = "sci-agent", git = "https://github.com/mdw771/sci-agent" },
+    { name = "sci-agent", marker = "extra == 'local'", directory = "../sci-agent" },
+    { name = "sci-agent", marker = "extra != 'local'", git = "https://github.com/mdw771/sci-agent" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "sphinx", marker = "extra == 'docs'" },
@@ -1590,7 +1593,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["aps-mic", "asksage", "postgresql-vector-store", "docs", "dev"]
+provides-extras = ["local", "aps-mic", "asksage", "postgresql-vector-store", "docs", "dev"]
 
 [[package]]
 name = "ecdsa"
@@ -6202,8 +6205,7 @@ wheels = [
 
 [[package]]
 name = "sci-agent"
-version = "0.1.dev8+g2a0e3e7a8"
-source = { git = "https://github.com/mdw771/sci-agent#2a0e3e7a8b164e30a17274407cd6eb5e75b23c96" }
+source = { directory = "../sci-agent" }
 dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
@@ -6215,6 +6217,25 @@ dependencies = [
     { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "asksageclient", marker = "extra == 'asksage'", specifier = "==1.31" },
+    { name = "chromadb" },
+    { name = "fastapi" },
+    { name = "fastmcp", specifier = ">=2.11.3" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgresql-vector-store'", specifier = ">=3.2.10" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "scikit-image" },
+    { name = "sphinx", marker = "extra == 'docs'" },
+    { name = "sphinx-rtd-theme", marker = "extra == 'docs'" },
+    { name = "tqdm" },
+    { name = "uvicorn", extras = ["standard"] },
+]
+provides-extras = ["asksage", "postgresql-vector-store", "docs", "dev"]
 
 [[package]]
 name = "scikit-image"
