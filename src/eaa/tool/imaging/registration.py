@@ -209,9 +209,14 @@ class ImageRegistration(BaseTool):
                         f"Invalid value for image_coordinates_origin: {self.image_coordinates_origin}"
                     )
         
-        offset, correlation_value = phase_cross_correlation(
-            image_t, image_r, return_correlation_value=return_correlation_value, use_hanning_window=use_hanning_window
-        )
+        if return_correlation_value:
+            offset, correlation_value = phase_cross_correlation(
+                image_t, image_r, return_correlation_value=return_correlation_value, use_hanning_window=use_hanning_window
+            )
+        else:
+            offset = phase_cross_correlation(
+                image_t, image_r, return_correlation_value=return_correlation_value, use_hanning_window=use_hanning_window
+            )
         
         # Convert the offset from pixel units to physical units. We use psize_r here
         # since the target image has already been resized to have the same pixel size

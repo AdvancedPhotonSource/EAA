@@ -52,8 +52,9 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         )
         return task_manager, acquisition_tool
 
-    def test_task_manager_runs(self):
+    def test_task_manager_runs(self, monkeypatch):
         task_manager, acquisition_tool = self._build_task_manager()
+        monkeypatch.setattr(task_manager, "run_conversation", lambda: None)
         n_initial_points = 2
         n_bo_iterations = 1
         task_manager.run(

@@ -1,9 +1,13 @@
 import os
 import argparse
+import pytest
 
 import numpy as np
 import tifffile
 
+from sciagent.api.llm_config import OpenAIConfig
+
+from eaa.task_manager.imaging import analytical_feature_tracking
 from eaa.task_manager.imaging.analytical_feature_tracking import (
     AnalyticalFeatureTrackingTaskManager,
 )
@@ -35,6 +39,11 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
             plot_image_in_log_scale=False,
         )
         task_manager = AnalyticalFeatureTrackingTaskManager(
+            llm_config=OpenAIConfig(
+                model="gpt-4",
+                api_key="fake-key",
+                base_url="https://api.openai.com/v1",
+            ),
             image_acquisition_tool=acquisition_tool,
             image_acquisition_tool_x_coordinate_args=("loc_x",),
             image_acquisition_tool_y_coordinate_args=("loc_y",),
@@ -64,7 +73,18 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
                 task_manager.get_position_deltas(idx, (1, 1)) == expected
             ), f"Index {idx} mismatch"
 
-    def test_feature_tracking_run_returns_expected_offset(self):
+    def test_feature_tracking_run_returns_expected_offset(self, monkeypatch):
+        call_state = {"count": 0}
+
+        def mock_check_feature_presence_llm(**kwargs):
+            call_state["count"] += 1
+            return call_state["count"] > 1
+
+        monkeypatch.setattr(
+            analytical_feature_tracking,
+            "check_feature_presence_llm",
+            mock_check_feature_presence_llm,
+        )
         task_manager, _, image = self._build_task_manager()
         reference_loc = (60, 270)
         size = (100, 100)
@@ -86,7 +106,6 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
             reference_image=reference_image,
             step_size=step_size,
             n_max_rounds=2,
-            correlation_threshold=0.5,
         )
         expected_offset = np.array([-drift[0], -drift[1]])
         np.testing.assert_allclose(offset, expected_offset, atol=1.5)
@@ -105,4 +124,3 @@ if __name__ == "__main__":
         debug=True,
     )
     tester.test_feature_tracking_run_returns_expected_offset()
-

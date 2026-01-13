@@ -345,14 +345,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             psize_t=self.acquisition_tool.psize_k,
             psize_r=self.acquisition_tool.psize_km1,
             return_correlation_value=False,
-        )
+        ).astype(float)
         
         # Count in the difference of scan positions.
         scan_pos_diff = np.array([
             float(self.acquisition_tool.image_acquisition_call_history[-1][f"loc_{dir}"])
             - float(self.acquisition_tool.image_acquisition_call_history[-2][f"loc_{dir}"])
             for dir in ["y", "x"]
-        ])
+        ]).astype(float)
         shift += scan_pos_diff
         return shift, is_present
     
