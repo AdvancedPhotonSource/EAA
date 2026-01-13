@@ -24,6 +24,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+eaa = "eaa.cli:main"
+
 [project.optional-dependencies]
 local = []
 aps_mic = [
@@ -47,6 +50,9 @@ dev = [
 ]
 
 [tool.setuptools_scm]
+
+[tool.setuptools.package-data]
+eaa = ["skills/**"]
 
 [tool.uv.sources]
 sci-agent = [
