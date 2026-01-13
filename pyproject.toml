@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE.txt"}
 dependencies = [
-    "sci-agent",
+    "sci-agent@git+https://github.com/mdw771/sci-agent",
     "matplotlib",
     "numpy",
     "scikit-image",
@@ -24,11 +24,7 @@ dependencies = [
 ]
 dynamic = ["version"]
 
-[project.scripts]
-eaa = "eaa.cli:main"
-
 [project.optional-dependencies]
-local = []
 aps_mic = [
     "bluesky",
     "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
@@ -50,15 +46,6 @@ dev = [
 ]
 
 [tool.setuptools_scm]
-
-[tool.setuptools.package-data]
-eaa = ["skills/**"]
-
-[tool.uv.sources]
-sci-agent = [
-    { git = "https://github.com/mdw771/sci-agent", marker = "extra != 'local'" },
-    { path = "/data/programs/sci-agent", marker = "extra == 'local'" },
-]
 
 [tool.setuptools.packages.find]
 where = ["src"]
