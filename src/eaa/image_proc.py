@@ -1,7 +1,7 @@
 from typing import Literal, Optional, List, Tuple
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
 from sciagent.message_proc import generate_openai_message
 from sciagent.task_manager.base import BaseTaskManager
@@ -9,7 +9,8 @@ from sciagent.task_manager.base import BaseTaskManager
 
 def stitch_images(
     images: list[np.ndarray | Image.Image], 
-    gap: int = 0
+    gap: int = 0,
+    frame: bool = False
 ) -> np.ndarray | Image.Image:
     """Stitch a list of images together.
     
@@ -19,12 +20,72 @@ def stitch_images(
         A list of images to stitch together.
     gap : int, optional
         The horizontal gap between the images.
-        
+    frame : bool, optional
+        If True, a frame is added to each image.
     Returns
     -------
     stitched_image : np.ndarray | Image.Image
         The stitched image.
     """
+    def max_value_for_dtype(img: np.ndarray) -> float:
+        dtype = img.dtype
+        if np.issubdtype(dtype, np.integer):
+            return float(np.iinfo(dtype).max)
+        else:
+            return img.max()
+
+    def should_use_white_frame(image_array: np.ndarray) -> bool:
+        max_value = max_value_for_dtype(image_array)
+        threshold = 128 if max_value >= 255 else max_value / 2
+        return np.mean(image_array < threshold) > 0.5
+
+    def add_frame_to_numpy(image_array: np.ndarray) -> np.ndarray:
+        frame_width = 1
+        framed = image_array.copy()
+        if image_array.ndim == 2 or image_array.shape[2] == 1:
+            max_value = max_value_for_dtype(image_array)
+            frame_value = max_value if should_use_white_frame(image_array) else 0
+            framed[:frame_width, :] = frame_value
+            framed[-frame_width:, :] = frame_value
+            framed[:, :frame_width] = frame_value
+            framed[:, -frame_width:] = frame_value
+            return framed
+
+        max_value = max_value_for_dtype(image_array)
+        frame_color = np.zeros(image_array.shape[2], dtype=image_array.dtype)
+        frame_color[0] = max_value
+        if frame_color.shape[0] > 3:
+            frame_color[3] = max_value
+        framed[:frame_width, :, :] = frame_color
+        framed[-frame_width:, :, :] = frame_color
+        framed[:, :frame_width, :] = frame_color
+        framed[:, -frame_width:, :] = frame_color
+        return framed
+
+    def add_frame_to_pil(image: Image.Image) -> Image.Image:
+        frame_width = 1
+        image_copy = image.copy()
+        if image.mode in {"RGB", "RGBA"}:
+            frame_color = (255, 0, 0, 255) if image.mode == "RGBA" else (255, 0, 0)
+        else:
+            image_array = np.array(image)
+            max_value = max_value_for_dtype(image_array)
+            frame_color = int(max_value) if should_use_white_frame(image_array) else 0
+
+        draw = ImageDraw.Draw(image_copy)
+        draw.rectangle(
+            [0, 0, image_copy.width - 1, image_copy.height - 1],
+            outline=frame_color,
+            width=frame_width,
+        )
+        return image_copy
+
+    if frame:
+        print("Adding frame to images")
+        images = [
+            add_frame_to_numpy(img) if isinstance(img, np.ndarray) else add_frame_to_pil(img)
+            for img in images
+        ]
     if isinstance(images[0], np.ndarray):
         max_shape = (
             max([img.shape[0] for img in images]),
@@ -308,7 +369,7 @@ def check_feature_presence_llm(
     bool
         Whether the feature is present in the current image.
     """
-    stitched_image = stitch_images([reference_image, image], gap=10)
+    stitched_image = stitch_images([reference_image, image], gap=10, frame=True)
     message = generate_openai_message(\
         role="system",
         content=(
