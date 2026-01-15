@@ -219,6 +219,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.prerun_check(initial_sampling_window_size, parameter_change_step_limit)
             self.initialize_kwargs_buffers(initial_line_scan_kwargs, initial_2d_scan_kwargs)
             
+            self.record_system_message(
+                "Interrupt the process and give correction offset anytime by pressing "
+                "Ctrl+C in terminal."
+            )
+            
             # Initial 2D scan to populate image buffer of acquisition tool.
             self.run_2d_scan()
             
@@ -239,7 +244,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 suggestion_message = f"Suggested parameter: {p_suggested}"
                 logger.info(suggestion_message)
                 self.record_system_message(suggestion_message)
-                self.run_tuning_iteration(p_suggested)
+                try:
+                    self.run_tuning_iteration(p_suggested)
+                except KeyboardInterrupt:
+                    if not self.apply_user_correction_offset():
+                        raise
+                    continue
             report = self.generate_report_csv()
             final_report_message = f"Final report:\n{report}"
             logger.info(final_report_message)
@@ -387,7 +397,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         xs = np.linspace(current_x - sampling_range, current_x + sampling_range, n)
         for x in xs:
-            self.run_tuning_iteration(x)
+            while True:
+                try:
+                    self.run_tuning_iteration(x)
+                    break
+                except KeyboardInterrupt:
+                    if not self.apply_user_correction_offset():
+                        raise
 
     def run_tuning_iteration(self, x: np.ndarray):
         if len(x) != len(self.parameter_names):
@@ -407,6 +423,29 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
         self.update_bo_model(fwhm)
+
+    def apply_user_correction_offset(self) -> bool:
+        message = (
+            "Manual correction requested. Enter offset as 'y,x' (blank to stop): "
+        )
+        while True:
+            response = self.get_user_input(message, display_prompt_in_webui=True).strip()
+            if response == "":
+                return False
+            parts = [part for part in response.replace(",", " ").split() if part]
+            if len(parts) != 2:
+                logger.info("Invalid offset format. Use two numbers like 'y,x'.")
+                continue
+            try:
+                offset = np.array([float(parts[0]), float(parts[1])], dtype=float)
+            except ValueError:
+                logger.info("Invalid offset values. Use numeric values like 'y,x'.")
+                continue
+            self.apply_offset_to_kwargs_buffers(offset)
+            correction_message = f"Applied user correction offset: {offset.tolist()}"
+            logger.info(correction_message)
+            self.record_system_message(correction_message)
+            return True
 
     def generate_report_csv(self) -> str:
         xs = self.bo_tool.xs_untransformed.tolist()
