@@ -4,7 +4,7 @@ import logging
 import pytest
 import torch
 
-from eaa.tool.bo import QuadraticOptimizationTool
+from eaa.tool.optimization import QuadraticOptimizationTool
 import test_utils as tutils
 
 logger = logging.getLogger(__name__)

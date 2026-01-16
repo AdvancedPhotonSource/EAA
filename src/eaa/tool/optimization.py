@@ -27,9 +27,11 @@ class BaseSequentialOptimizationTool(BaseTool):
     ):
         self.xs_untransformed: torch.Tensor | None = None
         self.ys_untransformed: torch.Tensor | None = None
-        self.xs_transformed: torch.Tensor | None = None
-        self.ys_transformed: torch.Tensor | None = None
-        super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
+        if not isinstance(getattr(type(self), "xs_transformed", None), property):
+            self.xs_transformed: torch.Tensor | None = None
+        if not isinstance(getattr(type(self), "ys_transformed", None), property):
+            self.ys_transformed: torch.Tensor | None = None
+        super().__init__(*args, require_approval=require_approval, **kwargs)
 
     def build(self, *args, **kwargs) -> None:
         return None
