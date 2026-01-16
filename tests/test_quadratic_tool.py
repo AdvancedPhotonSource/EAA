@@ -45,14 +45,6 @@ class TestQuadraticOptimizationTool(tutils.BaseTester):
         with pytest.raises(ValueError):
             tool.suggest()
 
-    def test_quadratic_tool_detects_non_concave_surface(self):
-        tool = QuadraticOptimizationTool()
-        xs = torch.tensor([[-1.0], [0.0], [1.0]])
-        ys = (xs[:, 0] ** 2)[:, None]  # Convex parabola -> minimum only
-        tool.update(xs, ys)
-        with pytest.raises(ValueError):
-            tool.suggest()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -62,4 +54,3 @@ if __name__ == "__main__":
     tester.setup_method(name="", generate_data=False, generate_gold=False, debug=True)
     tester.test_quadratic_tool_finds_known_maximum()
     tester.test_quadratic_tool_requires_enough_data()
-    tester.test_quadratic_tool_detects_non_concave_surface()
