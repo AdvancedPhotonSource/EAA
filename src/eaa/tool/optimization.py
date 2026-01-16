@@ -25,6 +25,15 @@ class BaseSequentialOptimizationTool(BaseTool):
         *args,
         **kwargs,
     ):
+        """A base class for sequential optimization tools.
+        
+        Subclasses of this class should find the maximizer of the objective function.
+
+        Parameters
+        ----------
+        require_approval : bool, optional
+            Whether to require approval for the tool to be used.
+        """
         self.xs_untransformed: torch.Tensor | None = None
         self.ys_untransformed: torch.Tensor | None = None
         if not isinstance(getattr(type(self), "xs_transformed", None), property):
@@ -63,7 +72,8 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         *args,
         **kwargs,
     ):
-        """The Bayesian optimization tool.
+        """The Bayesian optimization tool that finds the maximizer of
+        the objective function.
 
         Parameters
         ----------
@@ -534,6 +544,7 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
     def __init__(
         self,
         negative_definite_tolerance: float = 1e-10,
+        non_concave_step_limit: float = 1.0,
         require_approval: bool = False,
         *args,
         **kwargs,
@@ -542,10 +553,19 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
 
         Unlike the Bayesian optimizer, this tool works purely with closed-form
         quadratic regression and returns the maximizer of the fitted surface.
+
+        Parameters
+        ----------
+        negative_definite_tolerance : float
+            Tolerance for declaring the quadratic concave.
+        non_concave_step_limit : float
+            Step size to take along the steepest ascent direction when the
+            quadratic fit is not concave.
         """
         self.n_dims_in: int | None = None
         self.n_observations: int = 1
         self.negative_definite_tolerance = negative_definite_tolerance
+        self.non_concave_step_limit = non_concave_step_limit
         super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
         
     @property
@@ -750,10 +770,16 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
         Q, linear, _ = self.fit_quadratic()
         symmetric_Q = 0.5 * (Q + Q.transpose(0, 1))
         eigenvalues = torch.linalg.eigvalsh(symmetric_Q)
+        
+        # When the quadratic is not concave, take a step along the steepest ascent direction.
         if torch.max(eigenvalues) >= -self.negative_definite_tolerance:
-            raise ValueError(
-                "The fitted quadratic function is not concave; no maximum exists."
-            )
+            x_current = self.xs_untransformed[-1]
+            gradient = (symmetric_Q + symmetric_Q.transpose(0, 1)) @ x_current + linear
+            grad_norm = torch.linalg.norm(gradient)
+            if grad_norm == 0:
+                return x_current.unsqueeze(0).detach()
+            step = self.non_concave_step_limit * gradient / grad_norm
+            return (x_current + step).unsqueeze(0).detach()
 
         try:
             maximizer = -0.5 * torch.linalg.solve(symmetric_Q, linear)
