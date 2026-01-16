@@ -68,7 +68,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             },
             n_initial_points=n_initial_points,
             initial_sampling_window_size=(0.5,),
-            n_max_bo_iterations=n_bo_iterations,
+            n_max_iterations=n_bo_iterations,
             parameter_change_step_limit=0.5,
         )
         assert (

@@ -32,6 +32,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         memory_config: Optional[MemoryManagerConfig] = None,
         param_setting_tool: SetParameters = None,
         acquisition_tool: AcquireImage = None,
+        optimization_tool: Optional[BaseSequentialOptimizationTool] = None,
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
         message_db_path: Optional[str] = None,
@@ -52,8 +53,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         4.1. If the same feature remains in the FOV, run image registration to get the offset and
            adjust 1D/2D scan coordinates.
         4.2. If the feature is no longer in the FOV, run a spiral feature tracking to find the feature.
-        5. Repeat 1 - 3 a few times to collect initial data for Bayesian optimization.
-        6. Use Bayesian optimization to suggest new parameters.
+        5. Repeat 1 - 3 a few times to collect initial data for sequential optimization.
+        6. Use sequential optimization to suggest new parameters.
         7. Change parameter. 
         8. Run image registration or feature tracking as in 4.
         9. Run line scan and record the FWHM of the Gaussian fit, update Gaussian process model.
@@ -70,8 +71,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         acquisition_tool : AcquireImage
             The BaseTool object used to acquire data. It should contain a 2D
             image acquisition tool and a line scan tool.
-        bo_tool : BayesianOptimizationTool, optional
-            The Bayesian optimization tool to use.
+        optimization_tool : BaseSequentialOptimizationTool, optional
+            The optimization tool to use. Supported options include
+            `BayesianOptimizationTool` and `QuadraticOptimizationTool`.
         image_registration_tool : ImageRegistration, optional
             The image registration tool. This tool is optional and is only
             used for the feature tracking sub-task if `use_feature_tracking_subtask`
@@ -107,7 +109,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             raise ValueError("`acquisition_tool` must be provided.")
         
         self.acquisition_tool = acquisition_tool
-        self.bo_tool = self.create_bo_tool(parameter_ranges)
+        if optimization_tool is None:
+            self.optimization_tool = self.create_bo_tool(parameter_ranges)
+        else:
+            self.optimization_tool = optimization_tool
         self.image_registration_tool = self.create_image_registration_tool(acquisition_tool)
         
         if hasattr(acquisition_tool, "line_scan_return_gaussian_fit"):
@@ -186,7 +191,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         initial_line_scan_kwargs: dict = None,
         n_initial_points: int = 5,
         initial_sampling_window_size: Optional[Tuple[float, ...]] = None,
-        n_max_bo_iterations: int = 99,
+        n_max_iterations: int = 99,
         parameter_change_step_limit: Optional[float | Tuple[float, ...]] = None,
         termination_behavior: Literal["ask", "return"] = "ask",
         *args, **kwargs
@@ -204,17 +209,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         n_initial_line_scans: int
             The number of initial points to prime the Gaussian process model.
         initial_sampling_range: Optional[Tuple[float, float]]
-            The range over which the initial measurements for Bayesian optimization
+            The range over which the initial measurements for sequential optimization
             are sampled. Should be a tuple with the same length as the number of parameters.
-        n_max_bo_iterations: int
-            The maximum number of Bayesian optimization iterations.
+        n_max_iterations: int
+            The maximum number of sequential optimization iterations.
         parameter_change_step_limit: float
             The limit on the step size of the parameter change. Parameter changes
             are clipped to this limit if the absolute difference between the one
-            suggested by BO and the current parameter value is larger than this limit.
+            suggested by the optimization tool and the current parameter value is larger than this limit.
             If None, no limit is applied.
         termination_behavior: Literal["ask", "return"]
-            The behavior when the task manager reaches the maximum number of Bayesian
+            The behavior when the task manager reaches the maximum number of sequential
             optimization iterations. If "ask", the task manager will ask the user for
             input. If "return", the task manager will return.
         """
@@ -230,17 +235,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             # Initial 2D scan to populate image buffer of acquisition tool.
             self.run_2d_scan()
             
-            # Initialize BO tool.
-            self.collect_initial_data_for_bo(
+            # Initialize optimization tool.
+            self.collect_initial_data_optimization_tool(
                 current_x=np.array(list(self.initial_parameters.values())),
                 sampling_range=initial_sampling_window_size,
                 n=n_initial_points,
             )
-            self.bo_tool.build(acquisition_function_kwargs=None)
+            self.optimization_tool.build(acquisition_function_kwargs=None)
             
-            # Run Bayesian optimization.
-            for i_iter in range(n_max_bo_iterations):
-                iter_message = f"Running Bayesian optimization iteration {i_iter}..."
+            # Run sequential optimization.
+            for i_iter in range(n_max_iterations):
+                iter_message = f"Running sequential optimization iteration {i_iter}..."
                 logger.info(iter_message)
                 self.record_system_message(iter_message)
                 p_suggested = self.get_suggested_next_parameters(parameter_change_step_limit)
@@ -303,11 +308,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.record_system_message(content)
         return res["fwhm"]
     
-    def update_bo_model(self, fwhm: float):
+    def update_optimization_model(self, fwhm: float):
         x = self.param_setting_tool.get_parameter_at_iteration(-1)
         x = np.array(x).reshape(1, -1)
         # Use negative FWHM because we want to minimize the FWHM.
-        self.bo_tool.update(x, -np.array([[fwhm]]))
+        self.optimization_tool.update(x, -np.array([[fwhm]]))
         
     def run_2d_scan(self):
         image_path = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
@@ -318,7 +323,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.record_system_message(content)
 
     def get_suggested_next_parameters(self, step_size_limit: Optional[float | Tuple[float, ...]] = None):
-        p_suggested = to_numpy(self.bo_tool.suggest(n_suggestions=1)[0])
+        p_suggested = to_numpy(self.optimization_tool.suggest(n_suggestions=1)[0])
         p_current = to_numpy(self.param_setting_tool.get_parameter_at_iteration(-1))
         if step_size_limit is not None:
             signs = np.sign(p_suggested - p_current)
@@ -379,7 +384,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         for arg in self.image_acquisition_tool_y_coordinate_args:
             self.image_acquisition_kwargs[arg] += offset[0]
             
-    def collect_initial_data_for_bo(
+    def collect_initial_data_optimization_tool(
         self, 
         current_x: np.ndarray,
         sampling_range: np.ndarray,
@@ -425,7 +430,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             offset = self.run_feature_tracking_subtask()
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
-        self.update_bo_model(fwhm)
+        self.update_optimization_model(fwhm)
 
     def apply_user_correction_offset(self) -> bool:
         message = (
@@ -451,8 +456,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             return True
 
     def generate_report_csv(self) -> str:
-        xs = self.bo_tool.xs_untransformed.tolist()
-        fwhms = self.bo_tool.ys_untransformed.tolist()
+        xs = self.optimization_tool.xs_untransformed.tolist()
+        fwhms = self.optimization_tool.ys_untransformed.tolist()
         report = "Parameters,FWHM\n"
         for x, fwhm in zip(xs, fwhms):
             report += f"{x[0]},{fwhm[0]}\n"
