@@ -14,7 +14,10 @@ from eaa.tool.imaging.param_tuning import SetParameters
 from eaa.task_manager.imaging.analytical_feature_tracking import AnalyticalFeatureTrackingTaskManager
 from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
-from eaa.tool.bo import BayesianOptimizationTool
+from eaa.tool.optimization import (
+    BaseSequentialOptimizationTool,
+    BayesianOptimizationTool,
+)
 from eaa.util import to_numpy
 from eaa.image_proc import check_feature_presence_llm
 

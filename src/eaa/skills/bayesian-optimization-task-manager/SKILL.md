@@ -19,7 +19,7 @@ See `references/api_reference.md` for full signatures.
 import torch
 
 from eaa.task_manager.tuning.bo import BayesianOptimizationTaskManager
-from eaa.tool.bo import BayesianOptimizationTool
+from eaa.tool.optimization import BayesianOptimizationTool
 
 bo_tool = BayesianOptimizationTool(bounds=([0.0, 0.0], [1.0, 1.0]))
 

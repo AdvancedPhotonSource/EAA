@@ -11,7 +11,7 @@ from sciagent.api.memory import MemoryManagerConfig
 
 from eaa.task_manager.tuning.bo import BayesianOptimizationTaskManager
 from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
-from eaa.tool.bo import BayesianOptimizationTool
+from eaa.tool.optimization import BayesianOptimizationTool
 
 logger = logging.getLogger(__name__)
 

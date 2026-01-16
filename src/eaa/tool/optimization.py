@@ -16,7 +16,32 @@ from eaa.util import to_tensor
 logger = logging.getLogger(__name__)
 
 
-class BayesianOptimizationTool(BaseTool):
+class BaseSequentialOptimizationTool(BaseTool):
+    name: str = "base_sequential_optimization"
+
+    def __init__(
+        self,
+        require_approval: bool = False,
+        *args,
+        **kwargs,
+    ):
+        self.xs_untransformed: torch.Tensor | None = None
+        self.ys_untransformed: torch.Tensor | None = None
+        self.xs_transformed: torch.Tensor | None = None
+        self.ys_transformed: torch.Tensor | None = None
+        super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
+
+    def build(self, *args, **kwargs) -> None:
+        return None
+
+    def update(self, *args, **kwargs) -> None:
+        raise NotImplementedError
+
+    def suggest(self, *args, **kwargs) -> torch.Tensor:
+        raise NotImplementedError
+
+
+class BayesianOptimizationTool(BaseSequentialOptimizationTool):
     name: str = "bayesian_optimization"
 
     def __init__(
@@ -102,6 +127,11 @@ class BayesianOptimizationTool(BaseTool):
             to_tensor(kernel_lengthscales) if kernel_lengthscales is not None else None
         )
 
+        self.input_transform = None
+        self.outcome_transform = None
+
+        super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
+
         # Untransformed data
         self.xs_untransformed = torch.tensor([])
         self.ys_untransformed = torch.tensor([])
@@ -109,11 +139,6 @@ class BayesianOptimizationTool(BaseTool):
         # Transformed data
         self.xs_transformed = torch.tensor([])
         self.ys_transformed = torch.tensor([])
-
-        self.input_transform = None
-        self.outcome_transform = None
-
-        super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
 
     def check_x_data(self, data: torch.Tensor):
         if not (data.ndim == 2 and data.shape[1] == self.n_dims_in):
@@ -501,7 +526,7 @@ class BayesianOptimizationTool(BaseTool):
         return candidates.detach()
 
 
-class QuadraticOptimizationTool(BaseTool):
+class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
     name: str = "quadratic_optimization"
 
     def __init__(
@@ -519,8 +544,6 @@ class QuadraticOptimizationTool(BaseTool):
         self.n_dims_in: int | None = None
         self.n_observations: int = 1
         self.negative_definite_tolerance = negative_definite_tolerance
-        self.xs_untransformed: torch.Tensor | None = None
-        self.ys_untransformed: torch.Tensor | None = None
         super().__init__(*args, build=False, require_approval=require_approval, **kwargs)
         
     @property
@@ -701,6 +724,7 @@ class QuadraticOptimizationTool(BaseTool):
     @tool(name="suggest", return_type=ToolReturnType.NUMBER)
     def suggest(
         self,
+        n_suggestions: Annotated[int, "The number of suggestions to return."] = 1,
     ) -> Annotated[torch.Tensor, "suggested_points"]:
         """Return the maximizer of the fitted quadratic surface.
 
@@ -709,6 +733,9 @@ class QuadraticOptimizationTool(BaseTool):
         torch.Tensor
             A (1, n_features) tensor giving the suggested point.
         """
+        if n_suggestions != 1:
+            raise ValueError("Quadratic optimization supports only one suggestion.")
+
         if self.n_dims_in is None or self.xs_untransformed is None:
             raise ValueError("No observations available. Please call `update` first.")
 

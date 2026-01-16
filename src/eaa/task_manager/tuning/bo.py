@@ -8,7 +8,7 @@ from sciagent.tool.base import BaseTool
 from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
 
-from eaa.tool.bo import BayesianOptimizationTool
+from eaa.tool.optimization import BayesianOptimizationTool
 
 logger = logging.getLogger(__name__)
 

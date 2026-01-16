@@ -21,7 +21,7 @@ import numpy as np
 
 from eaa.api.llm_config import OpenAIConfig
 from eaa.task_manager.tuning.bo_mic_optics import MicroscopyOpticsTuningBOTaskManager
-from eaa.tool.bo import BayesianOptimizationTool
+from eaa.tool.optimization import BayesianOptimizationTool
 from eaa.tool.imaging.acquisition import SimulatedAcquireImage
 from eaa.tool.imaging.param_tuning import SimulatedSetParameters
 
