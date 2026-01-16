@@ -363,6 +363,10 @@ class SimulatedAcquireImage(AcquireImage):
         end_x: Annotated[float, "The x-coordinate of the ending point of the line scan."],
         end_y: Annotated[float, "The y-coordinate of the ending point of the line scan."],
         scan_step: float,
+        view_scan_line_in_image: Annotated[
+            bool,
+            "If True, show the line scan position on the latest acquired image.",
+        ] = False,
     ) -> Annotated[str, "The path to the plot of the line scan."]:
         """Scan along a line in the sample. This function
         generates a plot of the line scan, and a Gaussian fit
@@ -376,6 +380,8 @@ class SimulatedAcquireImage(AcquireImage):
             The ending point of the line scan.
         scan_step : float
             The step size of the line scan.
+        view_scan_line_in_image : bool, optional
+            If True, show the line scan position on the latest acquired image.
         
         Returns
         -------
@@ -403,22 +409,57 @@ class SimulatedAcquireImage(AcquireImage):
         val_gauss = eaa.maths.gaussian_1d(ds, a, mu, sigma, c)
         fwhm = 2.35 * sigma
         
-        fig, ax = plt.subplots(1, 1, squeeze=True)
-        ax.plot(ds, arr, label="data")
-        ax.plot(ds, val_gauss, linestyle="--", label="Gaussian fit")
-        ax.text(
+        show_scan_line = (
+            view_scan_line_in_image
+            and self.image_k is not None
+            and len(self.image_acquisition_call_history) > 0
+        )
+        if show_scan_line:
+            fig, axes = plt.subplots(1, 2, squeeze=True, figsize=(10, 4))
+            line_ax = axes[0]
+            image_ax = axes[1]
+        else:
+            fig, line_ax = plt.subplots(1, 1, squeeze=True)
+            image_ax = None
+
+        line_ax.plot(ds, arr, label="data")
+        line_ax.plot(ds, val_gauss, linestyle="--", label="Gaussian fit")
+        line_ax.text(
             0.05, 
             0.95, 
             f"FWHM = {fwhm:.2f}", 
-            transform=ax.transAxes, 
+            transform=line_ax.transAxes, 
             verticalalignment="top", 
             horizontalalignment="left"
         )
-        ax.legend()
-        ax.set_xlabel("distance")
-        ax.set_ylabel("value")
-        ax.set_title("Line scan")
-        ax.grid(True)
+        line_ax.legend()
+        line_ax.set_xlabel("distance")
+        line_ax.set_ylabel("value")
+        line_ax.set_title("Line scan")
+        line_ax.grid(True)
+
+        if show_scan_line and image_ax is not None:
+            image_info = self.image_acquisition_call_history[-1]
+            image_to_plot = self.image_k
+            if self.plot_image_in_log_scale:
+                image_to_plot = np.log10(image_to_plot + 1)
+            x_min = image_info["loc_x"]
+            x_max = image_info["loc_x"] + image_info["size_x"]
+            y_min = image_info["loc_y"]
+            y_max = image_info["loc_y"] + image_info["size_y"]
+            image_ax.imshow(
+                image_to_plot,
+                cmap="gray",
+                origin="upper",
+                extent=[x_min, x_max, y_max, y_min],
+            )
+            image_ax.plot([start_x, end_x], [start_y, end_y], color="red", linewidth=2)
+            image_ax.set_xlabel("x")
+            image_ax.set_ylabel("y")
+            image_ax.set_title("Line scan position")
+            if self.invert_yaxis:
+                image_ax.invert_yaxis()
+            fig.tight_layout()
         
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")

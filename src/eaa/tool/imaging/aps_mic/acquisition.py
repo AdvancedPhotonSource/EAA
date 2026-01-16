@@ -1,8 +1,12 @@
 from typing import Annotated, Tuple, Optional
+from io import BytesIO
 import logging
 import os
 import json
 
+from PIL import Image
+import matplotlib.pyplot as plt
+import numpy as np
 from sciagent.tool.base import ToolReturnType, tool
 
 from eaa.tool.imaging.aps_mic.util import (
@@ -220,6 +224,10 @@ class BlueSkyAcquireImage(AcquireImage):
         x_center: Annotated[float, "The center of the scan area in the x direction in microns"] = None,
         y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
         stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
+        view_scan_line_in_image: Annotated[
+            bool,
+            "If True, show the line scan position on the latest acquired image.",
+        ] = False,
 
     )->Annotated[str, "The path to the plot of the line scan."]:
         """Acquire a horizontal line scan of a given width at a given center position.
@@ -237,6 +245,8 @@ class BlueSkyAcquireImage(AcquireImage):
         stepsize_x: float
             The scan step size in the x direction, i.e., the distance between
             two adjacent pixels in the x direction in microns.
+        view_scan_line_in_image : bool, optional
+            If True, show the line scan position on the latest acquired image.
 
         Returns
         -------
@@ -290,11 +300,68 @@ class BlueSkyAcquireImage(AcquireImage):
 
                 # self.update_line_scan_buffers(img_arr, psize=stepsize_x)
                 if img_path:
+                    if (
+                        view_scan_line_in_image
+                        and self.image_k is not None
+                        and len(self.image_acquisition_call_history) > 0
+                    ):
+                        image_info = self.image_acquisition_call_history[-1]
+                        image_to_plot = self.image_k
+                        if self.plot_image_in_log_scale:
+                            image_to_plot = np.log10(image_to_plot + 1)
+                        x_min = image_info["loc_x"] - image_info["size_x"] / 2
+                        x_max = image_info["loc_x"] + image_info["size_x"] / 2
+                        y_min = image_info["loc_y"] - image_info["size_y"] / 2
+                        y_max = image_info["loc_y"] + image_info["size_y"] / 2
+                        fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+                        ax.imshow(
+                            image_to_plot,
+                            cmap="gray",
+                            origin="upper",
+                            extent=[x_min, x_max, y_max, y_min],
+                        )
+                        ax.plot(
+                            [start_x, end_x],
+                            [y_center, y_center],
+                            color="red",
+                            linewidth=2,
+                        )
+                        ax.set_xlabel("x")
+                        ax.set_ylabel("y")
+                        ax.set_title("Line scan position")
+                        fig.tight_layout()
+                        buffer = BytesIO()
+                        fig.savefig(buffer, format="png")
+                        plt.close(fig)
+                        buffer.seek(0)
+                        overlay_image = Image.open(buffer).convert("RGB")
+                        line_scan_image = Image.open(img_path).convert("RGB")
+                        if overlay_image.height != line_scan_image.height:
+                            new_width = int(
+                                overlay_image.width
+                                * line_scan_image.height
+                                / overlay_image.height
+                            )
+                            overlay_image = overlay_image.resize(
+                                (new_width, line_scan_image.height)
+                            )
+                        stitched_image = Image.new(
+                            "RGB",
+                            (
+                                line_scan_image.width + overlay_image.width,
+                                max(line_scan_image.height, overlay_image.height),
+                            ),
+                            "white",
+                        )
+                        stitched_image.paste(line_scan_image, (0, 0))
+                        stitched_image.paste(overlay_image, (line_scan_image.width, 0))
+                        stitched_image.save(img_path)
                     if self.line_scan_return_gaussian_fit:
                         return json.dumps({
                             "image_path": img_path,
                             "fwhm": fwhm,
                         })
+                    return img_path
                 else:
                     logger.error(f"Failed to save images for {current_mda_file}")
                     return f"Failed to save images for {current_mda_file}"
