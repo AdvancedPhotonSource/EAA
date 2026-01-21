@@ -360,9 +360,26 @@ def check_feature_presence_llm(
     image: np.ndarray,
     reference_image: np.ndarray,
     n_votes: int = 1,
+    positive_examples: Optional[List[Image.Image]] = None,
+    negative_examples: Optional[List[Image.Image]] = None,
 ) -> bool:
     """Lets an LLM judge if the features in the reference image 
     are present in the current image.
+
+    Parameters
+    ----------
+    task_manager : Optional[BaseTaskManager]
+        The task manager that owns the agent used to query the LLM.
+    image : np.ndarray
+        The current image that should be checked.
+    reference_image : np.ndarray
+        The reference image containing the feature of interest.
+    n_votes : int, optional
+        The number of votes to collect from the LLM.
+    positive_examples : Optional[List[Image.Image]], optional
+        Example images where the feature is present.
+    negative_examples : Optional[List[Image.Image]], optional
+        Example images where the feature is absent.
     
     Returns
     -------
@@ -370,15 +387,41 @@ def check_feature_presence_llm(
         Whether the feature is present in the current image.
     """
     stitched_image = stitch_images([reference_image, image], gap=10, frame=True)
-    message = generate_openai_message(\
+    prompt_lines = [
+        "Are the non-periodic features in the image on the left also present in the image on the right?",
+        "- Features don't have to be exactly aligned, and one may be blurrier than another.",
+        "- 'Periodic features' refers to repeating patterns like grids, repeating dots, etc. "
+        "They should not be considered as features.",
+    ]
+    example_context = []
+    if positive_examples:
+        prompt_lines.append(
+            "- Positive examples (feature present) are provided before this query."
+        )
+        for idx, example in enumerate(positive_examples, start=1):
+            example_context.append(
+                generate_openai_message(
+                    role="system",
+                    content=f"Positive example {idx} (feature present).",
+                    image=example,
+                )
+            )
+    if negative_examples:
+        prompt_lines.append(
+            "- Negative examples (feature absent) are provided before this query."
+        )
+        for idx, example in enumerate(negative_examples, start=1):
+            example_context.append(
+                generate_openai_message(
+                    role="system",
+                    content=f"Negative example {idx} (feature absent).",
+                    image=example,
+                )
+            )
+    prompt_lines.append("- Just answer with 'yes' or 'no'.")
+    message = generate_openai_message(
         role="system",
-        content=(
-            "Are the non-periodic features in the image on the left also present in the image on the right?\n"
-            "- Features don't have to be exactly aligned, and one may be blurrier than another.\n"
-            "- 'Periodic features' refers to repeating patterns like grids, repeating dots, etc. "
-            "They should not be considered as features.\n"
-            "- Just answer with 'yes' or 'no'."
-        ),
+        content="\n".join(prompt_lines),
         image=stitched_image
     )
     votes = []
@@ -386,6 +429,7 @@ def check_feature_presence_llm(
         while True:
             response, outgoing = task_manager.agent.receive(
                 message,
+                context=example_context or None,
                 return_outgoing_message=True
             )
             if task_manager is not None:

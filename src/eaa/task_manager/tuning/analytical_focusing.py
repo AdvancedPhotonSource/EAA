@@ -2,9 +2,11 @@ from typing import Optional, Tuple, Sequence, Literal
 import logging
 import copy
 import json
+from pathlib import Path
 
 import numpy as np
 import botorch.acquisition
+from PIL import Image
 
 from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
@@ -145,6 +147,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             build=build,
             *args, **kwargs
         )
+
+        self.feature_presence_positive_examples = []
+        self.feature_presence_negative_examples = []
+        self.load_feature_presence_example_images()
         
     def create_bo_tool(self, parameter_ranges: list[tuple[float, ...], tuple[float, ...]]):
         bo_tool = BayesianOptimizationTool(
@@ -266,6 +272,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             pass
         
         if termination_behavior == "ask":
+            logger.info("Entering chat mode...")
             self.run_conversation()
         elif termination_behavior == "return":
             return
@@ -355,6 +362,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 task_manager=self,
                 image=image_k,
                 reference_image=image_km1,
+                positive_examples=self.feature_presence_positive_examples,
+                negative_examples=self.feature_presence_negative_examples,
             )
         
         shift = self.image_registration_tool.register_images(
@@ -373,6 +382,29 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         ]).astype(float)
         shift += scan_pos_diff
         return shift, is_present
+
+    def load_feature_presence_example_images(self) -> None:
+        examples_dir = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "context_learning_examples"
+        )
+        if not examples_dir.exists():
+            logger.warning("Example images directory not found: %s", examples_dir)
+            return
+
+        positive_paths = sorted(examples_dir.glob("feature_presence_positive_*.png"))
+        negative_paths = sorted(examples_dir.glob("feature_presence_negative_*.png"))
+        self.feature_presence_positive_examples = [
+            self.load_pil_image(path) for path in positive_paths
+        ]
+        self.feature_presence_negative_examples = [
+            self.load_pil_image(path) for path in negative_paths
+        ]
+
+    def load_pil_image(self, path: Path) -> Image.Image:
+        with Image.open(path) as img:
+            return img.copy()
     
     def apply_offset_to_kwargs_buffers(self, offset: np.ndarray):
         for arg in self.line_scan_tool_x_coordinate_args:
