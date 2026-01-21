@@ -260,7 +260,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 self.record_system_message(suggestion_message)
                 try:
                     self.run_tuning_iteration(p_suggested)
-                except KeyboardInterrupt:
+                except (KeyboardInterrupt, RuntimeError) as e:
+                    if isinstance(e, RuntimeError):
+                        message = f"A runtime error occurred: {e}. Please set offset manually."
+                        logger.error(message)
+                        self.record_system_message(message)
                     if not self.apply_user_correction_offset():
                         raise
                     continue
@@ -460,8 +464,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             logger.info(msg)
             self.record_system_message(msg)
             offset = self.run_feature_tracking_subtask()
+        if np.any(np.isnan(offset)):
+            raise RuntimeError("Offset is NaN. Please set offset manually.")
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
+        if np.isnan(fwhm):
+            raise RuntimeError("FWHM is NaN. Please set FWHM manually.")
         self.update_optimization_model(fwhm)
 
     def apply_user_correction_offset(self) -> bool:

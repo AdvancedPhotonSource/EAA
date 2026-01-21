@@ -1,5 +1,9 @@
+import logging
+
 import numpy as np
 import scipy.optimize
+
+logger = logging.getLogger(__name__)
 
 
 def gaussian_1d(x: np.ndarray, a: float, mu: float, sigma: float, c: float = 0) -> np.ndarray:
@@ -64,7 +68,11 @@ def fit_gaussian_1d(
         sigma_guess = (x.max() - x.min()) / 2
     c_guess = y_min
     p0 = [a_guess, mu_guess, sigma_guess, c_guess]
-    popt, _ = scipy.optimize.curve_fit(gaussian_1d, x[mask], y[mask], p0=p0)
-    popt[1] += offset
+    try:
+        popt, _ = scipy.optimize.curve_fit(gaussian_1d, x[mask], y[mask], p0=p0)
+        popt[1] += offset
+    except RuntimeError:
+        logger.error("Failed to fit Gaussian to data. Returning NaN values.")
+        return np.nan, np.nan, np.nan, np.nan
     return tuple(popt)
 

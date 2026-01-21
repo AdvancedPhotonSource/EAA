@@ -298,6 +298,9 @@ class BlueSkyAcquireImage(AcquireImage):
                 )
                 wait_for_file(img_path, duration=5)
 
+                if np.isnan(fwhm):
+                    logger.warning("Gaussian fit returned NaN for line scan FWHM.")
+
                 # self.update_line_scan_buffers(img_arr, psize=stepsize_x)
                 if img_path:
                     if (

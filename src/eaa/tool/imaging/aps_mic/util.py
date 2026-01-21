@@ -220,8 +220,12 @@ def save_xrf_line_scan(
         # Fit a Gaussian to the data
         try:
             a, mu, sigma, c = eaa.maths.fit_gaussian_1d(x, y, y_threshold=y_threshold)
-            val_gauss = eaa.maths.gaussian_1d(x, a, mu, sigma, c)
-            fwhm = 2.35 * abs(sigma)
+            if np.any(np.isnan([a, mu, sigma, c])):
+                val_gauss = None
+                fwhm = np.nan
+            else:
+                val_gauss = eaa.maths.gaussian_1d(x, a, mu, sigma, c)
+                fwhm = 2.35 * abs(sigma)
         except RuntimeError as e:
             logger.error(f"Failed to fit Gaussian to data: {e}")
             val_gauss = None

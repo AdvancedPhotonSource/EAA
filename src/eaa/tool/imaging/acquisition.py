@@ -406,8 +406,12 @@ class SimulatedAcquireImage(AcquireImage):
         a, mu, sigma, c = eaa.maths.fit_gaussian_1d(
             ds, arr, y_threshold=self.line_scan_gaussian_fit_y_threshold
         )
-        val_gauss = eaa.maths.gaussian_1d(ds, a, mu, sigma, c)
-        fwhm = 2.35 * sigma
+        if np.any(np.isnan([a, mu, sigma, c])):
+            val_gauss = None
+            fwhm = np.nan
+        else:
+            val_gauss = eaa.maths.gaussian_1d(ds, a, mu, sigma, c)
+            fwhm = 2.35 * sigma
         
         show_scan_line = (
             view_scan_line_in_image
@@ -423,7 +427,8 @@ class SimulatedAcquireImage(AcquireImage):
             image_ax = None
 
         line_ax.plot(ds, arr, label="data")
-        line_ax.plot(ds, val_gauss, linestyle="--", label="Gaussian fit")
+        if val_gauss is not None:
+            line_ax.plot(ds, val_gauss, linestyle="--", label="Gaussian fit")
         line_ax.text(
             0.05, 
             0.95, 
