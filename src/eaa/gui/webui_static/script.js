@@ -376,9 +376,11 @@
     box.className = "thumb";
     const img = document.createElement("img");
     img.src = src;
+    img.dataset.fullSrc = src;
     img.loading = "lazy";
     box.appendChild(img);
-    
+
+    setupImagePreview(img);
     imagesSidebarEl.appendChild(box);
     
     setTimeout(() => {
