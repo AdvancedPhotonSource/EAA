@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 license = {file = "LICENSE.txt"}
 dependencies = [
     "sci-agent@git+https://github.com/mdw771/sci-agent",
+    "opencv-contrib-python",
     "matplotlib",
     "numpy",
     "scikit-image",

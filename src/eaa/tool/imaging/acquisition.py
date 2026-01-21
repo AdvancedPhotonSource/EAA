@@ -229,7 +229,7 @@ class SimulatedAcquireImage(AcquireImage):
             of (y, x) coordinates.
         """
         self.offset = offset
-        logging.info(f"Offset set to {self.offset}")
+        logger.info(f"Offset set to {self.offset}")
         
     def add_line_scan_candidates(
         self, 
