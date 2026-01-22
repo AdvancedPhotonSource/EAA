@@ -7,6 +7,7 @@
   const fileInput = document.getElementById("fileInput");
   const attachBtn = document.getElementById("attachBtn");
   const statusEl = document.getElementById("status");
+  const inputStatusEl = document.getElementById("inputStatus");
   const inputRow = document.getElementById("inputRow");
   const imageModal = document.getElementById("imageModal");
   const imageModalImg = document.getElementById("imageModalImg");
@@ -396,6 +397,24 @@
     return data.messages || [];
   }
 
+  async function fetchStatus() {
+    const res = await fetch("/api/status", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return Number(data.user_input_requested);
+  }
+
+  function updateInputStatus(userInputRequested) {
+    if (!inputStatusEl) return;
+    if (userInputRequested === 0) {
+      inputStatusEl.textContent = "Agent is processing...";
+      inputStatusEl.style.display = "block";
+    } else {
+      inputStatusEl.textContent = "";
+      inputStatusEl.style.display = "none";
+    }
+  }
+
   function renderMessages(newMessages) {
     if (!newMessages.length) return;
     
@@ -418,8 +437,12 @@
     while (polling) {
       try {
         const messages = await fetchMessages();
+        const userInputRequested = await fetchStatus();
         if (messages.length > 0) {
           renderMessages(messages);
+        }
+        if (!Number.isNaN(userInputRequested)) {
+          updateInputStatus(userInputRequested);
         }
         statusEl.textContent = "Connected";
       } catch (e) {

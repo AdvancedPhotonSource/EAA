@@ -76,6 +76,23 @@ def _query_messages(since_id: int | None = None) -> list[tuple[Any, ...]]:
         conn.close()
 
 
+def _query_user_input_requested() -> int | None:
+    conn = _open_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_input_requested FROM status ORDER BY rowid DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return int(row[0])
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 def _insert_user_message(content: str):
     conn = _open_db_connection()
     try:
@@ -157,6 +174,16 @@ def get_app(static_dir: str | None = None) -> FastAPI:
                 content = str(content)
             _insert_user_message(content)
             return JSONResponse({"status": "ok"}, status_code=201)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/status")
+    def api_get_status():
+        try:
+            user_input_requested = _query_user_input_requested()
+            return JSONResponse(
+                {"user_input_requested": 1 if user_input_requested is None else user_input_requested}
+            )
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 

@@ -400,6 +400,17 @@ body {
   flex-shrink: 0;
 }
 
+.input-status {
+  color: var(--text);
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+  display: none;
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
 .input-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
