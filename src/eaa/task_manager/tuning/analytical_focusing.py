@@ -43,6 +43,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
+        use_feature_tracking_subtask: bool = True,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -106,6 +107,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             See `line_scan_tool_x_coordinate_args`.
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...]
             See `line_scan_tool_y_coordinate_args`.
+        use_feature_tracking_subtask: bool
+            If True, feature tracking will be run if the line scan feature has drifted
+            out of the FOV.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -127,6 +131,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.last_acquisition_count_registered = 0
         self.last_acquisition_count_stitched = 0
         
+        self.use_feature_tracking_subtask: bool = use_feature_tracking_subtask
         self.feature_tracking_task_manager: Optional[AnalyticalFeatureTrackingTaskManager] = None
         
         self.line_scan_tool_x_coordinate_args = line_scan_tool_x_coordinate_args
@@ -292,6 +297,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     ):
         self.line_scan_kwargs = copy.deepcopy(initial_line_scan_kwargs)
         self.image_acquisition_kwargs = copy.deepcopy(initial_2d_scan_kwargs)
+
+        self.line_scan_kwargs["view_scan_line_in_image"] = True
         
     def run_line_scan(self) -> float:
         """Run a line scan and return the FWHM of the Gaussian fit.
@@ -301,6 +308,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         float
             The FWHM of the Gaussian fit.
         """
+        self.record_system_message(f"Acquiring line scan with {self.line_scan_kwargs}.")
         res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
         try:
             res = json.loads(res)
@@ -327,6 +335,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.optimization_tool.update(x, -np.array([[fwhm]]))
         
     def run_2d_scan(self):
+        self.record_system_message(f"Acquiring 2D scan with {self.image_acquisition_kwargs}.")
         image_path = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
         content = f"Acquired 2D scan with kwargs: {self.image_acquisition_kwargs}"
         if isinstance(image_path, str):
@@ -457,16 +466,18 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 f"but got {len(x)} and {len(self.parameter_names)}."
             )
         x = np.array(x)
+        self.record_system_message(f"Setting parameters to {x}.")
         self.param_setting_tool.set_parameters(x)
         self.run_2d_scan()
         offset, is_present = self.find_offset_and_feature_presence()
-        if not is_present:
+        if not is_present and self.use_feature_tracking_subtask:
             msg = "Feature is not present in the current image. Running feature tracking sub-task."
             logger.info(msg)
             self.record_system_message(msg)
             offset = self.run_feature_tracking_subtask()
         if np.any(np.isnan(offset)):
             raise RuntimeError("Offset is NaN. Please set offset manually.")
+        self.record_system_message(f"Applying offset {offset}.")
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
         if np.isnan(fwhm):
