@@ -86,6 +86,7 @@ class BlueskySetParameters(SetParameters):
             self.RE(self.bps.mv(self.zp_z_motor, parameters[0]))
             msg = f"Moved Zone Plate z position to position: {parameters[0]}"
             logger.info(msg)
+            self.update_parameter_history(parameters)
             return msg
         else:
             raise ValueError("parameter_ranges is not set")
