@@ -173,7 +173,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             reference_image=None,
             reference_pixel_size=1.0,
             image_coordinates_origin="top_left",
-            registration_method="sift",
+            registration_method="phase_correlation",
         )
         return image_registration_tool
     
