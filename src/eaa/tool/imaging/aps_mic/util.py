@@ -147,7 +147,7 @@ def process_xrfdata(
         return None
 
 
-def plot_xrf_line_scan(x, y, val_gauss, fwhm, scan_name, roi_num):
+def plot_xrf_line_scan(x, y, val_gauss, fwhm, scan_name, roi_num, scan_samy=False):
     """
     Plot the XRF line scan data.
     """
@@ -165,7 +165,7 @@ def plot_xrf_line_scan(x, y, val_gauss, fwhm, scan_name, roi_num):
     )
 
     ax.legend()
-    ax.set_xlabel("X-axis Position")
+    ax.set_xlabel("X-axis Position" if not scan_samy else "Y-axis Position")
     ax.set_ylabel("Intensity")
     ax.set_title(f"{scan_name}-{roi_num}")
     ax.grid(True)
@@ -178,7 +178,8 @@ def save_xrf_line_scan(
     output_dir: str, 
     roi_num: int,
     y_threshold: float = 0.0,
-    return_line_array: bool = False
+    return_line_array: bool = False,
+    scan_samy: bool = False,
 ) -> str | None:
 
     """
@@ -196,6 +197,8 @@ def save_xrf_line_scan(
         The threshold for the Gaussian fit.
     return_line_array : bool
         If True, the line array will be returned.
+    scan_samy : bool
+        If True, line profile is generated using sample-y motor, scanning sample-y
 
     Returns
     -------
@@ -233,7 +236,7 @@ def save_xrf_line_scan(
 
         # Plot the data and the fit
         scan_name = os.path.basename(mda_path)
-        fig = plot_xrf_line_scan(x, y, val_gauss, fwhm, scan_name, roi_num)
+        fig = plot_xrf_line_scan(x, y, val_gauss, fwhm, scan_name, roi_num, scan_samy=scan_samy)
         sc = scan_name.replace(".mda", "")
         fname = f"{output_dir}/{sc}_ROI{roi_num}.png"
         fig.savefig(fname)
