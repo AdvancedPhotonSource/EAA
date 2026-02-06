@@ -2,9 +2,9 @@ from typing import Annotated, List, Literal, Optional, Tuple
 import logging
 import json
 
-import cv2
 import numpy as np
 import scipy.ndimage as ndi
+from skimage import feature
 from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
@@ -261,7 +261,7 @@ class ImageRegistration(BaseTool):
             image = (image - min_val) / (max_val - min_val)
         else:
             image = np.zeros_like(image, dtype=np.float32)
-        return (image * 255).astype(np.uint8)
+        return image
 
     def adjust_points_for_origin(
         self,
@@ -282,30 +282,39 @@ class ImageRegistration(BaseTool):
         image_t: np.ndarray,
         image_r: np.ndarray,
     ) -> np.ndarray:
-        image_t_uint8 = self.prepare_image_for_feature_matching(image_t)
-        image_r_uint8 = self.prepare_image_for_feature_matching(image_r)
-        sift = cv2.SIFT_create()
-        keypoints_t, descriptors_t = sift.detectAndCompute(image_t_uint8, None)
-        keypoints_r, descriptors_r = sift.detectAndCompute(image_r_uint8, None)
+        image_t_float = self.prepare_image_for_feature_matching(image_t)
+        image_r_float = self.prepare_image_for_feature_matching(image_r)
+        sift_t = feature.SIFT()
+        sift_r = feature.SIFT()
+        sift_t.detect_and_extract(image_t_float)
+        sift_r.detect_and_extract(image_r_float)
 
-        if descriptors_t is None or descriptors_r is None:
+        descriptors_t = sift_t.descriptors
+        descriptors_r = sift_r.descriptors
+        keypoints_t = sift_t.keypoints
+        keypoints_r = sift_r.keypoints
+
+        if (
+            descriptors_t is None
+            or descriptors_r is None
+            or descriptors_t.size == 0
+            or descriptors_r.size == 0
+        ):
             raise RuntimeError("SIFT feature detection failed to find descriptors.")
 
-        matcher = cv2.BFMatcher(cv2.NORM_L2)
-        raw_matches = matcher.knnMatch(descriptors_t, descriptors_r, k=2)
-        good_matches = []
-        for match_pair in raw_matches:
-            if len(match_pair) != 2:
-                continue
-            m, n = match_pair
-            if m.distance < 0.75 * n.distance:
-                good_matches.append(m)
+        matches = feature.match_descriptors(
+            descriptors_t,
+            descriptors_r,
+            metric="euclidean",
+            cross_check=True,
+            max_ratio=0.75,
+        )
 
-        if len(good_matches) < 3:
+        if matches.shape[0] < 3:
             raise RuntimeError("Not enough SIFT matches to estimate translation.")
 
-        pts_t = np.array([keypoints_t[m.queryIdx].pt for m in good_matches])
-        pts_r = np.array([keypoints_r[m.trainIdx].pt for m in good_matches])
+        pts_t = keypoints_t[matches[:, 0]][:, ::-1]
+        pts_r = keypoints_r[matches[:, 1]][:, ::-1]
         pts_t = self.adjust_points_for_origin(pts_t, image_t.shape)
         pts_r = self.adjust_points_for_origin(pts_r, image_r.shape)
         deltas = pts_r - pts_t
