@@ -1,4 +1,5 @@
 from typing import Annotated
+import json
 
 import numpy as np
 from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
@@ -53,7 +54,6 @@ class SetParameters(BaseTool):
             parameter_names
         )
         
-        
     @property
     def parameter_names(self) -> list[str]:
         return list(self.parameter_history.keys())
@@ -91,6 +91,10 @@ class SetParameters(BaseTool):
     @tool(name="set_parameters", return_type=ToolReturnType.TEXT)
     def set_parameters(*args, **kwargs):
         raise NotImplementedError
+
+    @tool(name="get_current_parameters", return_type=ToolReturnType.TEXT)
+    def get_current_parameters(self):
+        return json.dumps(self.get_parameter_at_iteration(-1, as_dict=True))
     
     def update_parameter_history(self, parameters: list[float] | dict[str, float]):
         if isinstance(parameters, dict):
