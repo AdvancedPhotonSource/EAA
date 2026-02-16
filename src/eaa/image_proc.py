@@ -3,6 +3,9 @@ from typing import Literal, Optional, List, Tuple
 import numpy as np
 from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
+import scipy.ndimage as ndi
+from scipy import optimize
+from skimage.metrics import normalized_mutual_information
 from sciagent.message_proc import generate_openai_message
 from sciagent.task_manager.base import BaseTaskManager
 
@@ -168,6 +171,149 @@ def phase_cross_correlation(
         return shift, np.max(map)
     else:
         return shift
+
+
+def normalize_image_01(image: np.ndarray) -> np.ndarray:
+    """Normalize image intensities to [0, 1]."""
+    image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    min_val = float(np.min(image))
+    max_val = float(np.max(image))
+    if max_val > min_val:
+        return (image - min_val) / (max_val - min_val)
+    return np.zeros_like(image, dtype=np.float32)
+
+
+def warp_translation(
+    image: np.ndarray,
+    shift: np.ndarray | tuple[float, float] | list[float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Warp an image by translation and return warped image with valid mask.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        A 2D image to warp.
+    shift : np.ndarray | tuple[float, float] | list[float]
+        Translation in (dy, dx), where positive values indicate moving image
+        shifted downward/rightward relative to reference coordinates.
+    """
+    dy, dx = map(float, shift)
+    rows, cols = image.shape
+    y, x = np.indices((rows, cols), dtype=np.float32)
+    sample_y = y + dy
+    sample_x = x + dx
+    warped = ndi.map_coordinates(
+        image,
+        [sample_y, sample_x],
+        order=1,
+        mode="constant",
+        cval=0.0,
+    )
+    valid = (
+        (sample_y >= 0)
+        & (sample_y <= rows - 1)
+        & (sample_x >= 0)
+        & (sample_x <= cols - 1)
+    )
+    return warped, valid
+
+
+def translation_nmi_registration(
+    moving: np.ndarray,
+    ref: np.ndarray,
+    pyramid_levels: tuple[int, ...] = (4, 2, 1),
+    bins: int = 64,
+    sample_frac: float = 0.2,
+    smooth_sigmas: Optional[dict[int, float]] = None,
+    optimizer: Literal["powell", "nelder-mead"] = "nelder-mead",
+    max_iter: int = 60,
+    tol: float = 1e-4,
+) -> np.ndarray:
+    """Estimate translation (dy, dx) by maximizing NMI over a pyramid."""
+    if moving.ndim != 2 or ref.ndim != 2:
+        raise ValueError("`moving` and `ref` must both be 2D images.")
+    if sample_frac <= 0 or sample_frac > 1:
+        raise ValueError("`sample_frac` must be in (0, 1].")
+    if smooth_sigmas is None:
+        smooth_sigmas = {4: 1.5, 2: 1.0, 1: 0.0}
+
+    shift_full = np.zeros(2, dtype=np.float64)
+
+    for level in pyramid_levels:
+        zoom_factor = 1.0 / float(level)
+        moving_l = ndi.zoom(moving, zoom_factor, order=1)
+        ref_l = ndi.zoom(ref, zoom_factor, order=1)
+
+        sigma = float(smooth_sigmas.get(level, 0.0))
+        if sigma > 0:
+            moving_l = ndi.gaussian_filter(moving_l, sigma=sigma)
+            ref_l = ndi.gaussian_filter(ref_l, sigma=sigma)
+
+        moving_l = normalize_image_01(moving_l)
+        ref_l = normalize_image_01(ref_l)
+
+        shift_level_0 = shift_full / float(level)
+
+        def objective(shift_level: np.ndarray) -> float:
+            warped, valid_warp = warp_translation(moving_l, shift_level)
+            overlap_indices = np.flatnonzero(valid_warp.ravel())
+            if overlap_indices.size < 8:
+                return 0.0
+
+            n_samples = max(8, int(overlap_indices.size * sample_frac))
+            if n_samples < overlap_indices.size:
+                rng = np.random.default_rng(13)
+                chosen = rng.choice(overlap_indices, size=n_samples, replace=False)
+            else:
+                chosen = overlap_indices
+
+            ref_samples = ref_l.ravel()[chosen]
+            warped_samples = warped.ravel()[chosen]
+            nmi = normalized_mutual_information(ref_samples, warped_samples, bins=bins)
+            if not np.isfinite(nmi):
+                return 1e6
+            return -float(nmi)
+
+        if optimizer == "powell":
+            result = optimize.minimize(
+                objective,
+                shift_level_0,
+                method="Powell",
+                options={
+                    "xtol": tol,
+                    "ftol": tol,
+                    "maxiter": max_iter,
+                    "direc": np.diag([2.0, 2.0]),
+                },
+            )
+        elif optimizer == "nelder-mead":
+            simplex = np.vstack(
+                [
+                    shift_level_0,
+                    shift_level_0 + np.array([2.0, 0.0]),
+                    shift_level_0 + np.array([0.0, 2.0]),
+                ]
+            )
+            result = optimize.minimize(
+                objective,
+                shift_level_0,
+                method="Nelder-Mead",
+                options={
+                    "xatol": tol,
+                    "fatol": tol,
+                    "maxiter": max_iter,
+                    "initial_simplex": simplex,
+                },
+            )
+        else:
+            raise ValueError(
+                f"Unsupported optimizer '{optimizer}'. Use 'powell' or 'nelder-mead'."
+            )
+
+        shift_opt = result.x if result.success else shift_level_0
+        shift_full = np.array(shift_opt, dtype=np.float64) * float(level)
+
+    return shift_full
 
 
 def physical_pos_to_pixel(

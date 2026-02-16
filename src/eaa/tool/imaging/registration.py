@@ -8,7 +8,7 @@ from skimage import feature
 from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
-from eaa.image_proc import phase_cross_correlation
+from eaa.image_proc import phase_cross_correlation, translation_nmi_registration
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class ImageRegistration(BaseTool):
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
-        registration_method: Literal["phase_correlation", "sift"] = "phase_correlation",
+        registration_method: Literal["phase_correlation", "sift", "mutual_information"] = "phase_correlation",
         require_approval: bool = False,
         *args,
         **kwargs,
@@ -56,9 +56,10 @@ class ImageRegistration(BaseTool):
             When this argument is set to "center", the test image is padded/cropped
             centrally. When it is set to "top_left", the test image is on the bottom
             and right sides.
-        registration_method : Literal["phase_correlation", "sift"], optional
+        registration_method : Literal["phase_correlation", "sift", "mutual_information"], optional
             The method used to estimate translational offsets. "phase_correlation"
-            uses phase correlation, while "sift" uses feature matching.
+            uses phase correlation, "sift" uses feature matching, and
+            "mutual_information" uses pyramid-based normalized mutual information.
         """
         super().__init__(*args, require_approval=require_approval, **kwargs)
 
@@ -150,7 +151,7 @@ class ImageRegistration(BaseTool):
         psize_r: float,
         return_correlation_value: bool = False,
         use_hanning_window: bool = True,
-        registration_method: Optional[Literal["phase_correlation", "sift"]] = None,
+        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information"]] = None,
     ) -> np.ndarray | Tuple[np.ndarray, float] | str:
         """
         Register the target image with the reference image.
@@ -170,7 +171,7 @@ class ImageRegistration(BaseTool):
         use_hanning_window : bool, optional
             If True, a Hanning window is used to smooth the images before the
             correlation is computed.
-        registration_method : Optional[Literal["phase_correlation", "sift"]], optional
+        registration_method : Optional[Literal["phase_correlation", "sift", "mutual_information"]], optional
             Overrides the default registration method for this call. If "sift" is
             used and `return_correlation_value` is True, the correlation value is
             reported as NaN. When using SIFT, image sizes are reconciled by the
@@ -195,35 +196,10 @@ class ImageRegistration(BaseTool):
             # Resize the target image to have the same pixel size as the reference image
             image_t = ndi.zoom(image_t, psize_t / psize_r)
         
+        if method in {"phase_correlation", "mutual_information"}:
+            image_t = self.reconcile_image_shape(image_t, image_r.shape)
+
         if method == "phase_correlation":
-            # Crop or pad the test image to match reference image size
-            if image_t.shape != image_r.shape:
-                for i in range(2):
-                    if self.image_coordinates_origin == "top_left":
-                        if image_t.shape[i] < image_r.shape[i]:
-                            pad_len = [(0, 0), (0, 0)]
-                            pad_len[i] = (0, image_r.shape[i] - image_t.shape[i])
-                            image_t = np.pad(image_t, pad_len, mode="constant")
-                        elif image_t.shape[i] > image_r.shape[i]:
-                            slicer = [slice(None)] * 2
-                            slicer[i] = slice(0, image_r.shape[i])
-                            image_t = image_t[tuple(slicer)]
-                    elif self.image_coordinates_origin == "center":
-                        if image_t.shape[i] < image_r.shape[i]:
-                            pad_len = [(0, 0), (0, 0)]
-                            d = image_r.shape[i] - image_t.shape[i]
-                            pad_len[i] = (d // 2, d - d // 2)
-                            image_t = np.pad(image_t, pad_len, mode="constant")
-                        elif image_t.shape[i] > image_r.shape[i]:
-                            slicer = [slice(None)] * 2
-                            d = image_t.shape[i] - image_r.shape[i]
-                            slicer[i] = slice(d // 2, d // 2 + image_r.shape[i])
-                            image_t = image_t[tuple(slicer)]
-                    else:
-                        raise ValueError(
-                            f"Invalid value for image_coordinates_origin: {self.image_coordinates_origin}"
-                        )
-            
             if return_correlation_value:
                 offset, correlation_value = phase_cross_correlation(
                     image_t,
@@ -238,6 +214,18 @@ class ImageRegistration(BaseTool):
                     return_correlation_value=return_correlation_value,
                     use_hanning_window=use_hanning_window,
                 )
+        elif method == "mutual_information":
+            offset = translation_nmi_registration(
+                moving=image_t,
+                ref=image_r,
+                pyramid_levels=(4, 2, 1),
+                bins=64,
+                sample_frac=0.2,
+                optimizer="nelder-mead",
+                max_iter=60,
+                tol=1e-4,
+            )
+            correlation_value = float("nan")
         elif method == "sift":
             offset = self.feature_based_registration(image_t, image_r)
             correlation_value = float("nan")
@@ -252,6 +240,43 @@ class ImageRegistration(BaseTool):
             return json.dumps({"offset": offset.tolist(), "correlation_value": float(correlation_value)})
         else:
             return offset
+
+    def reconcile_image_shape(
+        self,
+        image_t: np.ndarray,
+        reference_shape: Tuple[int, int],
+    ) -> np.ndarray:
+        """Crop or pad target image to match reference shape."""
+        if image_t.shape == reference_shape:
+            return image_t
+
+        output = image_t
+        for i in range(2):
+            if self.image_coordinates_origin == "top_left":
+                if output.shape[i] < reference_shape[i]:
+                    pad_len = [(0, 0), (0, 0)]
+                    pad_len[i] = (0, reference_shape[i] - output.shape[i])
+                    output = np.pad(output, pad_len, mode="constant")
+                elif output.shape[i] > reference_shape[i]:
+                    slicer = [slice(None)] * 2
+                    slicer[i] = slice(0, reference_shape[i])
+                    output = output[tuple(slicer)]
+            elif self.image_coordinates_origin == "center":
+                if output.shape[i] < reference_shape[i]:
+                    pad_len = [(0, 0), (0, 0)]
+                    delta = reference_shape[i] - output.shape[i]
+                    pad_len[i] = (delta // 2, delta - delta // 2)
+                    output = np.pad(output, pad_len, mode="constant")
+                elif output.shape[i] > reference_shape[i]:
+                    slicer = [slice(None)] * 2
+                    delta = output.shape[i] - reference_shape[i]
+                    slicer[i] = slice(delta // 2, delta // 2 + reference_shape[i])
+                    output = output[tuple(slicer)]
+            else:
+                raise ValueError(
+                    f"Invalid value for image_coordinates_origin: {self.image_coordinates_origin}"
+                )
+        return output
 
     def prepare_image_for_feature_matching(self, image: np.ndarray) -> np.ndarray:
         image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
