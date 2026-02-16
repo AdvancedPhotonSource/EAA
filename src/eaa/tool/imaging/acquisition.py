@@ -488,7 +488,7 @@ class SimulatedAcquireImage(AcquireImage):
             )
             first_image_ax.set_xlabel("x")
             first_image_ax.set_ylabel("y")
-            first_image_ax.set_title("First line scan position")
+            first_image_ax.set_title("Reference line scan position")
             if self.invert_yaxis:
                 first_image_ax.invert_yaxis()
 

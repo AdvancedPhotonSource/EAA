@@ -371,7 +371,7 @@ class BlueSkyAcquireImage(AcquireImage):
                                     image_info=self.image_acquisition_call_history[0],
                                     line_info=first_line_info,
                                     line_color="blue",
-                                    title="First line scan position",
+                                    title="Reference line scan position",
                                 )
                             )
                     if overlays:
