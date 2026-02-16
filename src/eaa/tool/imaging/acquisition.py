@@ -106,7 +106,7 @@ class AcquireImage(BaseTool):
         psize : float, optional
             The pixel size (or scan step) of the new image.
         """
-        if self.counter_acquire_image == 0:
+        if self.image_0 is None:
             self.image_0 = new_image
             self.psize_0 = psize
         self.image_km1 = self.image_k
@@ -411,8 +411,8 @@ class SimulatedAcquireImage(AcquireImage):
         show_first_scan_line = (
             show_scan_line
             and self.image_0 is not None
-            and len(self.image_acquisition_call_history) > 0
-            and len(self.line_scan_call_history) > 0
+            and len(self.image_acquisition_call_history) > 1
+            and len(self.line_scan_call_history) > 1
         )
         if show_scan_line:
             n_cols = 3 if show_first_scan_line else 2
