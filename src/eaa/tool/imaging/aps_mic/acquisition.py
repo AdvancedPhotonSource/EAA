@@ -356,22 +356,22 @@ class BlueSkyAcquireImage(AcquireImage):
                             )
                         )
                     if (
-                        self.image_km1 is not None
+                        self.image_0 is not None
                         and len(self.image_acquisition_call_history) > 1
                         and len(self.line_scan_call_history) > 1
                     ):
-                        previous_line_info = self.line_scan_call_history[-2]
+                        first_line_info = self.line_scan_call_history[0]
                         if (
-                            previous_line_info["start_y"] is not None
-                            and previous_line_info["end_y"] is not None
+                            first_line_info["start_y"] is not None
+                            and first_line_info["end_y"] is not None
                         ):
                             overlays.append(
                                 render_scan_overlay(
-                                    image_array=self.image_km1,
-                                    image_info=self.image_acquisition_call_history[-2],
-                                    line_info=previous_line_info,
+                                    image_array=self.image_0,
+                                    image_info=self.image_acquisition_call_history[0],
+                                    line_info=first_line_info,
                                     line_color="blue",
-                                    title="Previous line scan position",
+                                    title="First line scan position",
                                 )
                             )
                     if overlays:

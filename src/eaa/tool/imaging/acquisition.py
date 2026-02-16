@@ -408,22 +408,22 @@ class SimulatedAcquireImage(AcquireImage):
             fwhm = 2.35 * sigma
         
         show_scan_line = self.image_k is not None and len(self.image_acquisition_call_history) > 0
-        show_previous_scan_line = (
+        show_first_scan_line = (
             show_scan_line
-            and self.image_km1 is not None
+            and self.image_0 is not None
             and len(self.image_acquisition_call_history) > 1
             and len(self.line_scan_call_history) > 1
         )
         if show_scan_line:
-            n_cols = 3 if show_previous_scan_line else 2
+            n_cols = 3 if show_first_scan_line else 2
             fig, axes = plt.subplots(1, n_cols, squeeze=True, figsize=(5 * n_cols, 4))
             line_ax = axes[0]
             image_ax = axes[1]
-            previous_image_ax = axes[2] if show_previous_scan_line else None
+            first_image_ax = axes[2] if show_first_scan_line else None
         else:
             fig, line_ax = plt.subplots(1, 1, squeeze=True)
             image_ax = None
-            previous_image_ax = None
+            first_image_ax = None
 
         line_ax.plot(ds, arr, label="data")
         if val_gauss is not None:
@@ -464,33 +464,33 @@ class SimulatedAcquireImage(AcquireImage):
             if self.invert_yaxis:
                 image_ax.invert_yaxis()
 
-        if show_previous_scan_line and previous_image_ax is not None:
-            previous_image_info = self.image_acquisition_call_history[-2]
-            previous_line_info = self.line_scan_call_history[-2]
-            previous_image_to_plot = self.image_km1
+        if show_first_scan_line and first_image_ax is not None:
+            first_image_info = self.image_acquisition_call_history[0]
+            first_line_info = self.line_scan_call_history[0]
+            first_image_to_plot = self.image_0
             if self.plot_image_in_log_scale:
-                previous_image_to_plot = np.log10(previous_image_to_plot + 1)
-            x_min = previous_image_info["loc_x"]
-            x_max = previous_image_info["loc_x"] + previous_image_info["size_x"]
-            y_min = previous_image_info["loc_y"]
-            y_max = previous_image_info["loc_y"] + previous_image_info["size_y"]
-            previous_image_ax.imshow(
-                previous_image_to_plot,
+                first_image_to_plot = np.log10(first_image_to_plot + 1)
+            x_min = first_image_info["loc_x"]
+            x_max = first_image_info["loc_x"] + first_image_info["size_x"]
+            y_min = first_image_info["loc_y"]
+            y_max = first_image_info["loc_y"] + first_image_info["size_y"]
+            first_image_ax.imshow(
+                first_image_to_plot,
                 cmap="gray",
                 origin="upper",
                 extent=[x_min, x_max, y_max, y_min],
             )
-            previous_image_ax.plot(
-                [previous_line_info["start_x"], previous_line_info["end_x"]],
-                [previous_line_info["start_y"], previous_line_info["end_y"]],
+            first_image_ax.plot(
+                [first_line_info["start_x"], first_line_info["end_x"]],
+                [first_line_info["start_y"], first_line_info["end_y"]],
                 color="blue",
                 linewidth=2,
             )
-            previous_image_ax.set_xlabel("x")
-            previous_image_ax.set_ylabel("y")
-            previous_image_ax.set_title("Previous line scan position")
+            first_image_ax.set_xlabel("x")
+            first_image_ax.set_ylabel("y")
+            first_image_ax.set_title("First line scan position")
             if self.invert_yaxis:
-                previous_image_ax.invert_yaxis()
+                first_image_ax.invert_yaxis()
 
         fig.tight_layout()
         
