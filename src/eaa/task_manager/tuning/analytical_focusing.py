@@ -297,8 +297,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     ):
         self.line_scan_kwargs = copy.deepcopy(initial_line_scan_kwargs)
         self.image_acquisition_kwargs = copy.deepcopy(initial_2d_scan_kwargs)
-
-        self.line_scan_kwargs["view_scan_line_in_image"] = True
         
     def run_line_scan(self) -> float:
         """Run a line scan and return the FWHM of the Gaussian fit.

@@ -228,11 +228,6 @@ class BlueSkyAcquireImage(AcquireImage):
         x_center: Annotated[float, "The center of the scan area in the x direction in microns"] = None,
         y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
         stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
-        view_scan_line_in_image: Annotated[
-            bool,
-            "If True, show the line scan position on the latest acquired image.",
-        ] = False,
-
     )->Annotated[str, "The path to the plot of the line scan."]:
         """Acquire a horizontal line scan of a given width at a given center position.
         This function returns a plot of the acquired data, and a Gaussian fit of it.
@@ -249,8 +244,6 @@ class BlueSkyAcquireImage(AcquireImage):
         stepsize_x: float
             The scan step size in the x direction, i.e., the distance between
             two adjacent pixels in the x direction in microns.
-        view_scan_line_in_image : bool, optional
-            If True, show the line scan position on the latest acquired image.
 
         Returns
         -------
@@ -262,7 +255,13 @@ class BlueSkyAcquireImage(AcquireImage):
         
         start_x = x_center - width/2
         end_x = x_center + width/2
-        self.update_line_scan_call_history(start_x=start_x, end_x=end_x, step=stepsize_x, start_y=None, end_y=None)
+        self.update_line_scan_call_history(
+            start_x=start_x,
+            end_x=end_x,
+            step=stepsize_x,
+            start_y=y_center,
+            end_y=y_center,
+        )
 
         try:
             validate_position_in_range(start_x, self.allowable_x_range, "x")
@@ -307,13 +306,14 @@ class BlueSkyAcquireImage(AcquireImage):
 
                 # self.update_line_scan_buffers(img_arr, psize=stepsize_x)
                 if img_path:
-                    if (
-                        view_scan_line_in_image
-                        and self.image_k is not None
-                        and len(self.image_acquisition_call_history) > 0
-                    ):
-                        image_info = self.image_acquisition_call_history[-1]
-                        image_to_plot = self.image_k
+                    def render_scan_overlay(
+                        image_array: np.ndarray,
+                        image_info: dict,
+                        line_info: dict,
+                        line_color: str,
+                        title: str,
+                    ) -> Image.Image:
+                        image_to_plot = image_array
                         if self.plot_image_in_log_scale:
                             image_to_plot = np.log10(image_to_plot + 1)
                         x_min = image_info["loc_x"] - image_info["size_x"] / 2
@@ -328,40 +328,81 @@ class BlueSkyAcquireImage(AcquireImage):
                             extent=[x_min, x_max, y_max, y_min],
                         )
                         ax.plot(
-                            [start_x, end_x],
-                            [y_center, y_center],
-                            color="red",
+                            [line_info["start_x"], line_info["end_x"]],
+                            [line_info["start_y"], line_info["end_y"]],
+                            color=line_color,
                             linewidth=2,
                         )
                         ax.set_xlabel("x")
                         ax.set_ylabel("y")
-                        ax.set_title("Line scan position")
+                        ax.set_title(title)
                         fig.tight_layout()
                         buffer = BytesIO()
                         fig.savefig(buffer, format="png")
                         plt.close(fig)
                         buffer.seek(0)
-                        overlay_image = Image.open(buffer).convert("RGB")
-                        line_scan_image = Image.open(img_path).convert("RGB")
-                        if overlay_image.height != line_scan_image.height:
-                            new_width = int(
-                                overlay_image.width
-                                * line_scan_image.height
-                                / overlay_image.height
+                        return Image.open(buffer).convert("RGB")
+
+                    line_scan_image = Image.open(img_path).convert("RGB")
+                    overlays = []
+                    if self.image_k is not None and len(self.image_acquisition_call_history) > 0:
+                        overlays.append(
+                            render_scan_overlay(
+                                image_array=self.image_k,
+                                image_info=self.image_acquisition_call_history[-1],
+                                line_info=self.line_scan_call_history[-1],
+                                line_color="red",
+                                title="Line scan position",
                             )
-                            overlay_image = overlay_image.resize(
-                                (new_width, line_scan_image.height)
+                        )
+                    if (
+                        self.image_km1 is not None
+                        and len(self.image_acquisition_call_history) > 1
+                        and len(self.line_scan_call_history) > 1
+                    ):
+                        previous_line_info = self.line_scan_call_history[-2]
+                        if (
+                            previous_line_info["start_y"] is not None
+                            and previous_line_info["end_y"] is not None
+                        ):
+                            overlays.append(
+                                render_scan_overlay(
+                                    image_array=self.image_km1,
+                                    image_info=self.image_acquisition_call_history[-2],
+                                    line_info=previous_line_info,
+                                    line_color="blue",
+                                    title="Previous line scan position",
+                                )
                             )
+                    if overlays:
+                        resized_overlays = []
+                        for overlay_image in overlays:
+                            if overlay_image.height != line_scan_image.height:
+                                new_width = int(
+                                    overlay_image.width
+                                    * line_scan_image.height
+                                    / overlay_image.height
+                                )
+                                overlay_image = overlay_image.resize(
+                                    (new_width, line_scan_image.height)
+                                )
+                            resized_overlays.append(overlay_image)
+                        total_overlay_width = sum(
+                            overlay_image.width for overlay_image in resized_overlays
+                        )
                         stitched_image = Image.new(
                             "RGB",
                             (
-                                line_scan_image.width + overlay_image.width,
-                                max(line_scan_image.height, overlay_image.height),
+                                line_scan_image.width + total_overlay_width,
+                                line_scan_image.height,
                             ),
                             "white",
                         )
                         stitched_image.paste(line_scan_image, (0, 0))
-                        stitched_image.paste(overlay_image, (line_scan_image.width, 0))
+                        x_offset = line_scan_image.width
+                        for overlay_image in resized_overlays:
+                            stitched_image.paste(overlay_image, (x_offset, 0))
+                            x_offset += overlay_image.width
                         stitched_image.save(img_path)
                     if self.line_scan_return_gaussian_fit:
                         return json.dumps({

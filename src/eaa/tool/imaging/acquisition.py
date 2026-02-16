@@ -363,10 +363,6 @@ class SimulatedAcquireImage(AcquireImage):
         end_x: Annotated[float, "The x-coordinate of the ending point of the line scan."],
         end_y: Annotated[float, "The y-coordinate of the ending point of the line scan."],
         scan_step: float,
-        view_scan_line_in_image: Annotated[
-            bool,
-            "If True, show the line scan position on the latest acquired image.",
-        ] = False,
     ) -> Annotated[str, "The path to the plot of the line scan."]:
         """Scan along a line in the sample. This function
         generates a plot of the line scan, and a Gaussian fit
@@ -380,8 +376,6 @@ class SimulatedAcquireImage(AcquireImage):
             The ending point of the line scan.
         scan_step : float
             The step size of the line scan.
-        view_scan_line_in_image : bool, optional
-            If True, show the line scan position on the latest acquired image.
         
         Returns
         -------
@@ -413,18 +407,23 @@ class SimulatedAcquireImage(AcquireImage):
             val_gauss = eaa.maths.gaussian_1d(ds, a, mu, sigma, c)
             fwhm = 2.35 * sigma
         
-        show_scan_line = (
-            view_scan_line_in_image
-            and self.image_k is not None
-            and len(self.image_acquisition_call_history) > 0
+        show_scan_line = self.image_k is not None and len(self.image_acquisition_call_history) > 0
+        show_previous_scan_line = (
+            show_scan_line
+            and self.image_km1 is not None
+            and len(self.image_acquisition_call_history) > 1
+            and len(self.line_scan_call_history) > 1
         )
         if show_scan_line:
-            fig, axes = plt.subplots(1, 2, squeeze=True, figsize=(10, 4))
+            n_cols = 3 if show_previous_scan_line else 2
+            fig, axes = plt.subplots(1, n_cols, squeeze=True, figsize=(5 * n_cols, 4))
             line_ax = axes[0]
             image_ax = axes[1]
+            previous_image_ax = axes[2] if show_previous_scan_line else None
         else:
             fig, line_ax = plt.subplots(1, 1, squeeze=True)
             image_ax = None
+            previous_image_ax = None
 
         line_ax.plot(ds, arr, label="data")
         if val_gauss is not None:
@@ -464,7 +463,36 @@ class SimulatedAcquireImage(AcquireImage):
             image_ax.set_title("Line scan position")
             if self.invert_yaxis:
                 image_ax.invert_yaxis()
-            fig.tight_layout()
+
+        if show_previous_scan_line and previous_image_ax is not None:
+            previous_image_info = self.image_acquisition_call_history[-2]
+            previous_line_info = self.line_scan_call_history[-2]
+            previous_image_to_plot = self.image_km1
+            if self.plot_image_in_log_scale:
+                previous_image_to_plot = np.log10(previous_image_to_plot + 1)
+            x_min = previous_image_info["loc_x"]
+            x_max = previous_image_info["loc_x"] + previous_image_info["size_x"]
+            y_min = previous_image_info["loc_y"]
+            y_max = previous_image_info["loc_y"] + previous_image_info["size_y"]
+            previous_image_ax.imshow(
+                previous_image_to_plot,
+                cmap="gray",
+                origin="upper",
+                extent=[x_min, x_max, y_max, y_min],
+            )
+            previous_image_ax.plot(
+                [previous_line_info["start_x"], previous_line_info["end_x"]],
+                [previous_line_info["start_y"], previous_line_info["end_y"]],
+                color="blue",
+                linewidth=2,
+            )
+            previous_image_ax.set_xlabel("x")
+            previous_image_ax.set_ylabel("y")
+            previous_image_ax.set_title("Previous line scan position")
+            if self.invert_yaxis:
+                previous_image_ax.invert_yaxis()
+
+        fig.tight_layout()
         
         if not os.path.exists(".tmp"):
             os.makedirs(".tmp")
