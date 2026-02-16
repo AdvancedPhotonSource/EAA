@@ -83,6 +83,45 @@ class TestImageRegistrationTool(tutils.BaseTester):
         
         assert np.allclose(offset, [20, 20])
         return
+
+    def test_image_registration_mutual_information(self):
+        np.random.seed(123)
+
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+
+        acquisition_tool = SimulatedAcquireImage(whole_image, return_message=False)
+        registration_tool = ImageRegistration(
+            acquisition_tool,
+            registration_method="mutual_information",
+        )
+
+        acquisition_tool.acquire_image(
+            loc_y=120, loc_x=120, size_y=128, size_x=128
+        )
+        acquisition_tool.acquire_image(
+            loc_y=100, loc_x=100, size_y=128, size_x=128
+        )
+
+        offset = registration_tool.get_offset_of_latest_image(register_with="previous")
+
+        if self.debug:
+            print("Offset (mutual information): ", offset)
+            import matplotlib.pyplot as plt
+            fig, axs = plt.subplots(1, 2)
+            axs[0].imshow(acquisition_tool.image_k)
+            axs[0].set_title(f"Image {acquisition_tool.counter_acquire_image}")
+            axs[1].imshow(acquisition_tool.image_km1)
+            axs[1].set_title(f"Image {acquisition_tool.counter_acquire_image - 1}")
+            plt.show()
+
+        assert np.allclose(offset, [20, 20], atol=1.0)
+        return
         
         
 if __name__ == '__main__':
@@ -94,3 +133,4 @@ if __name__ == '__main__':
     tester.setup_method(name="", generate_data=False, generate_gold=args.generate_gold, debug=True)
     tester.test_image_registration()
     tester.test_image_registration_diff_size()
+    tester.test_image_registration_mutual_information()
