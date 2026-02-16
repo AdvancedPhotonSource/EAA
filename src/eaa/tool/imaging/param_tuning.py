@@ -140,7 +140,7 @@ class SimulatedSetParameters(SetParameters):
             is the difference between the true parameters and the parameters to set.
         drift_factor : float
             The factor determining the amount of drift of the acquisition tool
-            due to deviation from the true parameters. The amount of drift is
+            due to deviation from the initial parameters. The amount of drift is
             determined as
             ``mean(delta_params / range) * drift_factor * z``, 
             where ``z`` is a random variable from a uniform distribution between 
@@ -187,7 +187,7 @@ class SimulatedSetParameters(SetParameters):
         
         # Set drift.
         if self.len_parameter_history > 0 and self.drift_factor > 0:
-            mean_delta = ((self.get_parameter_at_iteration(-1) - parameters) / scalers).mean()
+            mean_delta = ((self.get_parameter_at_iteration(0) - parameters) / scalers).mean()
             drift = np.ones(2) * mean_delta * self.drift_factor
             self.acquisition_tool.set_offset(drift)
         
