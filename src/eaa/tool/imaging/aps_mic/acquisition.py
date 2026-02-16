@@ -357,8 +357,8 @@ class BlueSkyAcquireImage(AcquireImage):
                         )
                     if (
                         self.image_0 is not None
-                        and len(self.image_acquisition_call_history) > 0
-                        and len(self.line_scan_call_history) > 0
+                        and len(self.image_acquisition_call_history) > 1
+                        and len(self.line_scan_call_history) > 1
                     ):
                         first_line_info = self.line_scan_call_history[0]
                         if (
