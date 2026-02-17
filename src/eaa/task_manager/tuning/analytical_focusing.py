@@ -235,8 +235,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 "Ctrl+C in terminal."
             )
             
-            # Initial 2D scan to populate image buffer of acquisition tool.
+            # Initial 2D scan and line scan to populate image buffer of acquisition tool.
             self.run_2d_scan()
+            self.run_line_scan()
             
             # Initialize optimization tool.
             self.collect_initial_data_optimization_tool(
