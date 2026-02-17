@@ -13,7 +13,6 @@ from sciagent.api.memory import MemoryManagerConfig
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
-from eaa.task_manager.imaging.analytical_feature_tracking import AnalyticalFeatureTrackingTaskManager
 from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
 from eaa.tool.optimization import (
@@ -53,11 +52,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         1. Acquire a 2D image in the user-specified region of interest.
         2. Run a line scan at user-specified coordinates and record the FWHM of the Gaussian fit.
         3. Change parameter and acquire a new 2D image.
-        4.1. If the same feature remains in the FOV, run image registration to get the offset and
-           adjust 1D/2D scan coordinates.
-        4.2. If the feature is no longer in the FOV, run a spiral feature tracking to find the feature.
-        5. Repeat 1 - 3 a few times to collect initial data for sequential optimization.
-        6. Use sequential optimization to suggest new parameters.
+        4. Run image registration to get the offset and adjust 1D/2D scan coordinates.
+        5. Repeat 1 - 3 a few times to collect initial data for Bayesian optimization.
+        6. Use Bayesian optimization to suggest new parameters.
         7. Change parameter. 
         8. Run image registration or feature tracking as in 4.
         9. Run line scan and record the FWHM of the Gaussian fit, update Gaussian process model.
@@ -78,10 +75,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             The optimization tool to use. Supported options include
             `BayesianOptimizationTool` and `QuadraticOptimizationTool`.
         image_registration_tool : ImageRegistration, optional
-            The image registration tool. This tool is optional and is only
-            used for the feature tracking sub-task if `use_feature_tracking_subtask`
-            is True. To use registration in the focusing task manager, refer to
-            ``use_registration_in_workflow`` in the ``run`` method.
+            The image registration tool.
         initial_parameters : dict[str, float], optional
             The initial parameters given as a dictionary of 
             parameter names and values.
@@ -130,10 +124,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         self.last_acquisition_count_registered = 0
         self.last_acquisition_count_stitched = 0
-        
-        self.use_feature_tracking_subtask: bool = use_feature_tracking_subtask
-        self.feature_tracking_task_manager: Optional[AnalyticalFeatureTrackingTaskManager] = None
-        
+
         self.line_scan_tool_x_coordinate_args = line_scan_tool_x_coordinate_args
         self.line_scan_tool_y_coordinate_args = line_scan_tool_y_coordinate_args
         self.image_acquisition_tool_x_coordinate_args = image_acquisition_tool_x_coordinate_args
@@ -468,14 +459,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.param_setting_tool.set_parameters(x)
         self.run_2d_scan()
         offset, is_present = self.find_offset_and_feature_presence()
-        if not is_present and self.use_feature_tracking_subtask:
-            msg = "Feature is not present in the current image. Running feature tracking sub-task."
-            logger.info(msg)
+        if not is_present:
+            msg = "Feature is not present in the current image. "
+            logger.warning(msg)
             self.record_system_message(msg)
-            offset = self.run_feature_tracking_subtask()
-        if np.any(np.isnan(offset)):
-            raise RuntimeError("Offset is NaN. Please set offset manually.")
-        self.record_system_message(f"Applying offset {offset}.")
         self.apply_offset_to_kwargs_buffers(offset)
         fwhm = self.run_line_scan()
         if np.isnan(fwhm):
@@ -512,24 +499,3 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         for x, fwhm in zip(xs, fwhms):
             report += f"{x[0]},{fwhm[0]}\n"
         return report
-
-    def run_feature_tracking_subtask(self):
-        if self.feature_tracking_task_manager is None:
-            self.feature_tracking_task_manager = AnalyticalFeatureTrackingTaskManager(
-                llm_config=self.llm_config,
-                image_acquisition_tool=self.acquisition_tool,
-                image_acquisition_tool_x_coordinate_args=self.image_acquisition_tool_x_coordinate_args,
-                image_acquisition_tool_y_coordinate_args=self.image_acquisition_tool_y_coordinate_args,
-                message_db_path=self.message_db_path,
-            )
-        offset = self.feature_tracking_task_manager.run(
-            current_acquisition_kwargs=self.image_acquisition_kwargs,
-            reference_image=self.acquisition_tool.image_km1,
-            step_size=[
-                self.acquisition_tool.image_acquisition_call_history[-1]["size_y"] * 0.8, 
-                self.acquisition_tool.image_acquisition_call_history[-1]["size_x"] * 0.8
-            ],
-            reference_image_pixel_size=self.acquisition_tool.psize_km1,
-            n_max_rounds=20,
-        )
-        return offset
