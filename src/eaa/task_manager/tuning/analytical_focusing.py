@@ -1,15 +1,19 @@
-from typing import Optional, Tuple, Sequence, Literal
+from typing import Optional, Tuple, Sequence, Literal, Any
 import logging
 import copy
 import json
+import re
 from pathlib import Path
 
 import numpy as np
 import botorch.acquisition
 from PIL import Image
+from sciagent.message_proc import generate_openai_message
+from sciagent.skill import SkillMetadata
 
 from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
+from sciagent.task_manager.base import BaseTaskManager
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
@@ -23,6 +27,10 @@ from eaa.util import to_numpy
 from eaa.image_proc import check_feature_presence_llm
 
 logger = logging.getLogger(__name__)
+
+
+class LineScanValidationFailed(RuntimeError):
+    pass
 
 
 class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
@@ -298,25 +306,150 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         float
             The FWHM of the Gaussian fit.
         """
-        self.record_system_message(f"Acquiring line scan with {self.line_scan_kwargs}.")
-        res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
+        while True:
+            self.record_system_message(f"Acquiring line scan with {self.line_scan_kwargs}.")
+            res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
+            try:
+                res = json.loads(res)
+            except json.JSONDecodeError:
+                raise ValueError(
+                    f"The line scan tool should return a stringified JSON object, but got {res}."
+                )
+            if "fwhm" not in res:
+                raise ValueError(
+                    f"The stringified JSON object should contain the 'fwhm' key, but got {res}."
+                )
+            content = f"Line scan completed with kwargs {self.line_scan_kwargs}. FWHM = {res['fwhm']:.4f}"
+            image_path = res.get("image_path")
+            if isinstance(image_path, str):
+                self.record_system_message(content, image_path=image_path)
+            else:
+                self.record_system_message(content)
+
+            check_res = self.check_line_scan(image_path) if isinstance(image_path, str) else {"result": "ok"}
+            self.record_system_message(
+                f"Line scan validation result:\n{check_res}."
+            )
+
+            if check_res["result"] == "ok":
+                return res["fwhm"]
+            if check_res["result"] == "adjusted":
+                self.record_system_message(
+                    f"Line scan adjusted. New line scan kwargs: {self.line_scan_kwargs}."
+                )
+                continue
+            if check_res["result"] == "failed":
+                raise LineScanValidationFailed("Line scan validation failed after retries.")
+            raise ValueError(f"Unknown check_line_scan result: {check_res}")
+
+    def parse_json_from_response(self, response_text: str) -> dict[str, Any]:
         try:
-            res = json.loads(res)
+            return json.loads(response_text)
         except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", response_text, flags=re.DOTALL)
+            if match is None:
+                raise ValueError(f"Unable to parse JSON from response: {response_text}")
+            return json.loads(match.group(0))
+
+    def extract_scan_position(self, kwargs: dict[str, float]) -> np.ndarray:
+        if len(self.line_scan_tool_x_coordinate_args) == 0 or len(self.line_scan_tool_y_coordinate_args) == 0:
+            raise ValueError("Line scan coordinate args must not be empty.")
+        x_arg = self.line_scan_tool_x_coordinate_args[0]
+        y_arg = self.line_scan_tool_y_coordinate_args[0]
+        if x_arg not in kwargs or y_arg not in kwargs:
             raise ValueError(
-                f"The line scan tool should return a stringified JSON object, but got {res}."
+                f"Cannot extract line scan position from kwargs. Missing {x_arg} or {y_arg} in {kwargs}."
             )
-        if "fwhm" not in res:
-            raise ValueError(
-                f"The stringified JSON object should contain the 'fwhm' key, but got {res}."
+        return np.array([float(kwargs[y_arg]), float(kwargs[x_arg])], dtype=float)
+
+    def check_line_scan(self, image_path: str) -> dict[str, Any]:
+        if self.llm_config is None:
+            logger.warning("LLM is unavailable. Skipping line scan check.")
+            return {"result": "ok"}
+
+        skill_path = (
+            Path(__file__).resolve().parents[2]
+            / "private_skills"
+            / "check-line-scan"
+            / "SKILL.md"
+        )
+        if not skill_path.exists():
+            raise FileNotFoundError(f"Line scan check skill file not found: {skill_path}")
+
+        skill_text = skill_path.read_text(encoding="utf-8")
+        checker_task_manager = BaseTaskManager(
+            llm_config=self.llm_config,
+            memory_config=self.memory_config,
+            tools=[self.acquisition_tool],
+            message_db_path=None,
+            use_coding_tools=False,
+            build=True,
+        )
+        skill_tool_name = "skill-check-line-scan"
+        checker_task_manager.skill_catalog = [
+            SkillMetadata(
+                name="check-line-scan",
+                description="Instructions for checking a line scan.",
+                tool_name=skill_tool_name,
+                path=str(skill_path.parent),
             )
-        content = f"Line scan completed with kwargs {self.line_scan_kwargs}. FWHM = {res['fwhm']:.4f}"
-        image_path = res.get("image_path")
-        if isinstance(image_path, str):
-            self.record_system_message(content, image_path=image_path)
-        else:
-            self.record_system_message(content)
-        return res["fwhm"]
+        ]
+        checker_task_manager._inject_skill_doc_messages_to_context(
+            tool_response={
+                "content": {
+                    "path": str(skill_path.parent),
+                    "files": {"SKILL.md": skill_text},
+                }
+            },
+            tool_call_info={"function": {"name": skill_tool_name}},
+        )
+        checker_task_manager.run_conversation(
+            message=generate_openai_message(
+                content=(
+                    "Use the instructions already in context and the provided image to check the line scan. "
+                    "Return exactly one JSON object as specified by the instructions."
+                ),
+                role="user",
+                image_path=image_path,
+            ),
+            termination_behavior="return",
+        )
+        response_text = None
+        for message in reversed(checker_task_manager.context):
+            if message.get("role") == "assistant" and isinstance(message.get("content"), str):
+                response_text = message["content"]
+                break
+        if response_text is None:
+            raise RuntimeError("No assistant response found in line scan checker conversation.")
+
+        result = self.parse_json_from_response(response_text)
+        if "result" not in result:
+            raise ValueError(f"`result` key is missing in check_line_scan response: {result}")
+
+        if result["result"] == "ok":
+            return result
+        if result["result"] == "adjusted":
+            new_line_scan_kwargs = result.get("new_line_scan_kwargs")
+            if not isinstance(new_line_scan_kwargs, dict):
+                raise ValueError(
+                    f"`new_line_scan_kwargs` must be a dictionary when result='adjusted', got {result}."
+                )
+            old_line_scan_kwargs = copy.deepcopy(self.line_scan_kwargs)
+            merged_line_scan_kwargs = copy.deepcopy(self.line_scan_kwargs)
+            merged_line_scan_kwargs.update(new_line_scan_kwargs)
+            old_scan_position = self.extract_scan_position(old_line_scan_kwargs)
+            new_scan_position = self.extract_scan_position(merged_line_scan_kwargs)
+            offset = new_scan_position - old_scan_position
+            self.line_scan_kwargs = merged_line_scan_kwargs
+            self.apply_offset_to_kwargs_buffers(
+                offset,
+                update_kwargs_for_line_scan=False,
+                update_kwargs_for_image_acquisition=True,
+            )
+            return result
+        if result["result"] == "failed":
+            return result
+        raise ValueError(f"Unsupported check_line_scan result: {result}")
     
     def update_optimization_model(self, fwhm: float):
         x = self.param_setting_tool.get_parameter_at_iteration(-1)
@@ -410,15 +543,22 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         with Image.open(path) as img:
             return img.copy()
     
-    def apply_offset_to_kwargs_buffers(self, offset: np.ndarray):
-        for arg in self.line_scan_tool_x_coordinate_args:
-            self.line_scan_kwargs[arg] += offset[1]
-        for arg in self.line_scan_tool_y_coordinate_args:
-            self.line_scan_kwargs[arg] += offset[0]
-        for arg in self.image_acquisition_tool_x_coordinate_args:
-            self.image_acquisition_kwargs[arg] += offset[1]
-        for arg in self.image_acquisition_tool_y_coordinate_args:
-            self.image_acquisition_kwargs[arg] += offset[0]
+    def apply_offset_to_kwargs_buffers(
+        self, 
+        offset: np.ndarray,
+        update_kwargs_for_line_scan: bool = True,
+        update_kwargs_for_image_acquisition: bool = True,
+    ):
+        if update_kwargs_for_line_scan:
+            for arg in self.line_scan_tool_x_coordinate_args:
+                self.line_scan_kwargs[arg] += offset[1]
+            for arg in self.line_scan_tool_y_coordinate_args:
+                self.line_scan_kwargs[arg] += offset[0]
+        if update_kwargs_for_image_acquisition:
+            for arg in self.image_acquisition_tool_x_coordinate_args:
+                self.image_acquisition_kwargs[arg] += offset[1]
+            for arg in self.image_acquisition_tool_y_coordinate_args:
+                self.image_acquisition_kwargs[arg] += offset[0]
             
     def collect_initial_data_optimization_tool(
         self, 
@@ -455,20 +595,45 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 f"The length of x must be the same as the number of parameters, "
                 f"but got {len(x)} and {len(self.parameter_names)}."
             )
-        x = np.array(x)
-        self.record_system_message(f"Setting parameters to {x}.")
-        self.param_setting_tool.set_parameters(x)
-        self.run_2d_scan()
-        offset, is_present = self.find_offset_and_feature_presence()
-        if not is_present:
-            msg = "Feature is not present in the current image. "
-            logger.warning(msg)
-            self.record_system_message(msg)
-        self.apply_offset_to_kwargs_buffers(offset)
-        fwhm = self.run_line_scan()
-        if np.isnan(fwhm):
-            raise RuntimeError("FWHM is NaN. Please set FWHM manually.")
-        self.update_optimization_model(fwhm)
+        x_original = np.array(self.param_setting_tool.get_parameter_at_iteration(-1), dtype=float)
+        x_current = np.array(x, dtype=float)
+        line_scan_kwargs_before = copy.deepcopy(self.line_scan_kwargs)
+        image_acquisition_kwargs_before = copy.deepcopy(self.image_acquisition_kwargs)
+        while True:
+            self.record_system_message(f"Setting parameters to {x_current}.")
+            self.param_setting_tool.set_parameters(x_current)
+            self.run_2d_scan()
+            offset, is_present = self.find_offset_and_feature_presence()
+            if not is_present:
+                msg = "Feature is not present in the current image. "
+                logger.warning(msg)
+                self.record_system_message(msg)
+            self.apply_offset_to_kwargs_buffers(offset)
+            try:
+                fwhm = self.run_line_scan()
+            except LineScanValidationFailed:
+                for parameter_name in self.param_setting_tool.parameter_names:
+                    if len(self.param_setting_tool.parameter_history[parameter_name]) > 0:
+                        self.param_setting_tool.parameter_history[parameter_name].pop()
+                self.line_scan_kwargs = copy.deepcopy(line_scan_kwargs_before)
+                self.image_acquisition_kwargs = copy.deepcopy(image_acquisition_kwargs_before)
+                delta = x_current - x_original
+                x_next = x_original + delta / 2
+                self.record_system_message(
+                    "Line scan validation failed. "
+                    f"Retrying by shrinking parameter delta from {delta.tolist()} "
+                    f"to {(delta / 2).tolist()}, new parameters: {x_next.tolist()}."
+                )
+                if np.allclose(x_next, x_original):
+                    raise RuntimeError(
+                        "Line scan validation failed and parameter delta is too small to continue."
+                    )
+                x_current = x_next
+                continue
+            if np.isnan(fwhm):
+                raise RuntimeError("FWHM is NaN. Please set FWHM manually.")
+            self.update_optimization_model(fwhm)
+            return
 
     def apply_user_correction_offset(self) -> bool:
         message = (
