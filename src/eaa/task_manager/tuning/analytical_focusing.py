@@ -590,11 +590,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.apply_offset_to_kwargs_buffers(offset)
             try:
                 fwhm = self.run_line_scan()
+                if np.isnan(fwhm):
+                    raise LineScanValidationFailed("FWHM is NaN.")
             except LineScanValidationFailed:
                 x_current = rollback_and_shrink_delta("Line scan validation failed.")
                 continue
-            if np.isnan(fwhm):
-                raise RuntimeError("FWHM is NaN. Please set FWHM manually.")
             self.update_optimization_model(fwhm)
             return
 
