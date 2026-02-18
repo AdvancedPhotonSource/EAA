@@ -348,6 +348,7 @@ def plot_2d_image(
     n_ticks: int = 10,
     add_grid_lines: bool = False,
     invert_yaxis: bool = False,
+    cmap: str = "inferno"
 ) -> plt.Figure:
     """Save an image to the temporary directory.
 
@@ -369,9 +370,11 @@ def plot_2d_image(
         If True, grid lines are added to the image.
     invert_yaxis : bool, optional
         If True, the y-axis is inverted.
+    cmap: str, optional
+        The colormap for plotting the image.
     """
     fig, ax = plt.subplots(1, 1)
-    ax.imshow(image, cmap='gray')
+    ax.imshow(image, cmap=cmap)
     if add_axis_ticks:
         if x_coords is None:
             x_coords = np.arange(image.shape[1])
@@ -401,6 +404,7 @@ def add_marker_to_imgae(
     marker_type: Literal["line", "rectangle"] = None,
     marker_params: dict = None,
     add_reticles_for_key_points: bool = False,
+    cmap: str = "inferno"
 ) -> plt.Figure:
     """Add a marker to an image and plot it.
 
@@ -473,7 +477,7 @@ def add_marker_to_imgae(
                 ymax=ax.get_ylim()[1], 
                 linestyle="--",
                 linewidth=0.5,
-                color="gray"
+                color="inferno"
             )
             ax.hlines(
                 marker_params["y"], 
@@ -481,7 +485,7 @@ def add_marker_to_imgae(
                 xmax=ax.get_xlim()[1], 
                 linestyle="--",
                 linewidth=0.5,
-                color="gray"
+                color="inferno"
             )
     elif marker_type == "rectangle":
         if x_range is not None and y_range is not None:

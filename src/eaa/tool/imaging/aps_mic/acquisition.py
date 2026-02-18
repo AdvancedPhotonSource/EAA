@@ -323,7 +323,7 @@ class BlueSkyAcquireImage(AcquireImage):
                         fig, ax = plt.subplots(1, 1, figsize=(5, 5))
                         ax.imshow(
                             image_to_plot,
-                            cmap="gray",
+                            cmap="inferno",
                             origin="upper",
                             extent=[x_min, x_max, y_max, y_min],
                         )
