@@ -660,7 +660,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
     def generate_report_csv(self) -> str:
         xs = self.optimization_tool.xs_untransformed.tolist()
-        fwhms = self.optimization_tool.ys_untransformed.tolist()
+        fwhms = (-self.optimization_tool.ys_untransformed).tolist()
         report = "Parameters,FWHM\n"
         for x, fwhm in zip(xs, fwhms):
             report += f"{x[0]},{fwhm[0]}\n"
