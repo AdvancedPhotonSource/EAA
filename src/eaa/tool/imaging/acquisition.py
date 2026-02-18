@@ -453,7 +453,7 @@ class SimulatedAcquireImage(AcquireImage):
             y_max = image_info["loc_y"] + image_info["size_y"]
             image_ax.imshow(
                 image_to_plot,
-                cmap="gray",
+                cmap="inferno",
                 origin="upper",
                 extent=[x_min, x_max, y_max, y_min],
             )
@@ -476,7 +476,7 @@ class SimulatedAcquireImage(AcquireImage):
             y_max = first_image_info["loc_y"] + first_image_info["size_y"]
             first_image_ax.imshow(
                 first_image_to_plot,
-                cmap="gray",
+                cmap="inferno",
                 origin="upper",
                 extent=[x_min, x_max, y_max, y_min],
             )
