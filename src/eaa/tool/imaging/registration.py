@@ -1,11 +1,19 @@
 from typing import Annotated, List, Literal, Optional, Tuple
 import logging
 import json
+import re
+from pathlib import Path
 
 import numpy as np
 import scipy.ndimage as ndi
+import matplotlib.pyplot as plt
 from skimage import feature
 from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
+from sciagent.task_manager.base import BaseTaskManager
+from sciagent.message_proc import generate_openai_message
+from sciagent.skill import SkillMetadata
+from sciagent.api.llm_config import LLMConfig
+from sciagent.api.memory import MemoryManagerConfig
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.image_proc import phase_cross_correlation, translation_nmi_registration
@@ -25,10 +33,13 @@ class ImageRegistration(BaseTool):
     def __init__(
         self,
         image_acquisition_tool: AcquireImage,
+        llm_config: Optional[LLMConfig] = None,
+        memory_config: Optional[MemoryManagerConfig] = None,
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
-        registration_method: Literal["phase_correlation", "sift", "mutual_information"] = "phase_correlation",
+        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "phase_correlation",
+        log_scale: bool = False,
         require_approval: bool = False,
         *args,
         **kwargs,
@@ -60,14 +71,19 @@ class ImageRegistration(BaseTool):
             The method used to estimate translational offsets. "phase_correlation"
             uses phase correlation, "sift" uses feature matching, and
             "mutual_information" uses pyramid-based normalized mutual information.
+        log_scale : bool, optional
+            If True, images are transformed as `log10(x + 1)` before registration.
         """
         super().__init__(*args, require_approval=require_approval, **kwargs)
 
         self.image_acquisition_tool = image_acquisition_tool
+        self.llm_config = llm_config
+        self.memory_config = memory_config
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
         self.image_coordinates_origin = image_coordinates_origin
         self.registration_method = registration_method
+        self.log_scale = log_scale
 
     def set_reference_image(
         self, reference_image: np.ndarray, 
@@ -97,6 +113,9 @@ class ImageRegistration(BaseTool):
         """
         if image.ndim == 3:
             image = np.mean(image, axis=-1)
+        image[np.isnan(image)] = np.mean(image)
+        if self.log_scale:
+            image = np.log10(image + 1)
         return image
 
     @tool(name="get_offset_of_latest_image", return_type=ToolReturnType.LIST)
@@ -122,7 +141,15 @@ class ImageRegistration(BaseTool):
         Register the latest image collected by the image acquisition tool
         and the reference image.
         """
-        # Get the latest image:
+        image_t, image_r, psize_t, psize_r = self.get_registration_inputs(register_with)
+        
+        offset = self.register_images(image_t, image_r, psize_t, psize_r)
+        return offset
+
+    def get_registration_inputs(
+        self,
+        register_with: Literal["previous", "first", "reference"],
+    ) -> tuple[np.ndarray, np.ndarray, float, float]:
         image_t = self.process_image(self.image_acquisition_tool.image_k)
         psize_t = self.image_acquisition_tool.psize_k
 
@@ -139,9 +166,167 @@ class ImageRegistration(BaseTool):
             psize_r = self.reference_pixel_size
         else:
             raise ValueError(f"Invalid value for register_with: {register_with}")
-        
-        offset = self.register_images(image_t, image_r, psize_t, psize_r)
-        return offset
+        return image_t, image_r, float(psize_t), float(psize_r)
+
+    @tool(name="apply_and_view_offset", return_type=ToolReturnType.IMAGE_PATH)
+    def apply_and_view_offset(
+        self,
+        register_with: Annotated[
+            Literal["previous", "first", "reference"],
+            "The image to register the latest image with. "
+            "Can be 'previous', 'first', or 'reference'.",
+        ],
+        fractional_offset_y: Annotated[
+            float,
+            "Fractional y-shift (down is positive) relative to image height.",
+        ],
+        fractional_offset_x: Annotated[
+            float,
+            "Fractional x-shift (right is positive) relative to image width.",
+        ],
+    ) -> Annotated[str, "Path to side-by-side plot of shifted reference and current image."]:
+        """Apply a fractional offset to the previous/first/reference image and
+        view it side by side with the current image.
+        """
+        image_t, image_r, _, _ = self.get_registration_inputs(register_with)
+        shift_pixels = np.array(
+            [
+                fractional_offset_y * float(image_r.shape[0]),
+                fractional_offset_x * float(image_r.shape[1]),
+            ],
+            dtype=float,
+        )
+        shifted_image_r = ndi.shift(
+            image_r,
+            shift=shift_pixels,
+            order=1,
+            mode="constant",
+            cval=0.0,
+            prefilter=False,
+        )
+        fig = self.build_registration_pair_figure(
+            shifted_image_r,
+            image_t,
+            images_are_processed=True,
+        )
+        return BaseTool.save_image_to_temp_dir(
+            fig=fig,
+            filename="llm_registration_offset_check.png",
+            add_timestamp=True,
+        )
+
+    def parse_llm_shift(self, response_text: str) -> np.ndarray:
+        content = response_text.strip()
+        match = re.search(r"^\s*([^,]+)\s*,\s*([^,]+)\s*$", content)
+        if match is None:
+            match = re.search(r"([+-]?(?:\d+\.?\d*|\.\d+|nan))\s*,\s*([+-]?(?:\d+\.?\d*|\.\d+|nan))", content, flags=re.IGNORECASE)
+        if match is None:
+            raise ValueError(f"Unable to parse registration shift from response: {response_text}")
+        tokens = [match.group(1).strip().lower(), match.group(2).strip().lower()]
+        vals: list[float] = []
+        for token in tokens:
+            if token == "nan":
+                vals.append(float("nan"))
+            else:
+                vals.append(float(token))
+        return np.array(vals, dtype=float)
+
+    def build_registration_pair_figure(
+        self,
+        image_r: np.ndarray,
+        image_t: np.ndarray,
+        images_are_processed: bool = False,
+    ):
+        if not images_are_processed:
+            image_r = self.process_image(image_r)
+            image_t = self.process_image(image_t)
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        axes[0].imshow(image_r, cmap="inferno", origin="upper")
+        axes[0].set_title("Previous / Reference")
+        axes[0].set_axis_off()
+        axes[1].imshow(image_t, cmap="inferno", origin="upper")
+        axes[1].set_title("Current / Target")
+        axes[1].set_axis_off()
+        fig.tight_layout()
+        return fig
+
+    def register_images_llm(self, image_t: np.ndarray, image_r: np.ndarray) -> np.ndarray:
+        if self.llm_config is None:
+            logger.warning("`llm_config` is not set for LLM image registration. Returning NaN offset.")
+            return np.array([np.nan, np.nan], dtype=float)
+
+        skill_path = (
+            Path(__file__).resolve().parents[2]
+            / "private_skills"
+            / "image-registration"
+            / "SKILL.md"
+        )
+        if not skill_path.exists():
+            raise FileNotFoundError(f"Registration skill file not found: {skill_path}")
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        fig = self.build_registration_pair_figure(
+            image_r,
+            image_t,
+            images_are_processed=True,
+        )
+        image_path = BaseTool.save_image_to_temp_dir(
+            fig=fig,
+            filename="llm_registration_pair.png",
+            add_timestamp=True,
+        )
+
+        registration_task = BaseTaskManager(
+            llm_config=self.llm_config,
+            tools=[self],
+            use_coding_tools=False,
+            build=True,
+        )
+        skill_tool_name = "skill-image-registration"
+        registration_task.skill_catalog = [
+            SkillMetadata(
+                name="image-registration",
+                description="Instructions for image registration.",
+                tool_name=skill_tool_name,
+                path=str(skill_path.parent),
+            )
+        ]
+        registration_task._inject_skill_doc_messages_to_context(
+            tool_response={
+                "content": {
+                    "path": str(skill_path.parent),
+                    "files": {"SKILL.md": skill_text},
+                }
+            },
+            tool_call_info={"function": {"name": skill_tool_name}},
+        )
+        registration_task.run_conversation(
+            message=generate_openai_message(
+                content=(
+                    "Estimate the translational shift and return only '<shift_y>, <shift_x>'. "
+                    "Before final answer, call apply_and_view_offset to verify your proposed offset. "
+                    "Use register_with='previous' for verification."
+                ),
+                role="user",
+                image_path=image_path,
+            ),
+            termination_behavior="return",
+        )
+        response_text = None
+        for message in reversed(registration_task.context):
+            if message.get("role") == "assistant" and isinstance(message.get("content"), str):
+                response_text = message["content"]
+                break
+        if response_text is None:
+            raise RuntimeError("No assistant response found in LLM image registration context.")
+
+        shift_fraction = self.parse_llm_shift(response_text)
+        if np.any(np.isnan(shift_fraction)):
+            return np.array([np.nan, np.nan], dtype=float)
+        return np.array([
+            shift_fraction[0] * float(image_r.shape[0]),
+            shift_fraction[1] * float(image_r.shape[1]),
+        ], dtype=float)
 
     def register_images(
         self, 
@@ -151,7 +336,7 @@ class ImageRegistration(BaseTool):
         psize_r: float,
         return_correlation_value: bool = False,
         use_hanning_window: bool = True,
-        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information"]] = None,
+        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "llm"]] = None,
     ) -> np.ndarray | Tuple[np.ndarray, float] | str:
         """
         Register the target image with the reference image.
@@ -228,6 +413,9 @@ class ImageRegistration(BaseTool):
             correlation_value = float("nan")
         elif method == "sift":
             offset = self.feature_based_registration(image_t, image_r)
+            correlation_value = float("nan")
+        elif method == "llm":
+            offset = self.register_images_llm(image_t=image_t, image_r=image_r)
             correlation_value = float("nan")
         else:
             raise ValueError(f"Invalid registration method: {method}")
