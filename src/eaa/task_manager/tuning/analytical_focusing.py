@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import botorch.acquisition
-from PIL import Image
 from sciagent.message_proc import generate_openai_message
 from sciagent.skill import SkillMetadata
 
@@ -24,12 +23,15 @@ from eaa.tool.optimization import (
     BayesianOptimizationTool,
 )
 from eaa.util import to_numpy
-from eaa.image_proc import check_feature_presence_llm
 
 logger = logging.getLogger(__name__)
 
 
 class LineScanValidationFailed(RuntimeError):
+    pass
+
+
+class RegistrationFailed(RuntimeError):
     pass
 
 
@@ -121,7 +123,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.optimization_tool = self.create_bo_tool(parameter_ranges)
         else:
             self.optimization_tool = optimization_tool
-        self.image_registration_tool = self.create_image_registration_tool(acquisition_tool)
+        self.image_registration_tool = self.create_image_registration_tool(
+            acquisition_tool,
+            llm_config=llm_config,
+        )
         
         if hasattr(acquisition_tool, "line_scan_return_gaussian_fit"):
             acquisition_tool.line_scan_return_gaussian_fit = True
@@ -152,10 +157,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             *args, **kwargs
         )
 
-        self.feature_presence_positive_examples = []
-        self.feature_presence_negative_examples = []
-        self.load_feature_presence_example_images()
-        
     def create_bo_tool(self, parameter_ranges: list[tuple[float, ...], tuple[float, ...]]):
         bo_tool = BayesianOptimizationTool(
             bounds=parameter_ranges,
@@ -166,13 +167,19 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         )
         return bo_tool
     
-    def create_image_registration_tool(self, acquisition_tool: AcquireImage):
+    def create_image_registration_tool(
+        self,
+        acquisition_tool: AcquireImage,
+        llm_config: Optional[LLMConfig] = None,
+    ):
         image_registration_tool = ImageRegistration(
             image_acquisition_tool=acquisition_tool,
+            llm_config=llm_config,
             reference_image=None,
             reference_pixel_size=1.0,
             image_coordinates_origin="top_left",
-            registration_method="phase_correlation",
+            registration_method="llm",
+            log_scale=True
         )
         return image_registration_tool
     
@@ -476,40 +483,19 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             p_suggested = p_current + signs * step_sizes
         return p_suggested
     
-    def find_offset_and_feature_presence(self) -> Tuple[np.ndarray, bool]:
-        """Find the offset between the latest image and the previous image 
-        and check if the feature is present.
+    def find_offset(self) -> np.ndarray:
+        """Find the offset between the latest image and the previous image.
 
         Returns
         -------
         np.ndarray
             The offset between the latest image and the previous image.
             Offset is in physical units, i.e., pixel size is already accounted for.
-        bool
-            Whether the feature is present in the current image.
         """
-        image_k = self.acquisition_tool.image_k
-        image_km1 = self.acquisition_tool.image_km1
-        
-        if self.llm_config is None:
-            logger.warning("`llm_config` is not provided. Unable to check if the feature is present.")
-            is_present = True
-        else:
-            is_present = check_feature_presence_llm(
-                task_manager=self,
-                image=image_k,
-                reference_image=image_km1,
-                positive_examples=self.feature_presence_positive_examples,
-                negative_examples=self.feature_presence_negative_examples,
-            )
-        
-        shift = self.image_registration_tool.register_images(
-            image_t=self.image_registration_tool.process_image(image_k),
-            image_r=self.image_registration_tool.process_image(image_km1),
-            psize_t=self.acquisition_tool.psize_k,
-            psize_r=self.acquisition_tool.psize_km1,
-            return_correlation_value=False,
-        ).astype(float)
+        shift = np.array(
+            self.image_registration_tool.get_offset_of_latest_image("previous"),
+            dtype=float,
+        )
         
         # Count in the difference of scan positions.
         scan_pos_diff = np.array([
@@ -518,30 +504,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             for dir in ["y", "x"]
         ]).astype(float)
         shift += scan_pos_diff
-        return shift, is_present
-
-    def load_feature_presence_example_images(self) -> None:
-        examples_dir = (
-            Path(__file__).resolve().parents[2]
-            / "assets"
-            / "context_learning_examples"
-        )
-        if not examples_dir.exists():
-            logger.warning("Example images directory not found: %s", examples_dir)
-            return
-
-        positive_paths = sorted(examples_dir.glob("feature_presence_positive_*.png"))
-        negative_paths = sorted(examples_dir.glob("feature_presence_negative_*.png"))
-        self.feature_presence_positive_examples = [
-            self.load_pil_image(path) for path in positive_paths
-        ]
-        self.feature_presence_negative_examples = [
-            self.load_pil_image(path) for path in negative_paths
-        ]
-
-    def load_pil_image(self, path: Path) -> Image.Image:
-        with Image.open(path) as img:
-            return img.copy()
+        return shift
     
     def apply_offset_to_kwargs_buffers(
         self, 
@@ -599,36 +562,36 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         x_current = np.array(x, dtype=float)
         line_scan_kwargs_before = copy.deepcopy(self.line_scan_kwargs)
         image_acquisition_kwargs_before = copy.deepcopy(self.image_acquisition_kwargs)
+
+        def rollback_and_shrink_delta(message_prefix: str) -> np.ndarray:
+            for parameter_name in self.param_setting_tool.parameter_names:
+                if len(self.param_setting_tool.parameter_history[parameter_name]) > 0:
+                    self.param_setting_tool.parameter_history[parameter_name].pop()
+            self.line_scan_kwargs = copy.deepcopy(line_scan_kwargs_before)
+            self.image_acquisition_kwargs = copy.deepcopy(image_acquisition_kwargs_before)
+            delta = x_current - x_original
+            x_next = x_original + delta / 2
+            self.record_system_message(
+                f"{message_prefix} Retrying by shrinking parameter delta from {delta.tolist()} "
+                f"to {(delta / 2).tolist()}, new parameters: {x_next.tolist()}."
+            )
+            if np.allclose(x_next, x_original):
+                raise RuntimeError(f"{message_prefix} Parameter delta is too small to continue.")
+            return x_next
+
         while True:
             self.record_system_message(f"Setting parameters to {x_current}.")
             self.param_setting_tool.set_parameters(x_current)
             self.run_2d_scan()
-            offset, is_present = self.find_offset_and_feature_presence()
-            if not is_present:
-                msg = "Feature is not present in the current image. "
-                logger.warning(msg)
-                self.record_system_message(msg)
+            offset = self.find_offset()
+            if np.any(np.isnan(offset)):
+                x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
+                continue
             self.apply_offset_to_kwargs_buffers(offset)
             try:
                 fwhm = self.run_line_scan()
             except LineScanValidationFailed:
-                for parameter_name in self.param_setting_tool.parameter_names:
-                    if len(self.param_setting_tool.parameter_history[parameter_name]) > 0:
-                        self.param_setting_tool.parameter_history[parameter_name].pop()
-                self.line_scan_kwargs = copy.deepcopy(line_scan_kwargs_before)
-                self.image_acquisition_kwargs = copy.deepcopy(image_acquisition_kwargs_before)
-                delta = x_current - x_original
-                x_next = x_original + delta / 2
-                self.record_system_message(
-                    "Line scan validation failed. "
-                    f"Retrying by shrinking parameter delta from {delta.tolist()} "
-                    f"to {(delta / 2).tolist()}, new parameters: {x_next.tolist()}."
-                )
-                if np.allclose(x_next, x_original):
-                    raise RuntimeError(
-                        "Line scan validation failed and parameter delta is too small to continue."
-                    )
-                x_current = x_next
+                x_current = rollback_and_shrink_delta("Line scan validation failed.")
                 continue
             if np.isnan(fwhm):
                 raise RuntimeError("FWHM is NaN. Please set FWHM manually.")
