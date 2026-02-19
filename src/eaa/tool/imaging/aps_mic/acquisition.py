@@ -295,10 +295,11 @@ class BlueSkyAcquireImage(AcquireImage):
                 if not os.path.exists(png_output_dir):
                     os.makedirs(png_output_dir)
                 
-                img_path, [_, _, _, fwhm] = save_xrf_line_scan(
+                img_path, fit_payload = save_xrf_line_scan(
                     mda_file_path, png_output_dir, roi_num=self.xrf_roi_num, 
                     return_line_array=True, scan_samy=self.scan_samy,
                 )
+                fwhm = fit_payload["fwhm"]
                 wait_for_file(img_path, duration=5)
 
                 if np.isnan(fwhm):
@@ -408,6 +409,13 @@ class BlueSkyAcquireImage(AcquireImage):
                         return json.dumps({
                             "image_path": img_path,
                             "fwhm": fwhm,
+                            "a": fit_payload.get("a"),
+                            "mu": fit_payload.get("mu"),
+                            "sigma": fit_payload.get("sigma"),
+                            "c": fit_payload.get("c"),
+                            "normalized_residual": fit_payload.get("normalized_residual"),
+                            "x_min": fit_payload.get("x_min"),
+                            "x_max": fit_payload.get("x_max"),
                         })
                     return img_path
                 else:

@@ -180,7 +180,7 @@ def save_xrf_line_scan(
     y_threshold: float = 0.0,
     return_line_array: bool = False,
     scan_samy: bool = False,
-) -> str | None:
+) -> str | tuple[str, dict] | None:
 
     """
     Save the XRF line scan data in png format.
@@ -196,14 +196,14 @@ def save_xrf_line_scan(
     y_threshold : float
         The threshold for the Gaussian fit.
     return_line_array : bool
-        If True, the line array will be returned.
+        If True, the line profile arrays and Gaussian fit metadata will be returned.
     scan_samy : bool
         If True, line profile is generated using sample-y motor, scanning sample-y
 
     Returns
     -------
-    str | None
-        The path to the saved image.
+    str | tuple[str, dict] | None
+        The path to the saved image, or `(path, payload)` when `return_line_array` is True.
     """
 
     try:
@@ -222,7 +222,9 @@ def save_xrf_line_scan(
 
         # Fit a Gaussian to the data
         try:
-            a, mu, sigma, c = eaa.maths.fit_gaussian_1d(x, y, y_threshold=y_threshold)
+            a, mu, sigma, c, normalized_residual, x_min, x_max = eaa.maths.fit_gaussian_1d(
+                x, y, y_threshold=y_threshold
+            )
             if np.any(np.isnan([a, mu, sigma, c])):
                 val_gauss = None
                 fwhm = np.nan
@@ -243,7 +245,19 @@ def save_xrf_line_scan(
         plt.close(fig)
         logger.info(f"Image saved to {fname}")
         if return_line_array:
-            return fname, [x, y, val_gauss, fwhm]
+            return fname, {
+                "x": x,
+                "y": y,
+                "val_gauss": val_gauss,
+                "fwhm": fwhm,
+                "a": a,
+                "mu": mu,
+                "sigma": sigma,
+                "c": c,
+                "normalized_residual": normalized_residual,
+                "x_min": x_min,
+                "x_max": x_max,
+            }
         else:
             return fname
 
