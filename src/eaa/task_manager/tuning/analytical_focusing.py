@@ -13,6 +13,7 @@ from sciagent.skill import SkillMetadata
 from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
 from sciagent.task_manager.base import BaseTaskManager
+from sciagent.tool.base import BaseTool
 from sciagent.message_proc import print_message
 
 from eaa.tool.imaging.acquisition import AcquireImage
@@ -53,7 +54,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
-        use_feature_tracking_subtask: bool = True,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -112,9 +112,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             See `line_scan_tool_x_coordinate_args`.
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...]
             See `line_scan_tool_y_coordinate_args`.
-        use_feature_tracking_subtask: bool
-            If True, feature tracking will be run if the line scan feature has drifted
-            out of the FOV.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -564,6 +561,19 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         x = np.array(x).reshape(1, -1)
         # Use negative FWHM because we want to minimize the FWHM.
         self.optimization_tool.update(x, -np.array([[fwhm]]))
+        try:
+            fig = self.optimization_tool.visualize_status()
+            fig_path = BaseTool.save_image_to_temp_dir(
+                fig=fig,
+                filename="optimization_status.png",
+                add_timestamp=True,
+            )
+            self.record_system_message(
+                "Optimization status updated.",
+                image_path=fig_path,
+            )
+        except Exception as exc:
+            logger.warning("Failed to visualize optimization status: %s", exc)
         
     def run_2d_scan(self):
         self.record_system_message(f"Acquiring 2D scan...```{self.image_acquisition_kwargs}```")
