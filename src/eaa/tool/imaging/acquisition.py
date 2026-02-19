@@ -325,8 +325,8 @@ class SimulatedAcquireImage(AcquireImage):
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
-        y = np.arange(loc[0], loc[0] + size[0])
-        x = np.arange(loc[1], loc[1] + size[1])
+        y = np.arange(loc[0], loc[0] + size[0] - 0.5)
+        x = np.arange(loc[1], loc[1] + size[1] - 0.5)
         arr = self.interpolator(y + self.offset[0], x + self.offset[1]).reshape(size)
         
         if self.blur is not None and self.blur > 0:
