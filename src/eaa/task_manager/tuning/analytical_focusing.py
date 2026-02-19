@@ -13,6 +13,7 @@ from sciagent.skill import SkillMetadata
 from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
 from sciagent.task_manager.base import BaseTaskManager
+from sciagent.message_proc import print_message
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
@@ -163,7 +164,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             n_observations=1,
             kernel_lengthscales=None,
             acquisition_function_class=botorch.acquisition.UpperConfidenceBound,
-            acquisition_function_kwargs={"beta": 1.0},
+            acquisition_function_kwargs={"beta": 3.0},
         )
         return bo_tool
     
@@ -268,7 +269,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 logger.info(iter_message)
                 self.record_system_message(iter_message)
                 p_suggested = self.get_suggested_next_parameters(parameter_change_step_limit)
-                suggestion_message = f"Suggested parameter: {p_suggested}"
+                suggestion_message = f"Parameter suggested by optimization tool: {p_suggested}"
                 logger.info(suggestion_message)
                 self.record_system_message(suggestion_message)
                 try:
@@ -314,7 +315,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             The FWHM of the Gaussian fit.
         """
         while True:
-            self.record_system_message(f"Acquiring line scan with {self.line_scan_kwargs}.")
+            self.record_system_message(f"Acquiring line scan with {self.line_scan_kwargs}...")
             res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
             try:
                 res = json.loads(res)
@@ -326,23 +327,31 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 raise ValueError(
                     f"The stringified JSON object should contain the 'fwhm' key, but got {res}."
                 )
-            content = f"Line scan completed with kwargs {self.line_scan_kwargs}. FWHM = {res['fwhm']:.4f}"
+            content = f"Line scan completed with kwargs: ```{self.line_scan_kwargs}```\nFWHM = {res['fwhm']:.4f}"
             image_path = res.get("image_path")
             if isinstance(image_path, str):
                 self.record_system_message(content, image_path=image_path)
             else:
                 self.record_system_message(content)
 
-            check_res = self.check_line_scan(image_path) if isinstance(image_path, str) else {"result": "ok"}
+            check_res = (
+                self.check_line_scan(
+                    image_path,
+                    res,
+                    line_scan_residual_warning_threshold=0.05,
+                )
+                if isinstance(image_path, str)
+                else {"result": "ok"}
+            )
             self.record_system_message(
-                f"Line scan validation result:\n{check_res}."
+                f"Line scan validation result:```{check_res}```"
             )
 
             if check_res["result"] == "ok":
                 return res["fwhm"]
             if check_res["result"] == "adjusted":
                 self.record_system_message(
-                    f"Line scan adjusted. New line scan kwargs: {self.line_scan_kwargs}."
+                    f"Line scan adjusted. New line scan kwargs:```{self.line_scan_kwargs}```"
                 )
                 continue
             if check_res["result"] == "failed":
@@ -369,7 +378,75 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             )
         return np.array([float(kwargs[y_arg]), float(kwargs[x_arg])], dtype=float)
 
-    def check_line_scan(self, image_path: str) -> dict[str, Any]:
+    def build_line_scan_precheck_message(
+        self,
+        line_scan_result: dict[str, Any],
+        line_scan_residual_warning_threshold: float,
+    ) -> str:
+        warnings = []
+        nan_check_keys = [
+            "fwhm",
+            "a",
+            "mu",
+            "sigma",
+            "c",
+            "normalized_residual",
+            "x_min",
+            "x_max",
+        ]
+        nan_keys = []
+        for key in nan_check_keys:
+            value = line_scan_result.get(key)
+            if isinstance(value, (int, float)) and np.isnan(value):
+                nan_keys.append(key)
+        if len(nan_keys) > 0:
+            warnings.append(
+                "Warning: Gaussian fitting contains NaN values in: "
+                f"{', '.join(nan_keys)}. Check the fitting and scan line position carefully."
+            )
+
+        residual = line_scan_result.get("normalized_residual")
+        if isinstance(residual, (int, float)) and not np.isnan(residual):
+            if residual > line_scan_residual_warning_threshold:
+                warnings.append(
+                    "Warning: the noramlized residual [mean(((y_data - y_fit) / a)^2)] "
+                    f"is high ({residual}). Check the fitting and scan line position carefully."
+                )
+
+        mu = line_scan_result.get("mu")
+        sigma = line_scan_result.get("sigma")
+        x_min = line_scan_result.get("x_min")
+        x_max = line_scan_result.get("x_max")
+        if (
+            isinstance(mu, (int, float))
+            and isinstance(sigma, (int, float))
+            and isinstance(x_min, (int, float))
+            and isinstance(x_max, (int, float))
+            and not np.isnan(mu)
+            and not np.isnan(sigma)
+            and not np.isnan(x_min)
+            and not np.isnan(x_max)
+            and x_max > x_min
+        ):
+            sigma_abs = abs(float(sigma))
+            lower_bound = float(x_min) + 3 * sigma_abs
+            upper_bound = float(x_max) - 3 * sigma_abs
+            if float(mu) < lower_bound or float(mu) > upper_bound:
+                warnings.append(
+                    "Warning: fitted Gaussian peak location is near scan-range edge "
+                    f"(mu={mu}, x_min={x_min}, x_max={x_max}, sigma={sigma}). "
+                    "Check the fitting and scan line position carefully."
+                )
+        if len(warnings) == 0:
+            return "Pre-check result: no warnings."
+        return "Pre-check result:\n" + "\n".join(warnings)
+
+    def check_line_scan(
+        self,
+        image_path: str,
+        line_scan_result: dict[str, Any],
+        line_scan_residual_warning_threshold: float = 0.05,
+    ) -> dict[str, Any]:
         if self.llm_config is None:
             logger.warning("LLM is unavailable. Skipping line scan check.")
             return {"result": "ok"}
@@ -410,15 +487,39 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             },
             tool_call_info={"function": {"name": skill_tool_name}},
         )
-        checker_task_manager.run_conversation(
-            message=generate_openai_message(
-                content=(
-                    "Use the instructions already in context and the provided image to check the line scan. "
-                    "Return exactly one JSON object as specified by the instructions."
-                ),
-                role="user",
-                image_path=image_path,
+        fit_summary = (
+            "Line-scan fit summary:\n"
+            f"- fwhm: {line_scan_result.get('fwhm')}\n"
+            f"- a: {line_scan_result.get('a')}\n"
+            f"- mu: {line_scan_result.get('mu')}\n"
+            f"- sigma: {line_scan_result.get('sigma')}\n"
+            f"- c: {line_scan_result.get('c')}\n"
+            f"- normalized_residual: {line_scan_result.get('normalized_residual')}\n"
+            f"- x_range: [{line_scan_result.get('x_min')}, {line_scan_result.get('x_max')}]"
+        )
+        precheck_summary = self.build_line_scan_precheck_message(
+            line_scan_result,
+            line_scan_residual_warning_threshold=line_scan_residual_warning_threshold,
+        )
+
+        self.record_system_message(
+            f"Starting line scan quality check and adjustment with LLM. Below are the findings of "
+            f"analytical pre-check based on Gaussian fitting result:\n"
+            f"```{fit_summary}\n\n{precheck_summary}```"
+        )
+
+        starter_message = generate_openai_message(
+            content=(
+                "Use the instructions already in context and the provided image to check the line scan. "
+                "Return exactly one JSON object as specified by the instructions.\n\n"
+                f"{fit_summary}\n\n{precheck_summary}"
             ),
+            role="user",
+            image_path=image_path,
+        )
+        print_message(starter_message)
+        checker_task_manager.run_conversation(
+            message=starter_message,
             termination_behavior="return",
         )
         response_text = None
@@ -465,9 +566,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.optimization_tool.update(x, -np.array([[fwhm]]))
         
     def run_2d_scan(self):
-        self.record_system_message(f"Acquiring 2D scan with {self.image_acquisition_kwargs}.")
+        self.record_system_message(f"Acquiring 2D scan...```{self.image_acquisition_kwargs}```")
         image_path = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
-        content = f"Acquired 2D scan with kwargs: {self.image_acquisition_kwargs}"
+        content = f"Acquired 2D scan with kwargs: ```{self.image_acquisition_kwargs}```"
         if isinstance(image_path, str):
             self.record_system_message(content, image_path=image_path)
         else:
@@ -504,6 +605,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             for dir in ["y", "x"]
         ]).astype(float)
         shift += scan_pos_diff
+        self.record_system_message(
+            f"Pure image registration offset is {shift - scan_pos_diff}. "
+            f"Counting in difference of scan positions, positions "
+            f"for the next acquisition will be shifted by {shift}."
+        )
         return shift
     
     def apply_offset_to_kwargs_buffers(
@@ -580,7 +686,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             return x_next
 
         while True:
-            self.record_system_message(f"Setting parameters to {x_current}.")
+            self.record_system_message(f"Setting parameters to new value:```{x_current}```")
             self.param_setting_tool.set_parameters(x_current)
             self.run_2d_scan()
             offset = self.find_offset()

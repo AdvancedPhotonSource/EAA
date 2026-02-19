@@ -397,7 +397,7 @@ class SimulatedAcquireImage(AcquireImage):
             arr = ndi.gaussian_filter(arr, self.blur)
             
         # Fit a Gaussian to the line scan
-        a, mu, sigma, c = eaa.maths.fit_gaussian_1d(
+        a, mu, sigma, c, normalized_residual, fit_x_min, fit_x_max = eaa.maths.fit_gaussian_1d(
             ds, arr, y_threshold=self.line_scan_gaussian_fit_y_threshold
         )
         if np.any(np.isnan([a, mu, sigma, c])):
@@ -447,15 +447,15 @@ class SimulatedAcquireImage(AcquireImage):
             image_to_plot = self.image_k
             if self.plot_image_in_log_scale:
                 image_to_plot = np.log10(image_to_plot + 1)
-            x_min = image_info["loc_x"]
-            x_max = image_info["loc_x"] + image_info["size_x"]
-            y_min = image_info["loc_y"]
-            y_max = image_info["loc_y"] + image_info["size_y"]
+            image_x_min = image_info["loc_x"]
+            image_x_max = image_info["loc_x"] + image_info["size_x"]
+            image_y_min = image_info["loc_y"]
+            image_y_max = image_info["loc_y"] + image_info["size_y"]
             image_ax.imshow(
                 image_to_plot,
                 cmap="inferno",
                 origin="upper",
-                extent=[x_min, x_max, y_max, y_min],
+                extent=[image_x_min, image_x_max, image_y_max, image_y_min],
             )
             image_ax.plot([start_x, end_x], [start_y, end_y], color="red", linewidth=2)
             image_ax.set_xlabel("x")
@@ -470,15 +470,15 @@ class SimulatedAcquireImage(AcquireImage):
             first_image_to_plot = self.image_0
             if self.plot_image_in_log_scale:
                 first_image_to_plot = np.log10(first_image_to_plot + 1)
-            x_min = first_image_info["loc_x"]
-            x_max = first_image_info["loc_x"] + first_image_info["size_x"]
-            y_min = first_image_info["loc_y"]
-            y_max = first_image_info["loc_y"] + first_image_info["size_y"]
+            first_image_x_min = first_image_info["loc_x"]
+            first_image_x_max = first_image_info["loc_x"] + first_image_info["size_x"]
+            first_image_y_min = first_image_info["loc_y"]
+            first_image_y_max = first_image_info["loc_y"] + first_image_info["size_y"]
             first_image_ax.imshow(
                 first_image_to_plot,
                 cmap="inferno",
                 origin="upper",
-                extent=[x_min, x_max, y_max, y_min],
+                extent=[first_image_x_min, first_image_x_max, first_image_y_max, first_image_y_min],
             )
             first_image_ax.plot(
                 [first_line_info["start_x"], first_line_info["end_x"]],
@@ -509,7 +509,10 @@ class SimulatedAcquireImage(AcquireImage):
                 "a": a,
                 "mu": mu,
                 "sigma": sigma,
-                "c": c
+                "c": c,
+                "normalized_residual": normalized_residual,
+                "x_min": fit_x_min,
+                "x_max": fit_x_max,
             })
         else:
             return fname
