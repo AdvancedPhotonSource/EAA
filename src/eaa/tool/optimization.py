@@ -3,6 +3,7 @@ import logging
 
 import botorch.generation
 import numpy as np
+import matplotlib.pyplot as plt
 import botorch
 from botorch.models.transforms.outcome import Standardize
 from botorch.models.transforms.input import Normalize
@@ -50,6 +51,45 @@ class BaseSequentialOptimizationTool(BaseTool):
 
     def suggest(self, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError
+
+    def visualize_status(self):
+        """Visualize observed optimization data.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Figure showing xs_untransformed versus ys_untransformed.
+        """
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        if self.xs_untransformed is None or self.ys_untransformed is None:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_axis_off()
+            return fig
+        if self.xs_untransformed.numel() == 0 or self.ys_untransformed.numel() == 0:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_axis_off()
+            return fig
+
+        xs = self.xs_untransformed.detach().cpu().numpy()
+        ys = self.ys_untransformed.detach().cpu().numpy()
+        if xs.ndim == 1:
+            xs = xs[:, None]
+        if ys.ndim == 1:
+            ys = ys[:, None]
+
+        if xs.shape[1] == 1:
+            order = np.argsort(xs[:, 0])
+            ax.plot(xs[order, 0], ys[order, 0], "o-", label="observations")
+            ax.set_xlabel("x (untransformed)")
+        else:
+            idx = np.arange(xs.shape[0])
+            ax.plot(idx, ys[:, 0], "o-", label="observations")
+            ax.set_xlabel("sample index")
+            ax.set_title("Observed y vs sample index (x is multi-dimensional)")
+        ax.set_ylabel("y (untransformed)")
+        ax.grid(True)
+        ax.legend()
+        return fig
 
 
 class BayesianOptimizationTool(BaseSequentialOptimizationTool):
@@ -536,6 +576,101 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
 
         candidates = self.untransform_data(x=candidates)[0]
         return candidates.detach()
+
+    def visualize_status(self):
+        """Visualize observed data and GP posterior status.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Figure with observations and posterior mean ±1 std.
+        """
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        if self.xs_untransformed is None or self.ys_untransformed is None:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_axis_off()
+            return fig
+        if self.xs_untransformed.numel() == 0 or self.ys_untransformed.numel() == 0:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_axis_off()
+            return fig
+
+        xs = self.xs_untransformed.detach().cpu().numpy()
+        ys = self.ys_untransformed.detach().cpu().numpy()
+        if xs.ndim == 1:
+            xs = xs[:, None]
+        if ys.ndim == 1:
+            ys = ys[:, None]
+
+        if self.model is None:
+            if xs.shape[1] == 1:
+                order = np.argsort(xs[:, 0])
+                ax.plot(xs[order, 0], ys[order, 0], "o-", label="observations")
+                ax.set_xlabel("x (untransformed)")
+            else:
+                idx = np.arange(xs.shape[0])
+                ax.plot(idx, ys[:, 0], "o-", label="observations")
+                ax.set_xlabel("sample index")
+                ax.set_title("Observed y vs sample index (x is multi-dimensional)")
+            ax.set_ylabel("y (untransformed)")
+            ax.grid(True)
+            ax.legend()
+            return fig
+
+        with torch.no_grad():
+            x_query_untransformed = self.xs_untransformed
+            if self.input_transform is not None:
+                x_query_transformed = self.transform_data(
+                    x=x_query_untransformed, y=None, train_x=False, train_y=False
+                )[0]
+            else:
+                x_query_transformed = x_query_untransformed
+            posterior = self.model.posterior(x_query_transformed)
+            mean_t = posterior.mean.squeeze(-1)
+            std_t = posterior.variance.clamp_min(0).sqrt().squeeze(-1)
+            _, mean_u = self.untransform_data(x=None, y=mean_t[:, None])
+            if self.outcome_transform is not None:
+                std_u = self.unscale_by_standardizer_scale(std_t)
+            else:
+                std_u = std_t
+
+        mean_np = mean_u.detach().cpu().numpy().reshape(-1)
+        std_np = std_u.detach().cpu().numpy().reshape(-1)
+
+        if xs.shape[1] == 1:
+            x_plot = xs[:, 0]
+            order = np.argsort(x_plot)
+            x_sorted = x_plot[order]
+            y_sorted = ys[:, 0][order]
+            mean_sorted = mean_np[order]
+            std_sorted = std_np[order]
+            ax.plot(x_sorted, y_sorted, "o", label="observations")
+            ax.plot(x_sorted, mean_sorted, "-", label="posterior mean")
+            ax.fill_between(
+                x_sorted,
+                mean_sorted - std_sorted,
+                mean_sorted + std_sorted,
+                alpha=0.25,
+                label="posterior ±1σ",
+            )
+            ax.set_xlabel("x (untransformed)")
+        else:
+            idx = np.arange(xs.shape[0])
+            ax.plot(idx, ys[:, 0], "o", label="observations")
+            ax.plot(idx, mean_np, "-", label="posterior mean")
+            ax.fill_between(
+                idx,
+                mean_np - std_np,
+                mean_np + std_np,
+                alpha=0.25,
+                label="posterior ±1σ",
+            )
+            ax.set_xlabel("sample index")
+            ax.set_title("Posterior shown at observed points (x is multi-dimensional)")
+        ax.set_ylabel("y (untransformed)")
+        ax.grid(True)
+        ax.legend()
+        return fig
 
 
 class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
