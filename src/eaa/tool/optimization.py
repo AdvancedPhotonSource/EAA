@@ -28,7 +28,7 @@ class BaseSequentialOptimizationTool(BaseTool):
     ):
         """A base class for sequential optimization tools.
         
-        Subclasses of this class should find the maximizer of the objective function.
+        Subclasses of this class should find the **maximizer** of the objective function.
 
         Parameters
         ----------
@@ -80,10 +80,28 @@ class BaseSequentialOptimizationTool(BaseTool):
         if xs.shape[1] == 1:
             order = np.argsort(xs[:, 0])
             ax.plot(xs[order, 0], ys[order, 0], "o-", label="observations")
+            ax.plot(
+                xs[-1, 0],
+                ys[-1, 0],
+                marker="*",
+                color="red",
+                markersize=14,
+                linestyle="None",
+                label="latest",
+            )
             ax.set_xlabel("x (untransformed)")
         else:
             idx = np.arange(xs.shape[0])
             ax.plot(idx, ys[:, 0], "o-", label="observations")
+            ax.plot(
+                idx[-1],
+                ys[-1, 0],
+                marker="*",
+                color="red",
+                markersize=14,
+                linestyle="None",
+                label="latest",
+            )
             ax.set_xlabel("sample index")
             ax.set_title("Observed y vs sample index (x is multi-dimensional)")
         ax.set_ylabel("y (untransformed)")
@@ -575,6 +593,11 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         )
 
         candidates = self.untransform_data(x=candidates)[0]
+        # Safety net: numerical transforms/optimizer tolerances can produce tiny
+        # out-of-bound values after untransform. Clamp explicitly to raw bounds.
+        lower = self.bounds[0].to(dtype=candidates.dtype, device=candidates.device)
+        upper = self.bounds[1].to(dtype=candidates.dtype, device=candidates.device)
+        candidates = torch.max(torch.min(candidates, upper), lower)
         return candidates.detach()
 
     def visualize_status(self):
@@ -606,10 +629,28 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
             if xs.shape[1] == 1:
                 order = np.argsort(xs[:, 0])
                 ax.plot(xs[order, 0], ys[order, 0], "o-", label="observations")
+                ax.plot(
+                    xs[-1, 0],
+                    ys[-1, 0],
+                    marker="*",
+                    color="red",
+                    markersize=14,
+                    linestyle="None",
+                    label="latest",
+                )
                 ax.set_xlabel("x (untransformed)")
             else:
                 idx = np.arange(xs.shape[0])
                 ax.plot(idx, ys[:, 0], "o-", label="observations")
+                ax.plot(
+                    idx[-1],
+                    ys[-1, 0],
+                    marker="*",
+                    color="red",
+                    markersize=14,
+                    linestyle="None",
+                    label="latest",
+                )
                 ax.set_xlabel("sample index")
                 ax.set_title("Observed y vs sample index (x is multi-dimensional)")
             ax.set_ylabel("y (untransformed)")
@@ -653,6 +694,15 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                 alpha=0.25,
                 label="posterior ±1σ",
             )
+            ax.plot(
+                xs[-1, 0],
+                ys[-1, 0],
+                marker="*",
+                color="red",
+                markersize=14,
+                linestyle="None",
+                label="latest",
+            )
             ax.set_xlabel("x (untransformed)")
         else:
             idx = np.arange(xs.shape[0])
@@ -664,6 +714,15 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                 mean_np + std_np,
                 alpha=0.25,
                 label="posterior ±1σ",
+            )
+            ax.plot(
+                idx[-1],
+                ys[-1, 0],
+                marker="*",
+                color="red",
+                markersize=14,
+                linestyle="None",
+                label="latest",
             )
             ax.set_xlabel("sample index")
             ax.set_title("Posterior shown at observed points (x is multi-dimensional)")
