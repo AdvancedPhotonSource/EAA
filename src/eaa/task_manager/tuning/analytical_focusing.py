@@ -54,6 +54,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
+        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "llm",
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -124,6 +125,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.image_registration_tool = self.create_image_registration_tool(
             acquisition_tool,
             llm_config=llm_config,
+            registration_method=registration_method,
         )
         
         if hasattr(acquisition_tool, "line_scan_return_gaussian_fit"):
@@ -169,6 +171,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self,
         acquisition_tool: AcquireImage,
         llm_config: Optional[LLMConfig] = None,
+        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "llm",
     ):
         image_registration_tool = ImageRegistration(
             image_acquisition_tool=acquisition_tool,
@@ -176,7 +179,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             reference_image=None,
             reference_pixel_size=1.0,
             image_coordinates_origin="top_left",
-            registration_method="llm",
+            registration_method=registration_method,
             log_scale=True
         )
         return image_registration_tool
