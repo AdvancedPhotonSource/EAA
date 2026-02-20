@@ -658,7 +658,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             )
         current_x = np.array(current_x)
         
-        xs = np.linspace(current_x - sampling_range, current_x + sampling_range, n)
+        xs = np.linspace(current_x - sampling_range / 2, current_x + sampling_range / 2, n)
         for x in xs:
             while True:
                 try:
