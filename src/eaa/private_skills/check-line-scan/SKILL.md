@@ -51,14 +51,22 @@ If you are unable to find a good line scan after 5 trials, reply with the follow
 }
 ```
 
+Note:
+- The images might be very blurry. Track the middle line of blurry line features to determine their
+  locations relative to the scan line.
+- Plot 2 and 3 might also have very different blurriness. Again, use the middle line of blurry line
+  features to deterine their locations. It is okay if plot 2 if much blurrier or sharper than plot 3
+  as long as the relative position of the scan line is the same. 
+
 Below are examples of potential problematic line scans and how to fix them.
 
 ### Example of exceptions and handling in line scan (case 1)
 
-Exception: intersection of landmark thin feature and scan line is away from the scan line’s center.
+Exception: relative position of the scan line is different from the reference, and the intersection of
+the scan line with the landmark feature is away from the scan line's center. It also almost intersects
+with another undesired feature.
 
-Fix: redo line scan, change x scan range to (150, 250) so that the thin vertical feature crosses the center of the scan line.
-Also move it down to y = 180 so that the relative position of the scan line in the reference scan is restored.
+Fix: redo line scan at x from 7 to 17, y = 7 to restore the relative location of the scan line.
 
 ![](images/focusing_line_scan_exceptions_example_1.png)
 
@@ -66,9 +74,9 @@ Also move it down to y = 180 so that the relative position of the scan line in t
 
 ### Example of exceptions and handling in line scan (case 2)
 
-Exception: scan line overlaps with another feature in the image.
+Exception: scan line coincides with another line parallel to it.
 
-Fix: redo line scan at y = 200 to move away from the overlapping feature.
+Fix: redo line scan at x from 12 to 22, y = 12 to move away from the overlapping feature.
 
 ![](images/focusing_line_scan_exceptions_example_2.png)
 
@@ -97,9 +105,9 @@ and the relative position of the scan line in the reference scan is restored.
 
 ### Example of exceptions and handling in line scan (case 5)
 
-Exception: the scan line is crossing an undesired feature (the short, thick, vertical block). 
+Exception: the scan line is crossing an undesired feature and the relative position of the scan line in the reference scan is different from the reference scan. 
 
-Fix: redo the line scan at x from 20 to 120 and y = 100 to restore the relative position of the scan line in the reference scan.
+Fix: redo the line scan at x from 10 to 20 and y = 11 to restore the relative position of the scan line in the reference scan.
 
 ![](images/focusing_line_scan_exceptions_example_5.png)
 
@@ -107,9 +115,9 @@ Fix: redo the line scan at x from 20 to 120 and y = 100 to restore the relative 
 
 ### Example of exceptions and handling in line scan (case 6)
 
-Exception: the scan line is not at the same relative location compared to the reference scan. 
+Exception: the scan line coincides with another line and is at a different relative position compared to the reference.
 
-Fix: redo the line scan at x from 80 to 180 and y = 120 to restore the relative position of the scan line in the reference scan.
+Fix: redo the line scan at x from 12 to 22 and y = 13 to restore the relative position of the scan line in the reference scan.
 
 ![](images/focusing_line_scan_exceptions_example_6.png)
 
@@ -123,6 +131,17 @@ of the scan line and the landmark feature are different from the reference scan.
 Fix: redo the line scan at x from 10 to 20 and y = 10.
 
 ![](images/focusing_line_scan_exceptions_example_7.png)
+
+<message_break>
+
+### Example of exceptions and handling in line scan (case 8)
+
+Exception: intersection of landmark thin feature and scan line is away from the scan line’s center, and the scan line
+crosses two thin lines instead of one.
+
+Fix: redo the line scan at x from 10 to 20 and y = 11.
+
+![](images/focusing_line_scan_exceptions_example_9.png)
 
 <message_break>
 
