@@ -55,6 +55,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "llm",
+        registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -113,6 +114,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             See `line_scan_tool_x_coordinate_args`.
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...]
             See `line_scan_tool_y_coordinate_args`.
+        registration_algorithm_kwargs : Optional[dict[str, Any]]
+            Optional keyword arguments forwarded to the selected image
+            registration algorithm when aligning consecutive 2D scans.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -126,6 +130,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             acquisition_tool,
             llm_config=llm_config,
             registration_method=registration_method,
+        )
+        self.registration_algorithm_kwargs = copy.deepcopy(
+            registration_algorithm_kwargs or {}
         )
         
         if hasattr(acquisition_tool, "line_scan_return_gaussian_fit"):
@@ -609,7 +616,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             Offset is in physical units, i.e., pixel size is already accounted for.
         """
         shift = np.array(
-            self.image_registration_tool.get_offset_of_latest_image("previous"),
+            self.image_registration_tool.register_images(
+                image_t=self.image_registration_tool.process_image(self.acquisition_tool.image_k),
+                image_r=self.image_registration_tool.process_image(self.acquisition_tool.image_km1),
+                psize_t=self.acquisition_tool.psize_k,
+                psize_r=self.acquisition_tool.psize_km1,
+                registration_algorithm_kwargs=self.registration_algorithm_kwargs,
+            ),
             dtype=float,
         )
         
