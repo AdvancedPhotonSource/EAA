@@ -330,7 +330,7 @@ class SimulatedAcquireImage(AcquireImage):
         arr = self.interpolator(y + self.offset[0], x + self.offset[1]).reshape(size)
         
         if self.blur is not None and self.blur > 0:
-            arr = ndi.gaussian_filter(arr, self.blur)
+            arr = ndi.gaussian_filter(arr, self.blur, mode="nearest")
         
         if self.show_image_in_real_time:
             self.update_real_time_view(arr)
@@ -394,7 +394,7 @@ class SimulatedAcquireImage(AcquireImage):
         arr = self.line_interpolator(pts).reshape(-1)
         
         if self.blur is not None and self.blur > 0:
-            arr = ndi.gaussian_filter(arr, self.blur)
+            arr = ndi.gaussian_filter(arr, self.blur, mode="nearest")
             
         # Fit a Gaussian to the line scan
         a, mu, sigma, c, normalized_residual, fit_x_min, fit_x_max = eaa.maths.fit_gaussian_1d(
