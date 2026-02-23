@@ -512,7 +512,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             content=(
                 "Use the instructions already in context and the provided image to check the line scan. "
                 "Return exactly one JSON object as specified by the instructions.\n\n"
-                f"{fit_summary}\n\n{precheck_summary}"
+                f"{fit_summary}\n\n{precheck_summary}\n\n"
+                "IMPORTANT: use your own judgement. The line scan might still be bad "
+                "even if precheck didn't give any warnings!"
             ),
             role="user",
             image_path=image_path,

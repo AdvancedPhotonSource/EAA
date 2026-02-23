@@ -32,6 +32,8 @@ Output format requirements:
 - Do not add any extra text.
 - If the two images have no overlap and cannot be registered, return exactly: `nan, nan`.
 
+If you can't get a good alignment after 5 attempts, return `nan, nan`.
+
 Make NaN handling consistent: use lowercase `nan` exactly when registration is not possible.
 
 Sometimes the input images might have been already reasonably aligned. In that case, just report `0, 0`.
