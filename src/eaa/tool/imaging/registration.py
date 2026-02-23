@@ -1,4 +1,4 @@
-from typing import Annotated, List, Literal, Optional, Tuple
+from typing import Annotated, Any, List, Literal, Optional, Tuple
 import logging
 import json
 import re
@@ -335,8 +335,8 @@ class ImageRegistration(BaseTool):
         psize_t: float, 
         psize_r: float,
         return_correlation_value: bool = False,
-        use_hanning_window: bool = True,
         registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "llm"]] = None,
+        registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
     ) -> np.ndarray | Tuple[np.ndarray, float] | str:
         """
         Register the target image with the reference image.
@@ -353,14 +353,32 @@ class ImageRegistration(BaseTool):
             The pixel size of the reference image.
         return_correlation_value : bool, optional
             If True, the correlation value is returned along with the offset.
-        use_hanning_window : bool, optional
-            If True, a Hanning window is used to smooth the images before the
-            correlation is computed.
         registration_method : Optional[Literal["phase_correlation", "sift", "mutual_information"]], optional
             Overrides the default registration method for this call. If "sift" is
             used and `return_correlation_value` is True, the correlation value is
             reported as NaN. When using SIFT, image sizes are reconciled by the
             coordinate origin while pixel sizes are still normalized.
+        registration_algorithm_kwargs : Optional[dict[str, Any]], optional
+            Optional keyword arguments forwarded to the selected registration
+            algorithm. Supported keys and defaults depend on `registration_method`:
+
+            - `registration_method="phase_correlation"`:
+              - `use_hanning_window` (bool, default: `True`)
+              - Any key accepted by `phase_cross_correlation(...)` except
+                `return_correlation_value` (that one must be passed via
+                `register_images(..., return_correlation_value=...)`).
+
+            - `registration_method="mutual_information"`:
+              - `pyramid_levels` (tuple[int, ...], default: `(4, 2, 1)`)
+              - `bins` (int, default: `64`)
+              - `sample_frac` (float, default: `0.2`)
+              - `smooth_sigmas` (Optional[dict[int, float]], default: `None`)
+              - `optimizer` (Literal["powell", "nelder-mead"], default: `"nelder-mead"`)
+              - `max_iter` (int, default: `60`)
+              - `tol` (float, default: `1e-4`)
+
+            - `registration_method="sift"` or `"llm"`:
+              - No algorithm kwargs are currently supported; pass `None` or `{}`.
 
         Returns
         -------
@@ -375,6 +393,7 @@ class ImageRegistration(BaseTool):
             keys "offset" and "correlation_value" is returned.
         """
         method = registration_method or self.registration_method
+        algorithm_kwargs = dict(registration_algorithm_kwargs or {})
 
         # Handle pixel size and image size differences
         if psize_t != psize_r:
@@ -385,36 +404,58 @@ class ImageRegistration(BaseTool):
             image_t = self.reconcile_image_shape(image_t, image_r.shape)
 
         if method == "phase_correlation":
+            if "return_correlation_value" in algorithm_kwargs:
+                raise ValueError(
+                    "'return_correlation_value' should be passed via the "
+                    "`return_correlation_value` argument, not via "
+                    "`registration_algorithm_kwargs`."
+                )
+            phase_kwargs = {"use_hanning_window": True}
+            phase_kwargs.update(algorithm_kwargs)
             if return_correlation_value:
                 offset, correlation_value = phase_cross_correlation(
                     image_t,
                     image_r,
                     return_correlation_value=return_correlation_value,
-                    use_hanning_window=use_hanning_window,
+                    **phase_kwargs,
                 )
             else:
                 offset = phase_cross_correlation(
                     image_t,
                     image_r,
                     return_correlation_value=return_correlation_value,
-                    use_hanning_window=use_hanning_window,
+                    **phase_kwargs,
                 )
         elif method == "mutual_information":
+            mi_kwargs = {
+                "pyramid_levels": (4, 2, 1),
+                "bins": 64,
+                "sample_frac": 0.2,
+                "optimizer": "nelder-mead",
+                "max_iter": 60,
+                "tol": 1e-4,
+            }
+            mi_kwargs.update(algorithm_kwargs)
             offset = translation_nmi_registration(
                 moving=image_t,
                 ref=image_r,
-                pyramid_levels=(4, 2, 1),
-                bins=64,
-                sample_frac=0.2,
-                optimizer="nelder-mead",
-                max_iter=60,
-                tol=1e-4,
+                **mi_kwargs,
             )
             correlation_value = float("nan")
         elif method == "sift":
+            if len(algorithm_kwargs) > 0:
+                raise ValueError(
+                    "`registration_algorithm_kwargs` is not supported for "
+                    "registration_method='sift'."
+                )
             offset = self.feature_based_registration(image_t, image_r)
             correlation_value = float("nan")
         elif method == "llm":
+            if len(algorithm_kwargs) > 0:
+                raise ValueError(
+                    "`registration_algorithm_kwargs` is not supported for "
+                    "registration_method='llm'."
+                )
             offset = self.register_images_llm(image_t=image_t, image_r=image_r)
             correlation_value = float("nan")
         else:
