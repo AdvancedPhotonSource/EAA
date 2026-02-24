@@ -54,7 +54,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
-        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "llm",
+        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "phase_correlation",
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
         *args, **kwargs
     ):
