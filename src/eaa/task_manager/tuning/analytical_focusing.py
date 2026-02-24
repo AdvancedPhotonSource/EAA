@@ -345,7 +345,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 self.check_line_scan(
                     image_path,
                     res,
-                    line_scan_residual_warning_threshold=0.05,
+                    line_scan_residual_warning_threshold=0.015,
                 )
                 if isinstance(image_path, str)
                 else {"result": "ok"}
@@ -452,7 +452,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self,
         image_path: str,
         line_scan_result: dict[str, Any],
-        line_scan_residual_warning_threshold: float = 0.05,
+        line_scan_residual_warning_threshold: float = 0.015,
     ) -> dict[str, Any]:
         if self.llm_config is None:
             logger.warning("LLM is unavailable. Skipping line scan check.")

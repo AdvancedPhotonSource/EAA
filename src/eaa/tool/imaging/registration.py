@@ -334,7 +334,6 @@ class ImageRegistration(BaseTool):
         image_r: np.ndarray, 
         psize_t: float, 
         psize_r: float,
-        return_correlation_value: bool = False,
         registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "llm"]] = None,
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
     ) -> np.ndarray | Tuple[np.ndarray, float] | str:
@@ -351,22 +350,14 @@ class ImageRegistration(BaseTool):
             The pixel size of the target image.
         psize_r : float
             The pixel size of the reference image.
-        return_correlation_value : bool, optional
-            If True, the correlation value is returned along with the offset.
         registration_method : Optional[Literal["phase_correlation", "sift", "mutual_information"]], optional
-            Overrides the default registration method for this call. If "sift" is
-            used and `return_correlation_value` is True, the correlation value is
-            reported as NaN. When using SIFT, image sizes are reconciled by the
-            coordinate origin while pixel sizes are still normalized.
+            Overrides the default registration method for this call. 
         registration_algorithm_kwargs : Optional[dict[str, Any]], optional
             Optional keyword arguments forwarded to the selected registration
             algorithm. Supported keys and defaults depend on `registration_method`:
 
             - `registration_method="phase_correlation"`:
               - `use_hanning_window` (bool, default: `True`)
-              - Any key accepted by `phase_cross_correlation(...)` except
-                `return_correlation_value` (that one must be passed via
-                `register_images(..., return_correlation_value=...)`).
 
             - `registration_method="mutual_information"`:
               - `pyramid_levels` (tuple[int, ...], default: `(4, 2, 1)`)
@@ -383,14 +374,11 @@ class ImageRegistration(BaseTool):
         Returns
         -------
         np.ndarray | str
-            If `return_correlation_value` is False, the offset of the target 
-            image with respect to the reference image is returned. If the
+            The offset of the target image with respect to the reference image. If the
             target image is shifted to the right compared to the reference image, the
             result will have a positive x-component; if the target image is shifted
             to the bottom, the result will have a positive y-component. The returned
             values are in physical units, i.e., pixel size is already accounted for.
-            If `return_correlation_value` is True, a stringified JSON object with the
-            keys "offset" and "correlation_value" is returned.
         """
         method = registration_method or self.registration_method
         algorithm_kwargs = dict(registration_algorithm_kwargs or {})
@@ -404,28 +392,13 @@ class ImageRegistration(BaseTool):
             image_t = self.reconcile_image_shape(image_t, image_r.shape)
 
         if method == "phase_correlation":
-            if "return_correlation_value" in algorithm_kwargs:
-                raise ValueError(
-                    "'return_correlation_value' should be passed via the "
-                    "`return_correlation_value` argument, not via "
-                    "`registration_algorithm_kwargs`."
-                )
             phase_kwargs = {"use_hanning_window": True}
             phase_kwargs.update(algorithm_kwargs)
-            if return_correlation_value:
-                offset, correlation_value = phase_cross_correlation(
-                    image_t,
-                    image_r,
-                    return_correlation_value=return_correlation_value,
-                    **phase_kwargs,
-                )
-            else:
-                offset = phase_cross_correlation(
-                    image_t,
-                    image_r,
-                    return_correlation_value=return_correlation_value,
-                    **phase_kwargs,
-                )
+            offset = phase_cross_correlation(
+                image_t,
+                image_r,
+                **phase_kwargs,
+            )
         elif method == "mutual_information":
             mi_kwargs = {
                 "pyramid_levels": (4, 2, 1),
@@ -460,15 +433,7 @@ class ImageRegistration(BaseTool):
             correlation_value = float("nan")
         else:
             raise ValueError(f"Invalid registration method: {method}")
-        
-        # Convert the offset from pixel units to physical units. We use psize_r here
-        # since the target image has already been resized to have the same pixel size
-        # as the reference image.
-        offset = offset * psize_r
-        if return_correlation_value:
-            return json.dumps({"offset": offset.tolist(), "correlation_value": float(correlation_value)})
-        else:
-            return offset
+        return offset
 
     def reconcile_image_shape(
         self,
