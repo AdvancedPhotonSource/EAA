@@ -615,7 +615,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             The offset between the latest image and the previous image.
             Offset is in physical units, i.e., pixel size is already accounted for.
         """
-        shift = np.array(
+        alignment_offset = np.array(
             self.image_registration_tool.register_images(
                 image_t=self.image_registration_tool.process_image(self.acquisition_tool.image_k),
                 image_r=self.image_registration_tool.process_image(self.acquisition_tool.image_km1),
@@ -632,13 +632,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             - float(self.acquisition_tool.image_acquisition_call_history[-2][f"loc_{dir}"])
             for dir in ["y", "x"]
         ]).astype(float)
-        shift += scan_pos_diff
+        offset_to_subtract = alignment_offset - scan_pos_diff
         self.record_system_message(
-            f"Pure image registration offset is {shift - scan_pos_diff}. "
-            f"Counting in difference of scan positions, positions "
-            f"for the next acquisition will be shifted by {shift}."
+            f"Pure image registration offset (to apply to current image for alignment) is "
+            f"{alignment_offset}. Counting in scan-position difference {scan_pos_diff}, "
+            f"the offset to subtract from the next scan positions is {offset_to_subtract}."
         )
-        return shift
+        return offset_to_subtract
     
     def apply_offset_to_kwargs_buffers(
         self, 
@@ -648,14 +648,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     ):
         if update_kwargs_for_line_scan:
             for arg in self.line_scan_tool_x_coordinate_args:
-                self.line_scan_kwargs[arg] += offset[1]
+                self.line_scan_kwargs[arg] -= offset[1]
             for arg in self.line_scan_tool_y_coordinate_args:
-                self.line_scan_kwargs[arg] += offset[0]
+                self.line_scan_kwargs[arg] -= offset[0]
         if update_kwargs_for_image_acquisition:
             for arg in self.image_acquisition_tool_x_coordinate_args:
-                self.image_acquisition_kwargs[arg] += offset[1]
+                self.image_acquisition_kwargs[arg] -= offset[1]
             for arg in self.image_acquisition_tool_y_coordinate_args:
-                self.image_acquisition_kwargs[arg] += offset[0]
+                self.image_acquisition_kwargs[arg] -= offset[0]
             
     def collect_initial_data_optimization_tool(
         self, 
@@ -734,7 +734,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
     def apply_user_correction_offset(self) -> bool:
         message = (
-            "Manual correction requested. Enter offset as 'y,x' (blank to stop): "
+            "Manual correction requested. Enter offset-to-subtract as 'y,x' (blank to stop): "
         )
         while True:
             response = self.get_user_input(message, display_prompt_in_webui=True).strip()

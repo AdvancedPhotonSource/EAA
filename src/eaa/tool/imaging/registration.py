@@ -59,8 +59,8 @@ class ImageRegistration(BaseTool):
         image_coordinates_origin : Literal["top_left", "center"], optional
             The origin of the image coordinates. Useful to handle cases where
             the size of the registered images do not match. Image registration
-            finds the offset of the test image from the version aligned with the
-            reference image where the values are the same for the same coordinates
+            finds the translation to apply to the test image so that it aligns
+            with the reference image where the values are the same for the same coordinates
             (i, j). When the origin defining the coordinates is different, the
             test image is cropped/padded differently when its size does not match.
             When this argument is set to "center", the test image is padded/cropped
@@ -130,11 +130,10 @@ class ImageRegistration(BaseTool):
         ],
     ) -> Annotated[
         List[float],
-        "The translational offset [dy (vertical), dx (horizontal)] of the latest acquired "
-        "image compared to the reference image. If the image is shifted to the right compared "
-        "to the reference, the result will have a positive x-component; if the image is shifted "
-        "to the bottom, the result will have a positive y-component. The returned values are in "
-        "physical units, i.e., pixel size is already accounted for.",
+        "The translational offset [dy (vertical), dx (horizontal)] to apply to the latest "
+        "acquired image so it aligns with the reference image. Positive y means shifting the "
+        "latest image downward; positive x means shifting it rightward. The returned values are "
+        "in physical units, i.e., pixel size is already accounted for.",
     ]:
         """
         Register the latest image collected by the image acquisition tool
@@ -183,9 +182,9 @@ class ImageRegistration(BaseTool):
             float,
             "Fractional x-shift (right is positive) relative to image width.",
         ],
-    ) -> Annotated[str, "Path to side-by-side plot of shifted reference and current image."]:
-        """Apply a fractional offset to the previous/first/reference image and
-        view it side by side with the current image.
+    ) -> Annotated[str, "Path to side-by-side plot of reference image and shifted current image."]:
+        """Apply a fractional offset to the latest (moving) image and
+        view it side by side with the reference image.
         """
         image_t, image_r, _, _ = self.get_registration_inputs(register_with)
         shift_pixels = np.array(
@@ -195,8 +194,8 @@ class ImageRegistration(BaseTool):
             ],
             dtype=float,
         )
-        shifted_image_r = ndi.shift(
-            image_r,
+        shifted_image_t = ndi.shift(
+            image_t,
             shift=shift_pixels,
             order=1,
             mode="constant",
@@ -204,8 +203,8 @@ class ImageRegistration(BaseTool):
             prefilter=False,
         )
         fig = self.build_registration_pair_figure(
-            shifted_image_r,
-            image_t,
+            image_r,
+            shifted_image_t,
             images_are_processed=True,
         )
         return BaseTool.save_image_to_temp_dir(
@@ -302,7 +301,9 @@ class ImageRegistration(BaseTool):
         registration_task.run_conversation(
             message=generate_openai_message(
                 content=(
-                    "Estimate the translational shift and return only '<shift_y>, <shift_x>'. "
+                    "Estimate the translational shift to apply to the current/test image "
+                    "so it aligns with the previous/reference image, and return only "
+                    "'<shift_y>, <shift_x>'. "
                     "Before final answer, call apply_and_view_offset to verify your proposed offset. "
                     "Use register_with='previous' for verification."
                 ),
@@ -374,10 +375,9 @@ class ImageRegistration(BaseTool):
         Returns
         -------
         np.ndarray | str
-            The offset of the target image with respect to the reference image. If the
-            target image is shifted to the right compared to the reference image, the
-            result will have a positive x-component; if the target image is shifted
-            to the bottom, the result will have a positive y-component. The returned
+            The translation offset (dy, dx) to apply to the target image so it aligns
+            with the reference image. Positive y means shifting the test image
+            downward; positive x means shifting the target image rightward. Returned
             values are in physical units, i.e., pixel size is already accounted for.
         """
         method = registration_method or self.registration_method
@@ -536,6 +536,4 @@ class ImageRegistration(BaseTool):
         deltas = pts_r - pts_t
         offset_x = np.median(deltas[:, 0])
         offset_y = np.median(deltas[:, 1])
-        
-        # Reverse the offset since the image is registered with the reference image.
-        return np.array([-offset_y, -offset_x])
+        return np.array([offset_y, offset_x])

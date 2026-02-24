@@ -124,10 +124,8 @@ def phase_cross_correlation(
     upsample_factor: int = 1,
 ) -> np.ndarray | Tuple[np.ndarray, float]:
     """Phase correlation with windowing. The result gives
-    the offset of the moving image with respect to the reference image.
-    If the moving image is shifted to the right, the result will have a
-    positive x-component; if the moving image is shifted to the bottom,
-    the result will have a positive y-component.
+    the translation offset to apply to the moving image so that it aligns
+    with the reference image.
 
     Parameters
     ----------
@@ -145,7 +143,7 @@ def phase_cross_correlation(
     Returns
     -------
     np.ndarray
-        The shift of the moving image with respect to the reference image.
+        The translation offset (dy, dx) to apply to the moving image.
     """
     assert np.all(np.array(moving.shape) == np.array(ref.shape)), (
         "The shapes of the moving and reference images must be the same."
@@ -156,9 +154,16 @@ def phase_cross_correlation(
         win_y = np.hanning(moving.shape[0])
         win_x = np.hanning(moving.shape[1])
         win = np.outer(win_y, win_x)
-    
+        moving_for_registration = moving * win
+        ref_for_registration = ref * win
+    else:
+        moving_for_registration = moving
+        ref_for_registration = ref
+
     shift, _, _ = skimage_phase_cross_correlation(
-        moving * win, ref * win, upsample_factor=upsample_factor
+        ref_for_registration,
+        moving_for_registration,
+        upsample_factor=upsample_factor,
     )
     return shift
 
@@ -184,14 +189,13 @@ def warp_translation(
     image : np.ndarray
         A 2D image to warp.
     shift : np.ndarray | tuple[float, float] | list[float]
-        Translation in (dy, dx), where positive values indicate moving image
-        shifted downward/rightward relative to reference coordinates.
+        Internal translation in (dy, dx) used by the optimizer.
     """
     dy, dx = map(float, shift)
     rows, cols = image.shape
     y, x = np.indices((rows, cols), dtype=np.float32)
-    sample_y = y + dy
-    sample_x = x + dx
+    sample_y = y - dy
+    sample_x = x - dx
     warped = ndi.map_coordinates(
         image,
         [sample_y, sample_x],
@@ -219,7 +223,7 @@ def translation_nmi_registration(
     max_iter: int = 60,
     tol: float = 1e-4,
 ) -> np.ndarray:
-    """Estimate translation (dy, dx) by maximizing NMI over a pyramid."""
+    """Estimate translation (dy, dx) to apply to moving image by maximizing NMI."""
     if moving.ndim != 2 or ref.ndim != 2:
         raise ValueError("`moving` and `ref` must both be 2D images.")
     if sample_frac <= 0 or sample_frac > 1:
@@ -280,8 +284,8 @@ def translation_nmi_registration(
             simplex = np.vstack(
                 [
                     shift_level_0,
-                    shift_level_0 + np.array([2.0, 0.0]),
-                    shift_level_0 + np.array([0.0, 2.0]),
+                    shift_level_0 - np.array([2.0, 0.0]),
+                    shift_level_0 - np.array([0.0, 2.0]),
                 ]
             )
             result = optimize.minimize(

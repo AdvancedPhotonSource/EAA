@@ -165,9 +165,9 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
         Returns
         -------
         np.ndarray
-            Offset in y and x. If these offsets are added to the initial positions
-            in `initial_acquisition_kwargs`, the FOV should be aligned with the reference
-            image.
+            Offset in y and x. If these offsets are subtracted from the initial
+            positions in `initial_acquisition_kwargs`, the FOV should be aligned
+            with the reference image.
         """
         initial_acquisition_kwargs = copy.deepcopy(current_acquisition_kwargs)
         self.image_registration_tool.set_reference_image(
@@ -196,4 +196,4 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
                 reference_image=reference_image,
             ):
                 break
-        return np.array([y_delta, x_delta]) + offset
+        return np.array([y_delta, x_delta]) - offset

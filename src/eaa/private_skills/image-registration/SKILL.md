@@ -10,21 +10,23 @@ You will be shown one image containing a pair of images side by side:
 The images may have different noise level, sharpness and color scale, but
 they should contain common structures and features. Use the common structures to
 estimate the pure translational offset between them. Your offset must mean:
-- If the image on the left is shifted by this offset, it aligns with the image on the right.
+- If the image on the right is shifted by this offset, it aligns with the image on the left.
 - Report shift in ij indexing: `<shift_y>, <shift_x>` (y first, x second).
-- Positive y means down. Positive x means right.
+- Positive y means move the right/current image downward. Positive x means move it rightward.
+- If the right/current image appears lower than the left/reference image, `shift_y` should be negative.
+- If the right/current image appears to the right of the left/reference image, `shift_x` should be negative.
 - Report shift values as fractions of image size:
   - `shift_y` is a fraction of image height.
   - `shift_x` is a fraction of image width.
 
 Example:
-- If the left image should be shifted downward by 30% of image height and left by 10% of image width,
-  report `0.3, 0.1`.
+- If the right image should be shifted downward by 30% of image height and left by 10% of image width,
+  report `0.3, -0.1`.
 
 Before responding with the final shift:
 - Use the `apply_and_view_offset` tool to verify your proposed offset.
 - Provide `register_with="previous"`, `fractional_offset_y`, and `fractional_offset_x`.
-- You will see two images plotted side-by-side: the left will be the reference/previous image shifted by the specified amount, and the right will be the current image. Check if they are aligned. Refine the offset if needed.
+- You will see two images plotted side-by-side: the left will be the reference/previous image, and the right will be the current image shifted by the specified amount. Check if they are aligned. Refine the offset if needed.
 - You may call this tool multiple times until alignment is satisfactory.
 
 Output format requirements:
@@ -44,7 +46,7 @@ Sometimes the input images might have been already reasonably aligned. In that c
 
 ### Example 1
 
-Correct fractional offset: -0.13, -0.17
+Correct fractional offset: 0.13, 0.17
 
 ![](images/registration_example_1.png)
 
@@ -52,7 +54,7 @@ Correct fractional offset: -0.13, -0.17
 
 ### Example 2
 
-Correct fractional offset: 0.1, -0.1
+Correct fractional offset: -0.1, 0.1
 
 ![](images/registration_example_2.png)
 
@@ -60,7 +62,7 @@ Correct fractional offset: 0.1, -0.1
 
 ### Example 3
 
-Correct fractional offset: 0.15, -0.18
+Correct fractional offset: -0.15, 0.18
 
 ![](images/registration_example_3.png)
 
@@ -68,7 +70,7 @@ Correct fractional offset: 0.15, -0.18
 
 ### Example 4
 
-Correct fractional offset: -0.03, -0.03
+Correct fractional offset: 0.03, 0.03
 
 ![](images/registration_example_4.png)
 
