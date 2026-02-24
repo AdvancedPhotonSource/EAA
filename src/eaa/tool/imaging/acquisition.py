@@ -194,10 +194,15 @@ class SimulatedAcquireImage(AcquireImage):
         self.build_interpolator()
         
     def build_interpolator(self, *args, **kwargs):
-        self.interpolator = scipy.interpolate.RectBivariateSpline(
-            np.arange(self.whole_image.shape[0]),
-            np.arange(self.whole_image.shape[1]),
+        self.interpolator = scipy.interpolate.RegularGridInterpolator(
+            (
+                np.arange(self.whole_image.shape[0]),
+                np.arange(self.whole_image.shape[1]),
+            ),
             self.whole_image,
+            method="linear",
+            bounds_error=False,
+            fill_value=0.0,
         )
         self.line_interpolator = scipy.interpolate.RegularGridInterpolator(
             (
@@ -205,7 +210,9 @@ class SimulatedAcquireImage(AcquireImage):
                 np.arange(self.whole_image.shape[1])
             ),
             self.whole_image,
+            method="linear",
             bounds_error=False,
+            fill_value=0.0,
         )
         
     def set_blur(self, blur: float):
@@ -327,7 +334,9 @@ class SimulatedAcquireImage(AcquireImage):
         logger.info(f"Acquiring image of size {size} at location {loc}.")
         y = np.arange(loc[0], loc[0] + size[0] - 0.5)
         x = np.arange(loc[1], loc[1] + size[1] - 0.5)
-        arr = self.interpolator(y + self.offset[0], x + self.offset[1]).reshape(size)
+        yy, xx = np.meshgrid(y + self.offset[0], x + self.offset[1], indexing="ij")
+        pts = np.column_stack([yy.ravel(), xx.ravel()])
+        arr = self.interpolator(pts).reshape(size)
         
         if self.blur is not None and self.blur > 0:
             arr = ndi.gaussian_filter(arr, self.blur, mode="nearest")
