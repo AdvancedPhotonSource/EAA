@@ -188,7 +188,6 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
                 reference_image, 
                 psize_t=self.image_acquisition_tool.psize_k,
                 psize_r=self.image_registration_tool.reference_pixel_size,
-                return_correlation_value=False,
                 registration_algorithm_kwargs={"use_hanning_window": True},
             )
             if check_feature_presence_llm(

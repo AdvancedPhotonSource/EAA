@@ -119,7 +119,6 @@ def stitch_images(
 def phase_cross_correlation(
     moving: np.ndarray, 
     ref: np.ndarray, 
-    return_correlation_value: bool = False,
     use_hanning_window: bool = True,
 ) -> np.ndarray | Tuple[np.ndarray, float]:
     """Phase correlation with windowing. The result gives
@@ -134,8 +133,6 @@ def phase_cross_correlation(
         A 2D image.
     ref : np.ndarray
         A 2D image.
-    return_correlation_value : bool, optional
-        If True, the correlation value is returned along with the offset.
     use_hanning_window : bool, optional
         If True, a Hanning window is used to smooth the images before the
         correlation is computed.
@@ -148,6 +145,8 @@ def phase_cross_correlation(
     assert np.all(np.array(moving.shape) == np.array(ref.shape)), (
         "The shapes of the moving and reference images must be the same."
     )
+    moving = moving - moving.mean()
+    ref = ref - ref.mean()
     if use_hanning_window:
         win_y = np.hanning(moving.shape[0])
         win_x = np.hanning(moving.shape[1])
@@ -160,17 +159,14 @@ def phase_cross_correlation(
         f_ref = np.fft.fft2(ref)
     
     f_corr = f_moving * f_ref.conj()
-    f_corr = f_corr / np.abs(f_corr)
+    f_corr = f_corr / (np.abs(f_corr) + 1e-12)
     
     map = np.fft.ifft2(f_corr).real
     shift = np.array(np.unravel_index(np.argmax(map), map.shape))
     for i in range(2):
         if shift[i] > map.shape[i] / 2:
             shift[i] -= map.shape[i]
-    if return_correlation_value:
-        return shift, np.max(map)
-    else:
-        return shift
+    return shift
 
 
 def normalize_image_01(image: np.ndarray) -> np.ndarray:

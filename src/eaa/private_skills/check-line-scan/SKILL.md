@@ -74,7 +74,8 @@ Fix: redo line scan at x from 7 to 17, y = 7 to restore the relative location of
 
 ### Example of exceptions and handling in line scan (case 2)
 
-Exception: scan line coincides with another line parallel to it.
+Exception: scan line coincides with another line parallel to it, and the relative position of the line scan
+is different from the reference.
 
 Fix: redo line scan at x from 12 to 22, y = 12 to move away from the overlapping feature.
 
@@ -84,9 +85,10 @@ Fix: redo line scan at x from 12 to 22, y = 12 to move away from the overlapping
 
 ### Example of exceptions and handling in line scan (case 3)
 
-Exception: the intersection between scan line and landmark feature drifts a lot relative to other features in the image compared to the reference scan.
+Exception: scan line coincides with another line parallel to it, and the relative position of the line scan
+is different from the reference.
 
-Fix: redo line scan at x from 120, 220 and y = 250 to restore the relative location of the scan line in the reference scan. 
+Fix: redo line scan at x from 10 to 20 and y = 10 to restore the relative location of the scan line in the reference scan. 
 
 ![](images/focusing_line_scan_exceptions_example_3.png)
 
