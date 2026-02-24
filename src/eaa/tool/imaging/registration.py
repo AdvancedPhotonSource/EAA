@@ -1,6 +1,5 @@
 from typing import Annotated, Any, List, Literal, Optional, Tuple
 import logging
-import json
 import re
 from pathlib import Path
 
@@ -414,7 +413,6 @@ class ImageRegistration(BaseTool):
                 ref=image_r,
                 **mi_kwargs,
             )
-            correlation_value = float("nan")
         elif method == "sift":
             if len(algorithm_kwargs) > 0:
                 raise ValueError(
@@ -422,7 +420,6 @@ class ImageRegistration(BaseTool):
                     "registration_method='sift'."
                 )
             offset = self.feature_based_registration(image_t, image_r)
-            correlation_value = float("nan")
         elif method == "llm":
             if len(algorithm_kwargs) > 0:
                 raise ValueError(
@@ -430,7 +427,6 @@ class ImageRegistration(BaseTool):
                     "registration_method='llm'."
                 )
             offset = self.register_images_llm(image_t=image_t, image_r=image_r)
-            correlation_value = float("nan")
         else:
             raise ValueError(f"Invalid registration method: {method}")
         return offset
