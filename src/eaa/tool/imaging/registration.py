@@ -357,6 +357,7 @@ class ImageRegistration(BaseTool):
 
             - `registration_method="phase_correlation"`:
               - `use_hanning_window` (bool, default: `True`)
+              - `upsample_factor` (int, default: `1`)
 
             - `registration_method="mutual_information"`:
               - `pyramid_levels` (tuple[int, ...], default: `(4, 2, 1)`)

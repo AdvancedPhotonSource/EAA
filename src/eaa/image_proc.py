@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import scipy.ndimage as ndi
 from scipy import optimize
 from skimage.metrics import normalized_mutual_information
+from skimage.registration import phase_cross_correlation as skimage_phase_cross_correlation
 from sciagent.message_proc import generate_openai_message
 from sciagent.task_manager.base import BaseTaskManager
 
@@ -120,6 +121,7 @@ def phase_cross_correlation(
     moving: np.ndarray, 
     ref: np.ndarray, 
     use_hanning_window: bool = True,
+    upsample_factor: int = 1,
 ) -> np.ndarray | Tuple[np.ndarray, float]:
     """Phase correlation with windowing. The result gives
     the offset of the moving image with respect to the reference image.
@@ -136,6 +138,9 @@ def phase_cross_correlation(
     use_hanning_window : bool, optional
         If True, a Hanning window is used to smooth the images before the
         correlation is computed.
+    upsample_factor : int, optional
+        Upsampling factor for subpixel accuracy in phase correlation.
+        A value of 1 yields pixel-level precision.
 
     Returns
     -------
@@ -152,20 +157,9 @@ def phase_cross_correlation(
         win_x = np.hanning(moving.shape[1])
         win = np.outer(win_y, win_x)
     
-        f_moving = np.fft.fft2(moving * win)
-        f_ref = np.fft.fft2(ref * win)
-    else:
-        f_moving = np.fft.fft2(moving)
-        f_ref = np.fft.fft2(ref)
-    
-    f_corr = f_moving * f_ref.conj()
-    f_corr = f_corr / (np.abs(f_corr) + 1e-12)
-    
-    map = np.fft.ifft2(f_corr).real
-    shift = np.array(np.unravel_index(np.argmax(map), map.shape))
-    for i in range(2):
-        if shift[i] > map.shape[i] / 2:
-            shift[i] -= map.shape[i]
+    shift, _, _ = skimage_phase_cross_correlation(
+        moving * win, ref * win, upsample_factor=upsample_factor
+    )
     return shift
 
 
