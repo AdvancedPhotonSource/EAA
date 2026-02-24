@@ -57,6 +57,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "phase_correlation",
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
         run_line_scan_checker: bool = True,
+        run_offset_calibration: bool = True,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -118,6 +119,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         registration_algorithm_kwargs : Optional[dict[str, Any]]
             Optional keyword arguments forwarded to the selected image
             registration algorithm when aligning consecutive 2D scans.
+        run_line_scan_checker : bool, optional
+            If True, run the LLM-based line-scan quality checker and allow it
+            to request scan-argument adjustments before accepting a line scan.
+        run_offset_calibration : bool, optional
+            If True, run 2D image acquisition and image-registration-based offset
+            calibration. If False, the loop only performs parameter setting,
+            line scan, and optimization updates/suggestions.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -155,6 +163,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.image_acquisition_kwargs = {}
 
         self.run_line_scan_checker = run_line_scan_checker
+        self.run_offset_calibration = run_offset_calibration
         
         super().__init__(
             llm_config=llm_config,
@@ -261,8 +270,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 "Ctrl+C in terminal."
             )
             
-            # Initial 2D scan and line scan to populate image buffer of acquisition tool.
-            self.run_2d_scan()
+            # Initial measurements before optimization starts.
+            if self.run_offset_calibration:
+                self.run_2d_scan()
             self.run_line_scan()
             
             # Initialize optimization tool.
@@ -289,8 +299,19 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                         message = f"A runtime error occurred: {e}. Please set offset manually."
                         logger.error(message)
                         self.record_system_message(message)
+                    if not self.run_offset_calibration:
+                        if isinstance(e, KeyboardInterrupt):
+                            raise KeyboardInterrupt(
+                                "Process interrupted while offset calibration is disabled."
+                            ) from e
                     if not self.apply_user_correction_offset():
-                        raise
+                        if isinstance(e, KeyboardInterrupt):
+                            raise KeyboardInterrupt(
+                                "Process interrupted by user during manual offset correction."
+                            ) from e
+                        raise RuntimeError(
+                            "Manual offset correction was required but not provided."
+                        ) from e
                     continue
             report = self.generate_report_csv()
             final_report_message = f"Final report:\n{report}"
@@ -564,7 +585,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             new_scan_position = self.extract_scan_position(merged_line_scan_kwargs)
             offset = new_scan_position - old_scan_position
             self.line_scan_kwargs = merged_line_scan_kwargs
-            self.apply_offset_to_image_acquisition_kwargs(offset)
+            if self.run_offset_calibration:
+                self.apply_offset_to_image_acquisition_kwargs(offset)
             return result
         if result["result"] == "failed":
             return result
@@ -713,13 +735,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         while True:
             self.record_system_message(f"Setting parameters to new value:```{x_current}```")
             self.param_setting_tool.set_parameters(x_current)
-            self.run_2d_scan()
-            line_scan_pos_offset, alignment_offset = self.find_offset()
-            if np.any(np.isnan(line_scan_pos_offset)):
-                x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
-                continue
-            self.apply_offset_to_line_scan_kwargs(line_scan_pos_offset)
-            self.apply_offset_to_image_acquisition_kwargs(alignment_offset)
+            if self.run_offset_calibration:
+                self.run_2d_scan()
+                line_scan_pos_offset, alignment_offset = self.find_offset()
+                if np.any(np.isnan(line_scan_pos_offset)):
+                    x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
+                    continue
+                self.apply_offset_to_line_scan_kwargs(line_scan_pos_offset)
+                self.apply_offset_to_image_acquisition_kwargs(alignment_offset)
             try:
                 fwhm = self.run_line_scan()
                 if np.isnan(fwhm):

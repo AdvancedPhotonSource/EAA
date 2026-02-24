@@ -77,6 +77,32 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         )
         assert acquisition_tool.counter_acquire_image >= n_initial_points + n_bo_iterations
 
+    def test_task_manager_runs_without_offset_calibration(self, monkeypatch):
+        task_manager, acquisition_tool = self._build_task_manager()
+        task_manager.run_offset_calibration = False
+        monkeypatch.setattr(task_manager, "run_conversation", lambda: None)
+        n_initial_points = 2
+        n_bo_iterations = 1
+        task_manager.run(
+            initial_2d_scan_kwargs=None,
+            initial_line_scan_kwargs={
+                "start_x": 130,
+                "start_y": 170,
+                "end_x": 190,
+                "end_y": 170,
+                "scan_step": 1.0,
+            },
+            n_initial_points=n_initial_points,
+            initial_sampling_window_size=(0.5,),
+            n_max_iterations=n_bo_iterations,
+            parameter_change_step_limit=0.5,
+        )
+        assert (
+            task_manager.param_setting_tool.len_parameter_history
+            == n_initial_points + n_bo_iterations + 1
+        )
+        assert acquisition_tool.counter_acquire_image == 0
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -91,3 +117,4 @@ if __name__ == "__main__":
         debug=True,
     )
     tester.test_task_manager_runs()
+    tester.test_task_manager_runs_without_offset_calibration()
