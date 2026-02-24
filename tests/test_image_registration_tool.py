@@ -45,7 +45,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             axs[1].set_title(f"Image {acquisition_tool.counter_acquire_image - 1}")
             plt.show()
         
-        assert np.allclose(offset, [20, 20])
+        assert np.allclose(offset, [-20, -20])
         return
     
     def test_image_registration_diff_size(self):
@@ -81,7 +81,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             axs[1].set_title(f"Image {acquisition_tool.counter_acquire_image - 1}")
             plt.show()
         
-        assert np.allclose(offset, [20, 20])
+        assert np.allclose(offset, [-20, -20])
         return
 
     def test_image_registration_mutual_information(self):
@@ -120,7 +120,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             axs[1].set_title(f"Image {acquisition_tool.counter_acquire_image - 1}")
             plt.show()
 
-        assert np.allclose(offset, [20, 20], atol=1.0)
+        assert np.allclose(offset, [-20, -20], atol=1.0)
         return
         
         

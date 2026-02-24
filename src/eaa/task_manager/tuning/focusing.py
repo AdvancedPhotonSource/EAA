@@ -223,12 +223,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                         - float(self.acquisition_tool.image_acquisition_call_history[-2][f"loc_{dir}"])
                         for dir in ["y", "x"]
                     ]
+                    offset_to_subtract = [float(shift[i] - scan_pos_diff[i]) for i in [0, 1]]
                     message += (
-                        f"Phase correlation has found the offset between "
-                        f"the new image and the previous one to be {shift.tolist()} (y, x). Taking "
-                        f"into account the difference in scan positions ({scan_pos_diff}), the net "
-                        f"drift is {[float(shift[i] + scan_pos_diff[i]) for i in [0, 1]]} (y, x). Use this offset to "
-                        f"to adjust the line scan positions by **adding** it to both "
+                        f"Image registration has found the offset to apply to the new image for "
+                        f"alignment with the previous one to be {shift.tolist()} (y, x). Taking "
+                        f"into account the difference in scan positions ({scan_pos_diff}), the "
+                        f"offset to use is {offset_to_subtract} (y, x). Use this offset to "
+                        f"adjust the line scan positions by **subtracting** it from both "
                         f"the x and y coordinates of the start and end points of the previous line scan. "
                     )
                     if len(self.acquisition_tool.line_scan_call_history[-1]) > 0:
@@ -424,7 +425,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 registration_prompt = (
                     "Along with this image, you will also be given the offset of "
                     "this image compared to the previous image found through image registration. "
-                    "Use this offset to adjust the line scan positions. Also use this offset to "
+                    "Use this offset by subtracting it from line-scan and image-acquisition coordinates. "
+                    "Also use this offset to "
                     "update the positions of your next 2D image acquisition. Note that the offset "
                     "is just a suggestion. If the new image does not appear to have any overlap "
                     "with the previous one, the offset won't be reliable. In that case, try "
@@ -432,13 +434,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     "closer to the previous image."
                 )
                 line_scan_positioning_prompt = (
-                    "Use the offset given by image registration to adjust the line scan positions."
+                    "Use the offset given by image registration and subtract it from the previous line-scan coordinates."
                 )
             else:
                 registration_prompt = (
                     "Use your registration tool to find the offset between the new image "
                     "and the previous one. Use this offset to adjust the line scan positions "
-                    "by **adding** it to both the x and y coordinates of the start and end "
+                    "by **subtracting** it from both the x and y coordinates of the start and end "
                     "points of the previous line scan. "
                 )
                 line_scan_positioning_prompt = (
