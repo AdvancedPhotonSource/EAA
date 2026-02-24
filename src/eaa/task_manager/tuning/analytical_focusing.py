@@ -564,11 +564,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             new_scan_position = self.extract_scan_position(merged_line_scan_kwargs)
             offset = new_scan_position - old_scan_position
             self.line_scan_kwargs = merged_line_scan_kwargs
-            self.apply_offset_to_kwargs_buffers(
-                offset,
-                update_kwargs_for_line_scan=False,
-                update_kwargs_for_image_acquisition=True,
-            )
+            self.apply_offset_to_image_acquisition_kwargs(offset)
             return result
         if result["result"] == "failed":
             return result
@@ -644,24 +640,19 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             f"{alignment_offset}. Counting in scan-position difference {scan_pos_diff}, "
             f"the offset to subtract from the next scan positions is {offset_to_subtract}."
         )
-        return offset_to_subtract
+        return offset_to_subtract, alignment_offset
     
-    def apply_offset_to_kwargs_buffers(
-        self, 
-        offset: np.ndarray,
-        update_kwargs_for_line_scan: bool = True,
-        update_kwargs_for_image_acquisition: bool = True,
-    ):
-        if update_kwargs_for_line_scan:
-            for arg in self.line_scan_tool_x_coordinate_args:
-                self.line_scan_kwargs[arg] -= offset[1]
-            for arg in self.line_scan_tool_y_coordinate_args:
-                self.line_scan_kwargs[arg] -= offset[0]
-        if update_kwargs_for_image_acquisition:
-            for arg in self.image_acquisition_tool_x_coordinate_args:
-                self.image_acquisition_kwargs[arg] -= offset[1]
-            for arg in self.image_acquisition_tool_y_coordinate_args:
-                self.image_acquisition_kwargs[arg] -= offset[0]
+    def apply_offset_to_line_scan_kwargs(self, offset: np.ndarray):
+        for arg in self.line_scan_tool_x_coordinate_args:
+            self.line_scan_kwargs[arg] -= offset[1]
+        for arg in self.line_scan_tool_y_coordinate_args:
+            self.line_scan_kwargs[arg] -= offset[0]
+
+    def apply_offset_to_image_acquisition_kwargs(self, offset: np.ndarray):
+        for arg in self.image_acquisition_tool_x_coordinate_args:
+            self.image_acquisition_kwargs[arg] -= offset[1]
+        for arg in self.image_acquisition_tool_y_coordinate_args:
+            self.image_acquisition_kwargs[arg] -= offset[0]
             
     def collect_initial_data_optimization_tool(
         self, 
@@ -723,11 +714,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.record_system_message(f"Setting parameters to new value:```{x_current}```")
             self.param_setting_tool.set_parameters(x_current)
             self.run_2d_scan()
-            offset = self.find_offset()
-            if np.any(np.isnan(offset)):
+            line_scan_pos_offset, alignment_offset = self.find_offset()
+            if np.any(np.isnan(line_scan_pos_offset)):
                 x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
                 continue
-            self.apply_offset_to_kwargs_buffers(offset)
+            self.apply_offset_to_line_scan_kwargs(line_scan_pos_offset)
+            self.apply_offset_to_image_acquisition_kwargs(alignment_offset)
             try:
                 fwhm = self.run_line_scan()
                 if np.isnan(fwhm):
@@ -755,7 +747,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             except ValueError:
                 logger.info("Invalid offset values. Use numeric values like 'y,x'.")
                 continue
-            self.apply_offset_to_kwargs_buffers(offset)
+            self.apply_offset_to_line_scan_kwargs(offset)
+            self.apply_offset_to_image_acquisition_kwargs(offset)
             correction_message = f"Applied user correction offset: {offset.tolist()}"
             logger.info(correction_message)
             self.record_system_message(correction_message)
