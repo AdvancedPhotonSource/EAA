@@ -56,6 +56,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "phase_correlation",
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
+        run_line_scan_checker: bool = True,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -152,6 +153,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         self.line_scan_kwargs = {}
         self.image_acquisition_kwargs = {}
+
+        self.run_line_scan_checker = run_line_scan_checker
         
         super().__init__(
             llm_config=llm_config,
@@ -341,18 +344,21 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             else:
                 self.record_system_message(content)
 
-            check_res = (
-                self.check_line_scan(
-                    image_path,
-                    res,
-                    line_scan_residual_warning_threshold=0.015,
+            if self.run_line_scan_checker:
+                check_res = (
+                    self.check_line_scan(
+                        image_path,
+                        res,
+                        line_scan_residual_warning_threshold=0.015,
+                    )
+                    if isinstance(image_path, str)
+                    else {"result": "ok"}
                 )
-                if isinstance(image_path, str)
-                else {"result": "ok"}
-            )
-            self.record_system_message(
-                f"Line scan validation result:```{check_res}```"
-            )
+                self.record_system_message(
+                    f"Line scan validation result:```{check_res}```"
+                )
+            else:
+                check_res = {"result": "ok"}
 
             if check_res["result"] == "ok":
                 return res["fwhm"]
