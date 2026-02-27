@@ -3,6 +3,7 @@ import logging
 
 import botorch.generation
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 import botorch
 from botorch.models.transforms.outcome import Standardize
@@ -52,7 +53,7 @@ class BaseSequentialOptimizationTool(BaseTool):
     def suggest(self, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError
 
-    def visualize_status(self):
+    def visualize_status(self) -> matplotlib.figure.Figure:
         """Visualize observed optimization data.
 
         Returns
@@ -600,7 +601,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         candidates = torch.max(torch.min(candidates, upper), lower)
         return candidates.detach()
 
-    def visualize_status(self):
+    def visualize_status(self) -> matplotlib.figure.Figure:
         """Visualize observed data and GP posterior status.
 
         Returns
