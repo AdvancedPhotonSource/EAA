@@ -462,24 +462,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             >= self.n_parameter_drift_points_before_prediction
         )
 
-    def record_system_messages(
-        self,
-        messages: list[str | dict[str, Any]],
-        update_context: bool = False,
-    ) -> None:
-        for message in messages:
-            if isinstance(message, str):
-                self.record_system_message(message, update_context=update_context)
-                continue
-            if isinstance(message, dict):
-                self.record_system_message(
-                    str(message.get("content", "")),
-                    image_path=message.get("image_path"),
-                    update_context=bool(message.get("update_context", update_context)),
-                )
-                continue
-            raise ValueError(f"Unsupported message type in record_system_messages: {type(message)}")
-
     def update_linear_drift_models(
         self,
         parameters: np.ndarray,
@@ -507,7 +489,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         )
 
     def record_linear_drift_model_visualizations(self) -> None:
-        messages: list[str | dict[str, Any]] = []
+        image_paths = []
         for axis_name, model in [("y", self.drift_model_y), ("x", self.drift_model_x)]:
             fig = None
             try:
@@ -519,12 +501,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     filename=f"linear_drift_model_{axis_name}_status.png",
                     add_timestamp=True,
                 )
-                messages.append(
-                    {
-                        "content": f"Linear drift model ({axis_name}) status updated.",
-                        "image_path": fig_path,
-                    }
-                )
+                image_paths.append(fig_path)
             except Exception as exc:
                 logger.warning(
                     "Failed to visualize linear drift model status for %s-axis: %s",
@@ -535,9 +512,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 if fig is not None:
                     plt.close(fig)
 
-        if len(messages) == 0:
+        if len(image_paths) == 0:
             return
-        self.record_system_messages(messages)
+        self.record_system_message(
+            content="Linear drift model status updated. Current status (y and x):",
+            image_path=image_paths,
+        )
 
     def apply_predicted_image_acquisition_position(self, parameters: np.ndarray):
         current_pos = self.extract_image_acquisition_position(self.image_acquisition_kwargs)
