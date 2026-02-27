@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from matplotlib.figure import Figure
 
 from eaa.tool.regression import MultivariateLinearRegression
 
@@ -78,3 +79,29 @@ class TestMultivariateLinearRegression:
 
         with pytest.raises(ValueError, match="`x` must have 2 features"):
             tool.predict([[1.0]])
+
+    def test_visualize_status_returns_figure_for_1d_to_1d(self):
+        tool = MultivariateLinearRegression()
+        tool.update([[0.0], [1.0], [2.0]], [[1.0], [3.0], [5.0]])
+
+        fig = tool.visualize_status()
+        assert isinstance(fig, Figure)
+        assert len(fig.axes) == 1
+        assert fig.axes[0].name == "rectilinear"
+
+    def test_visualize_status_returns_figure_for_2d_to_1d(self):
+        tool = MultivariateLinearRegression()
+        x = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+        y = [[1.0], [3.0], [2.0], [4.0]]
+        tool.update(x, y)
+
+        fig = tool.visualize_status()
+        assert isinstance(fig, Figure)
+        assert len(fig.axes) == 1
+        assert fig.axes[0].name == "3d"
+
+    def test_visualize_status_returns_none_for_unsupported_shapes(self):
+        tool = MultivariateLinearRegression()
+        tool.update([[0.0], [1.0], [2.0]], [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+
+        assert tool.visualize_status() is None
