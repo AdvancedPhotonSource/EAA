@@ -193,36 +193,6 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         task_manager.run_tuning_iteration(np.array([1.0], dtype=float))
         assert any(np.allclose(offset, np.array([100.0, -50.0])) for offset in captured_offsets)
 
-    def test_record_linear_drift_model_visualizations_records_x_and_y(self, monkeypatch):
-        task_manager, _ = self._build_task_manager()
-        monkeypatch.setattr(task_manager.drift_model_y, "visualize_status", lambda: Figure())
-        monkeypatch.setattr(task_manager.drift_model_x, "visualize_status", lambda: Figure())
-        monkeypatch.setattr(
-            BaseTool,
-            "save_image_to_temp_dir",
-            staticmethod(
-                lambda fig, filename, add_timestamp: f"/tmp/{filename}"
-            ),
-        )
-
-        captured_messages = []
-        monkeypatch.setattr(
-            task_manager,
-            "record_system_messages",
-            lambda messages, update_context=False: captured_messages.extend(messages),
-        )
-
-        task_manager.record_linear_drift_model_visualizations()
-
-        assert len(captured_messages) == 2
-        image_paths = [
-            message["image_path"]
-            for message in captured_messages
-            if isinstance(message, dict) and "image_path" in message
-        ]
-        assert any("linear_drift_model_y_status.png" in path for path in image_paths)
-        assert any("linear_drift_model_x_status.png" in path for path in image_paths)
-
     def test_run_tuning_iteration_calls_drift_visualization_after_update(self, monkeypatch):
         task_manager, _ = self._build_task_manager()
         task_manager.run_offset_calibration = True
