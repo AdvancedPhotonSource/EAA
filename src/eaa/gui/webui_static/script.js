@@ -223,12 +223,15 @@
     });
   }
 
-  function parseImageTagFromContent(content) {
-    const m = (content || "").match(/<img\s+([^>\s]+)>/);
-    if (m && m[1]) {
-      return m[1];
+  function parseImageTagsFromContent(content) {
+    const matches = String(content || "").matchAll(/<img\s+([^>\s]+)>/g);
+    const paths = [];
+    for (const match of matches) {
+      if (match && match[1]) {
+        paths.push(match[1]);
+      }
     }
-    return null;
+    return paths;
   }
 
   function getRoleDisplayName(role) {
@@ -343,21 +346,24 @@
       container.appendChild(actionsRow);
     }
 
-    // Inline image from base64 column
-    if (msg.image) {
+    // Inline image(s) from base64 column
+    const imageSources = Array.isArray(msg.images)
+      ? msg.images
+      : (msg.image ? [msg.image] : []);
+    for (const src of imageSources) {
       const img = document.createElement("img");
       img.className = "inline";
-      img.src = msg.image;
-      img.dataset.fullSrc = msg.image;
+      img.src = src;
+      img.dataset.fullSrc = src;
       container.appendChild(img);
-      addImageToSidebar(msg.image);
+      addImageToSidebar(src);
       setupImagePreview(img);
     }
 
-    // Inline image from <img path>
+    // Inline image(s) from <img path>
     const shouldParseContentImage = msg.role !== "system";
-    const pathInText = shouldParseContentImage ? parseImageTagFromContent(msg.content || "") : null;
-    if (pathInText) {
+    const pathsInText = shouldParseContentImage ? parseImageTagsFromContent(msg.content || "") : [];
+    for (const pathInText of pathsInText) {
       const url = `/api/image?path=${encodeURIComponent(pathInText)}`;
       const img = document.createElement("img");
       img.className = "inline";
