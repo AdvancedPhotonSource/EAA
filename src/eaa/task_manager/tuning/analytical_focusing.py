@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import botorch.acquisition
+import matplotlib.pyplot as plt
 from sciagent.message_proc import generate_openai_message
 from sciagent.skill import SkillMetadata
 
@@ -24,6 +25,7 @@ from eaa.tool.optimization import (
     BaseSequentialOptimizationTool,
     BayesianOptimizationTool,
 )
+from eaa.tool.regression import MultivariateLinearRegression
 from eaa.util import to_numpy
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
         run_line_scan_checker: bool = True,
         run_offset_calibration: bool = True,
+        use_linear_drift_prediction: bool = False,
+        n_parameter_drift_points_before_prediction: int = 3,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -126,6 +130,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             If True, run 2D image acquisition and image-registration-based offset
             calibration. If False, the loop only performs parameter setting,
             line scan, and optimization updates/suggestions.
+        use_linear_drift_prediction : bool, optional
+            If True, fit linear models to predict image-acquisition drift
+            (y and x separately) as a function of optics parameters and use
+            the predicted positions for subsequent 2D scans once enough
+            parameter-drift samples have been collected.
+        n_parameter_drift_points_before_prediction : int, optional
+            Number of parameter-drift samples to collect before using linear
+            drift prediction for image acquisitions.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -164,6 +176,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         self.run_line_scan_checker = run_line_scan_checker
         self.run_offset_calibration = run_offset_calibration
+        self.use_linear_drift_prediction = use_linear_drift_prediction
+        self.n_parameter_drift_points_before_prediction = (
+            n_parameter_drift_points_before_prediction
+        )
+        if self.n_parameter_drift_points_before_prediction < 1:
+            raise ValueError(
+                "`n_parameter_drift_points_before_prediction` must be >= 1."
+            )
+        self.drift_model_y = MultivariateLinearRegression()
+        self.drift_model_x = MultivariateLinearRegression()
+        self.initial_image_acquisition_position: np.ndarray | None = None
         
         super().__init__(
             llm_config=llm_config,
@@ -346,7 +369,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             The FWHM of the Gaussian fit.
         """
         while True:
-            self.record_system_message(f"Acquiring line scan with {self.line_scan_kwargs}...")
+            self.record_system_message(f"Acquiring line scan with ```{self.line_scan_kwargs}```")
             res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
             try:
                 res = json.loads(res)
@@ -411,6 +434,128 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 f"Cannot extract line scan position from kwargs. Missing {x_arg} or {y_arg} in {kwargs}."
             )
         return np.array([float(kwargs[y_arg]), float(kwargs[x_arg])], dtype=float)
+
+    def extract_image_acquisition_position(self, kwargs: dict[str, float]) -> np.ndarray:
+        if (
+            len(self.image_acquisition_tool_x_coordinate_args) == 0
+            or len(self.image_acquisition_tool_y_coordinate_args) == 0
+        ):
+            raise ValueError("Image acquisition coordinate args must not be empty.")
+        x_arg = self.image_acquisition_tool_x_coordinate_args[0]
+        y_arg = self.image_acquisition_tool_y_coordinate_args[0]
+        if x_arg not in kwargs or y_arg not in kwargs:
+            raise ValueError(
+                "Cannot extract image acquisition position from kwargs. "
+                f"Missing {x_arg} or {y_arg} in {kwargs}."
+            )
+        return np.array([float(kwargs[y_arg]), float(kwargs[x_arg])], dtype=float)
+
+    def should_apply_linear_drift_prediction(self) -> bool:
+        if not self.run_offset_calibration:
+            return False
+        if not self.use_linear_drift_prediction:
+            return False
+        if self.initial_image_acquisition_position is None:
+            return False
+        return (
+            self.drift_model_y.get_n_parameter_drift_points_collected()
+            >= self.n_parameter_drift_points_before_prediction
+        )
+
+    def record_system_messages(
+        self,
+        messages: list[str | dict[str, Any]],
+        update_context: bool = False,
+    ) -> None:
+        for message in messages:
+            if isinstance(message, str):
+                self.record_system_message(message, update_context=update_context)
+                continue
+            if isinstance(message, dict):
+                self.record_system_message(
+                    str(message.get("content", "")),
+                    image_path=message.get("image_path"),
+                    update_context=bool(message.get("update_context", update_context)),
+                )
+                continue
+            raise ValueError(f"Unsupported message type in record_system_messages: {type(message)}")
+
+    def update_linear_drift_models(
+        self,
+        parameters: np.ndarray,
+        current_position_yx: np.ndarray | None = None,
+    ):
+        if not self.use_linear_drift_prediction:
+            return
+        if self.initial_image_acquisition_position is None:
+            return
+
+        if current_position_yx is None:
+            current_position_yx = self.extract_image_acquisition_position(
+                self.image_acquisition_kwargs
+            )
+
+        delta_yx = current_position_yx - self.initial_image_acquisition_position
+        x_train = np.array(parameters, dtype=float).reshape(1, -1).tolist()
+        self.drift_model_y.update(x=x_train, y=[[float(delta_yx[0])]])
+        self.drift_model_x.update(x=x_train, y=[[float(delta_yx[1])]])
+        self.record_system_message(
+            "Updated linear drift model with parameter-drift sample:```"
+            f"parameters={np.array(parameters, dtype=float).tolist()}, "
+            f"delta_yx={delta_yx.tolist()}, "
+            f"n_samples={self.drift_model_y.get_n_parameter_drift_points_collected()}.```"
+        )
+
+    def record_linear_drift_model_visualizations(self) -> None:
+        messages: list[str | dict[str, Any]] = []
+        for axis_name, model in [("y", self.drift_model_y), ("x", self.drift_model_x)]:
+            fig = None
+            try:
+                fig = model.visualize_status()
+                if fig is None:
+                    continue
+                fig_path = BaseTool.save_image_to_temp_dir(
+                    fig=fig,
+                    filename=f"linear_drift_model_{axis_name}_status.png",
+                    add_timestamp=True,
+                )
+                messages.append(
+                    {
+                        "content": f"Linear drift model ({axis_name}) status updated.",
+                        "image_path": fig_path,
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to visualize linear drift model status for %s-axis: %s",
+                    axis_name,
+                    exc,
+                )
+            finally:
+                if fig is not None:
+                    plt.close(fig)
+
+        if len(messages) == 0:
+            return
+        self.record_system_messages(messages)
+
+    def apply_predicted_image_acquisition_position(self, parameters: np.ndarray):
+        current_pos = self.extract_image_acquisition_position(self.image_acquisition_kwargs)
+        x_in = np.array(parameters, dtype=float).reshape(1, -1).tolist()
+        delta_y = float(self.drift_model_y.predict(x_in)[0][0])
+        delta_x = float(self.drift_model_x.predict(x_in)[0][0])
+        predicted_pos = self.initial_image_acquisition_position + np.array(
+            [delta_y, delta_x],
+            dtype=float,
+        )
+        delta_pos = predicted_pos - current_pos
+        self.apply_offset_to_image_acquisition_kwargs(-delta_pos)
+        self.apply_offset_to_line_scan_kwargs(-delta_pos)
+        self.record_system_message(
+            "Using linear drift prediction for acquisition positions: "
+            f"```Predicted 2D scan yx = {predicted_pos.tolist()}"
+            f"Offset from last = {delta_pos.tolist()}```"
+        )
 
     def build_line_scan_precheck_message(
         self,
@@ -614,6 +759,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     def run_2d_scan(self):
         self.record_system_message(f"Acquiring 2D scan...```{self.image_acquisition_kwargs}```")
         image_path = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
+        if self.initial_image_acquisition_position is None:
+            self.initial_image_acquisition_position = self.extract_image_acquisition_position(
+                self.image_acquisition_kwargs
+            )
         content = f"Acquired 2D scan with kwargs: ```{self.image_acquisition_kwargs}```"
         if isinstance(image_path, str):
             self.record_system_message(content, image_path=image_path)
@@ -660,7 +809,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.record_system_message(
             f"Pure image registration offset (to apply to current image for alignment) is "
             f"{alignment_offset}. Counting in scan-position difference {scan_pos_diff}, "
-            f"the offset to subtract from the next scan positions is {offset_to_subtract}."
+            f"the offset to subtract from the next line scan positions is {offset_to_subtract}."
         )
         return offset_to_subtract, alignment_offset
     
@@ -736,6 +885,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.record_system_message(f"Setting parameters to new value:```{x_current}```")
             self.param_setting_tool.set_parameters(x_current)
             if self.run_offset_calibration:
+                if self.should_apply_linear_drift_prediction():
+                    self.apply_predicted_image_acquisition_position(x_current)
                 self.run_2d_scan()
                 line_scan_pos_offset, alignment_offset = self.find_offset()
                 if np.any(np.isnan(line_scan_pos_offset)):
@@ -743,6 +894,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     continue
                 self.apply_offset_to_line_scan_kwargs(line_scan_pos_offset)
                 self.apply_offset_to_image_acquisition_kwargs(alignment_offset)
+                self.update_linear_drift_models(x_current)
+                self.record_linear_drift_model_visualizations()
             try:
                 fwhm = self.run_line_scan()
                 if np.isnan(fwhm):
