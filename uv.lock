@@ -6202,8 +6202,8 @@ wheels = [
 
 [[package]]
 name = "sci-agent"
-version = "0.1.dev37+gaf3cfdb39"
-source = { git = "https://github.com/mdw771/sci-agent#af3cfdb3984eb40cb1b507ecdfcc6be317f66e39" }
+version = "0.1.dev38+g551cf10aa"
+source = { git = "https://github.com/mdw771/sci-agent#551cf10aaab69b8acbdb1ae0e5d4e5b980eda3e9" }
 dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
