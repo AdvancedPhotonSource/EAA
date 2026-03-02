@@ -1,4 +1,5 @@
 
+from scipy.signal.windows import gaussian
 import os
 import argparse
 
@@ -28,6 +29,33 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         size = (256, 256)
         img = tool.acquire_image(*loc, *size)
         return img
+
+    # Deliberately skipping result comparison because of non-deterministicness
+    def test_advanced_simulated_image_acquisition(self):
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+        
+        tool = SimulatedAcquireImage(
+            whole_image, 
+            poisson_noise_scale=100,
+            scan_jitter=1.0,
+            gaussian_psf_sigma=1.0,
+            return_message=False
+        )
+        
+        loc = (100, 100)
+        size = (256, 256)
+        img = tool.acquire_image(*loc, *size)
+        if self.debug:
+            import matplotlib.pyplot as plt
+            plt.imshow(img)
+            plt.show()
+        return None
     
     def test_simulated_line_scan(self):
         whole_image = tifffile.imread(
@@ -59,5 +87,6 @@ if __name__ == '__main__':
     tester = TestSimulatedImageAcquisition()
     tester.setup_method(name="", generate_data=False, generate_gold=args.generate_gold, debug=True)
     tester.test_simulated_image_acquisition()
+    tester.test_advanced_simulated_image_acquisition()
     tester.test_simulated_line_scan()
         

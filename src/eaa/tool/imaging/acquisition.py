@@ -124,8 +124,8 @@ class SimulatedAcquireImage(AcquireImage):
     name: str = "simulated_acquire_image"
     
     def __init__(
-        self, 
-        whole_image: np.ndarray, 
+        self,
+        whole_image: np.ndarray,
         return_message: bool = True,
         add_axis_ticks: bool = False,
         n_ticks: int = 10,
@@ -135,6 +135,9 @@ class SimulatedAcquireImage(AcquireImage):
         add_line_scan_candidates_to_image: bool = False,
         plot_image_in_log_scale: bool = False,
         line_scan_return_gaussian_fit: bool = False,
+        poisson_noise_scale: float = None,
+        gaussian_psf_sigma: float = None,
+        scan_jitter: float = None,
         *args,
         require_approval: bool = False,
         **kwargs
@@ -169,11 +172,25 @@ class SimulatedAcquireImage(AcquireImage):
         line_scan_return_gaussian_fit : bool, optional
             If True, the function returns a stringified JSON object containing the image path
             and the Gaussian fit FWHM.
+        poisson_noise_scale : float, optional
+            If given, Poisson noise is added to the sampled signal. The scaling factor
+            is computed as poisson_noise_scale / max(image), which controls the effective
+            photon count (and thus the noise level).
+        gaussian_psf_sigma : float, optional
+            If given, each sampled point is computed as a Gaussian-weighted average of
+            its neighborhood within 2*sigma pixels, simulating the point spread function.
+            When blur > 0 is also set, the effective sigma is scaled by (1 + blur).
+        scan_jitter : float, optional
+            If given, scan positions are perturbed by a value drawn uniformly from
+            (-scan_jitter, scan_jitter) in both x and y.
         """
         self.whole_image = whole_image
         self.interpolator = None
         self.blur = None
         self.offset = np.array([0, 0])
+        self.poisson_noise_scale = poisson_noise_scale
+        self.gaussian_psf_sigma = gaussian_psf_sigma
+        self.scan_jitter = scan_jitter
         self.line_scan_gaussian_fit_y_threshold = line_scan_gaussian_fit_y_threshold
         
         self.return_message = return_message
@@ -302,6 +319,85 @@ class SimulatedAcquireImage(AcquireImage):
         ax.set_ylim(ylim)
         return fig
 
+    def _sample(self, yy_flat: np.ndarray, xx_flat: np.ndarray, shape=None) -> np.ndarray:
+        """Sample the source image at the given coordinates, applying physics effects.
+
+        Coordinates must already include any drift offset. The returned array has
+        the same shape as ``yy_flat`` / ``xx_flat``.
+
+        Parameters
+        ----------
+        yy_flat, xx_flat : np.ndarray
+            Flat coordinate arrays with drift offset already applied.
+        shape : tuple, optional
+            When provided, ``gaussian_filter`` (blur fallback) is applied in this
+            N-D shape rather than on the flat array, ensuring isotropic blur.
+            Pass ``(size_y, size_x)`` for 2-D image acquisitions; omit for 1-D
+            line scans (where blurring along the scan direction is correct).
+
+        When none of ``poisson_noise_scale``, ``gaussian_psf_sigma``, and
+        ``scan_jitter`` are set the method falls back to plain interpolation
+        (plus ``gaussian_filter`` if ``blur`` is set), matching the original
+        behaviour exactly.
+        """
+        def _apply_blur(arr_flat):
+            if shape is not None:
+                return ndi.gaussian_filter(arr_flat.reshape(shape), self.blur, mode="nearest").ravel()
+            return ndi.gaussian_filter(arr_flat, self.blur, mode="nearest")
+
+        use_advanced = (
+            self.poisson_noise_scale is not None
+            or self.gaussian_psf_sigma is not None
+            or self.scan_jitter is not None
+        )
+
+        if not use_advanced:
+            pts = np.column_stack([yy_flat, xx_flat])
+            arr_flat = self.interpolator(pts)
+            if self.blur is not None and self.blur > 0:
+                arr_flat = _apply_blur(arr_flat)
+            return arr_flat
+
+        # Step 1: scan jittering
+        if self.scan_jitter is not None:
+            yy_flat = yy_flat + np.random.uniform(-self.scan_jitter, self.scan_jitter, yy_flat.shape)
+            xx_flat = xx_flat + np.random.uniform(-self.scan_jitter, self.scan_jitter, xx_flat.shape)
+
+        # Step 2: Gaussian PSF (or plain interpolation)
+        if self.gaussian_psf_sigma is not None:
+            effective_sigma = self.gaussian_psf_sigma
+            if self.blur is not None and self.blur > 0:
+                effective_sigma = effective_sigma * (1 + self.blur)
+
+            half_n = max(1, int(np.ceil(2 * effective_sigma)))
+            offsets = np.arange(-half_n, half_n + 1)
+            dy_grid, dx_grid = np.meshgrid(offsets, offsets, indexing="ij")
+            dy_flat = dy_grid.ravel()
+            dx_flat = dx_grid.ravel()
+
+            r2 = dy_flat ** 2 + dx_flat ** 2
+            gauss_weights = np.exp(-0.5 * r2 / effective_sigma ** 2)
+            gauss_weights /= gauss_weights.sum()
+
+            arr_flat = np.zeros(yy_flat.size)
+            for k in range(len(dy_flat)):
+                nbr_pts = np.column_stack([yy_flat + dy_flat[k], xx_flat + dx_flat[k]])
+                arr_flat += gauss_weights[k] * self.interpolator(nbr_pts)
+        else:
+            pts = np.column_stack([yy_flat, xx_flat])
+            arr_flat = self.interpolator(pts)
+            if self.blur is not None and self.blur > 0:
+                arr_flat = _apply_blur(arr_flat)
+
+        # Step 3: Poisson noise
+        if self.poisson_noise_scale is not None:
+            max_val = arr_flat.max()
+            if max_val > 0:
+                scaling_factor = self.poisson_noise_scale / max_val
+                arr_flat = np.random.poisson(np.clip(arr_flat * scaling_factor, 0, None)).astype(float) / scaling_factor
+
+        return arr_flat
+
     @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_image(
         self, 
@@ -328,18 +424,15 @@ class SimulatedAcquireImage(AcquireImage):
             The path of the acquired image saved in hard drive.
         """
         self.update_image_acquisition_call_history(loc_x, loc_y, size_x, size_y, psize_x=1, psize_y=1)
-        
+
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
         logger.info(f"Acquiring image of size {size} at location {loc}.")
         y = np.arange(loc[0], loc[0] + size[0] - 0.5)
         x = np.arange(loc[1], loc[1] + size[1] - 0.5)
         yy, xx = np.meshgrid(y + self.offset[0], x + self.offset[1], indexing="ij")
-        pts = np.column_stack([yy.ravel(), xx.ravel()])
-        arr = self.interpolator(pts).reshape(size)
-        
-        if self.blur is not None and self.blur > 0:
-            arr = ndi.gaussian_filter(arr, self.blur, mode="nearest")
+
+        arr = self._sample(yy.ravel(), xx.ravel(), shape=size).reshape(size)
         
         if self.show_image_in_real_time:
             self.update_real_time_view(arr)
@@ -399,11 +492,8 @@ class SimulatedAcquireImage(AcquireImage):
         ds = np.arange(0, d_tot, scan_step)
         pts = pt_start + ds[:, None] * (pt_end - pt_start) / d_tot
         pts = pts + self.offset
-        
-        arr = self.line_interpolator(pts).reshape(-1)
-        
-        if self.blur is not None and self.blur > 0:
-            arr = ndi.gaussian_filter(arr, self.blur, mode="nearest")
+
+        arr = self._sample(pts[:, 0], pts[:, 1])
             
         # Fit a Gaussian to the line scan
         a, mu, sigma, c, normalized_residual, fit_x_min, fit_x_max = eaa.maths.fit_gaussian_1d(
