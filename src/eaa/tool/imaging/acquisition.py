@@ -400,11 +400,12 @@ class SimulatedAcquireImage(AcquireImage):
 
     @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_image(
-        self, 
-        loc_y: Annotated[float, "The y-coordinate of the top-left corner of the image to acquire."], 
-        loc_x: Annotated[float, "The x-coordinate of the top-left corner of the image to acquire."], 
-        size_y: Annotated[int, "The height of the image to acquire."], 
-        size_x: Annotated[int, "The width of the image to acquire."], 
+        self,
+        loc_y: Annotated[float, "The y-coordinate of the top-left corner of the image to acquire."],
+        loc_x: Annotated[float, "The x-coordinate of the top-left corner of the image to acquire."],
+        size_y: Annotated[int, "The height of the image to acquire."],
+        size_x: Annotated[int, "The width of the image to acquire."],
+        scan_step: Annotated[float, "The step size between sampled points in both y and x directions."] = 1,
     ) -> Annotated[str, "The path to the acquired image."]:
         """Acquire an image of a given size from the whole image at a given
         location.
@@ -423,21 +424,22 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
-        self.update_image_acquisition_call_history(loc_x, loc_y, size_x, size_y, psize_x=1, psize_y=1)
+        self.update_image_acquisition_call_history(loc_x, loc_y, size_x, size_y, psize_x=scan_step, psize_y=scan_step)
 
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
-        logger.info(f"Acquiring image of size {size} at location {loc}.")
-        y = np.arange(loc[0], loc[0] + size[0] - 0.5)
-        x = np.arange(loc[1], loc[1] + size[1] - 0.5)
+        logger.info(f"Acquiring image of size {size} at location {loc} with scan_step={scan_step}.")
+        y = np.arange(loc[0], loc[0] + size[0], scan_step)
+        x = np.arange(loc[1], loc[1] + size[1], scan_step)
         yy, xx = np.meshgrid(y + self.offset[0], x + self.offset[1], indexing="ij")
 
-        arr = self._sample(yy.ravel(), xx.ravel(), shape=size).reshape(size)
-        
+        arr_shape = (len(y), len(x))
+        arr = self._sample(yy.ravel(), xx.ravel(), shape=arr_shape).reshape(arr_shape)
+
         if self.show_image_in_real_time:
             self.update_real_time_view(arr)
-            
-        self.update_image_buffers(arr, psize=1)
+
+        self.update_image_buffers(arr, psize=scan_step)
             
         if self.return_message:
             filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{get_timestamp()}.png"
