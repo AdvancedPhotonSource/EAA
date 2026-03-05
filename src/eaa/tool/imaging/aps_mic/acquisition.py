@@ -317,10 +317,10 @@ class BlueSkyAcquireImage(AcquireImage):
                         image_to_plot = image_array
                         if self.plot_image_in_log_scale:
                             image_to_plot = np.log10(image_to_plot + 1)
-                        x_min = image_info["loc_x"] - image_info["size_x"] / 2
-                        x_max = image_info["loc_x"] + image_info["size_x"] / 2
-                        y_min = image_info["loc_y"] - image_info["size_y"] / 2
-                        y_max = image_info["loc_y"] + image_info["size_y"] / 2
+                        x_min = image_info["x_center"] - image_info["size_x"] / 2
+                        x_max = image_info["x_center"] + image_info["size_x"] / 2
+                        y_min = image_info["y_center"] - image_info["size_y"] / 2
+                        y_max = image_info["y_center"] + image_info["size_y"] / 2
                         fig, ax = plt.subplots(1, 1, figsize=(5, 5))
                         ax.imshow(
                             image_to_plot,

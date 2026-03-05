@@ -45,8 +45,8 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
                 base_url="https://api.openai.com/v1",
             ),
             image_acquisition_tool=acquisition_tool,
-            image_acquisition_tool_x_coordinate_args=("loc_x",),
-            image_acquisition_tool_y_coordinate_args=("loc_y",),
+            image_acquisition_tool_x_coordinate_args=("x_center",),
+            image_acquisition_tool_y_coordinate_args=("y_center",),
         )
         return task_manager, acquisition_tool, image
 
@@ -95,8 +95,8 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
         
         drift = (100, 0)
         current_kwargs = {
-            "loc_y": reference_loc[0] + drift[0],
-            "loc_x": reference_loc[1] + drift[1],
+            "y_center": reference_loc[0] + drift[0] + size[0] / 2,
+            "x_center": reference_loc[1] + drift[1] + size[1] / 2,
             "size_y": size[0],
             "size_x": size[1],
         }

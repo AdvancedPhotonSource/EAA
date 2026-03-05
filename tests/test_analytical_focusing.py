@@ -50,8 +50,8 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             parameter_ranges=[(0.0,), (10.0,)],
             line_scan_tool_x_coordinate_args=("start_x", "end_x"),
             line_scan_tool_y_coordinate_args=("start_y", "end_y"),
-            image_acquisition_tool_x_coordinate_args=("loc_x",),
-            image_acquisition_tool_y_coordinate_args=("loc_y",),
+            image_acquisition_tool_x_coordinate_args=("x_center",),
+            image_acquisition_tool_y_coordinate_args=("y_center",),
         )
         return task_manager, acquisition_tool
 
@@ -61,7 +61,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         n_initial_points = 2
         n_bo_iterations = 1
         task_manager.run(
-            initial_2d_scan_kwargs={"loc_y": 0, "loc_x": 0, "size_y": 350, "size_x": 350},
+            initial_2d_scan_kwargs={"y_center": 175, "x_center": 175, "size_y": 350, "size_x": 350},
             initial_line_scan_kwargs={
                 "start_x": 130,
                 "start_y": 170,
@@ -112,8 +112,8 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         task_manager.n_parameter_drift_points_before_prediction = 3
         task_manager.initial_image_acquisition_position = np.array([10.0, 20.0], dtype=float)
         task_manager.image_acquisition_kwargs = {
-            "loc_y": 0.0,
-            "loc_x": 0.0,
+            "y_center": 0.0,
+            "x_center": 0.0,
             "size_y": 128,
             "size_x": 128,
         }
@@ -137,8 +137,8 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         assert task_manager.should_apply_linear_drift_prediction()
         task_manager.apply_predicted_image_acquisition_position(np.array([4.0], dtype=float))
 
-        assert np.isclose(task_manager.image_acquisition_kwargs["loc_y"], 19.0)
-        assert np.isclose(task_manager.image_acquisition_kwargs["loc_x"], 19.0)
+        assert np.isclose(task_manager.image_acquisition_kwargs["y_center"], 19.0)
+        assert np.isclose(task_manager.image_acquisition_kwargs["x_center"], 19.0)
         assert np.isclose(task_manager.line_scan_kwargs["start_y"], 21.0)
         assert np.isclose(task_manager.line_scan_kwargs["end_y"], 23.0)
         assert np.isclose(task_manager.line_scan_kwargs["start_x"], 20.0)
@@ -157,7 +157,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
                 "end_y": 170.0,
                 "scan_step": 1.0,
             },
-            initial_2d_scan_kwargs={"loc_y": 0.0, "loc_x": 0.0, "size_y": 200, "size_x": 200},
+            initial_2d_scan_kwargs={"y_center": 0.0, "x_center": 0.0, "size_y": 200, "size_x": 200},
         )
         task_manager.update_linear_drift_models(
             parameters=np.array([0.0], dtype=float),
@@ -167,8 +167,8 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         def fake_run_2d_scan():
             kwargs = task_manager.image_acquisition_kwargs
             acquisition_tool.update_image_acquisition_call_history(
-                loc_x=float(kwargs["loc_x"]),
-                loc_y=float(kwargs["loc_y"]),
+                x_center=float(kwargs["x_center"]),
+                y_center=float(kwargs["y_center"]),
                 size_x=float(kwargs["size_x"]),
                 size_y=float(kwargs["size_y"]),
                 psize_x=1.0,
@@ -205,7 +205,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
                 "end_y": 170.0,
                 "scan_step": 1.0,
             },
-            initial_2d_scan_kwargs={"loc_y": 0.0, "loc_x": 0.0, "size_y": 200, "size_x": 200},
+            initial_2d_scan_kwargs={"y_center": 0.0, "x_center": 0.0, "size_y": 200, "size_x": 200},
         )
 
         monkeypatch.setattr(task_manager, "run_2d_scan", lambda: None)

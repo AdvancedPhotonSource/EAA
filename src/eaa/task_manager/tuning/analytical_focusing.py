@@ -781,8 +781,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         # Count in the difference of scan positions.
         scan_pos_diff = np.array([
-            float(self.acquisition_tool.image_acquisition_call_history[-1][f"loc_{dir}"])
-            - float(self.acquisition_tool.image_acquisition_call_history[-2][f"loc_{dir}"])
+            float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
+            - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
             for dir in ["y", "x"]
         ]).astype(float)
         offset_to_subtract = alignment_offset - scan_pos_diff

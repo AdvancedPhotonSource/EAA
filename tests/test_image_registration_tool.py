@@ -27,14 +27,14 @@ class TestImageRegistrationTool(tutils.BaseTester):
         registration_tool = ImageRegistration(acquisition_tool)
         
         acquisition_tool.acquire_image(
-            loc_y=120, loc_x=120, size_y=128, size_x=128
+            y_center=184, x_center=184, size_y=128, size_x=128
         )
         acquisition_tool.acquire_image(
-            loc_y=100, loc_x=100, size_y=128, size_x=128
+            y_center=164, x_center=164, size_y=128, size_x=128
         )
-        
+
         offset = registration_tool.get_offset_of_latest_image(register_with="previous")
-        
+
         if self.debug:
             print("Offset: ", offset)
             import matplotlib.pyplot as plt
@@ -44,10 +44,10 @@ class TestImageRegistrationTool(tutils.BaseTester):
             axs[1].imshow(acquisition_tool.image_km1)
             axs[1].set_title(f"Image {acquisition_tool.counter_acquire_image - 1}")
             plt.show()
-        
+
         assert np.allclose(offset, [-20, -20])
         return
-    
+
     def test_image_registration_diff_size(self):
         np.random.seed(123)
         
@@ -63,12 +63,12 @@ class TestImageRegistrationTool(tutils.BaseTester):
         registration_tool = ImageRegistration(acquisition_tool, image_coordinates_origin="top_left")
         
         acquisition_tool.acquire_image(
-            loc_y=120, loc_x=120, size_y=128, size_x=128
+            y_center=184, x_center=184, size_y=128, size_x=128
         )
         acquisition_tool.acquire_image(
-            loc_y=100, loc_x=100, size_y=150, size_x=150
+            y_center=175, x_center=175, size_y=150, size_x=150
         )
-        
+
         offset = registration_tool.get_offset_of_latest_image(register_with="previous")
         
         if self.debug:
@@ -102,10 +102,10 @@ class TestImageRegistrationTool(tutils.BaseTester):
         )
 
         acquisition_tool.acquire_image(
-            loc_y=120, loc_x=120, size_y=128, size_x=128
+            y_center=184, x_center=184, size_y=128, size_x=128
         )
         acquisition_tool.acquire_image(
-            loc_y=100, loc_x=100, size_y=128, size_x=128
+            y_center=164, x_center=164, size_y=128, size_x=128
         )
 
         offset = registration_tool.get_offset_of_latest_image(register_with="previous")

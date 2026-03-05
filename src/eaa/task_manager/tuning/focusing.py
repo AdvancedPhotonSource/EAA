@@ -219,8 +219,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     if len(message) == 0:
                         message = "Here is the new image. "
                     scan_pos_diff = [
-                        float(self.acquisition_tool.image_acquisition_call_history[-1][f"loc_{dir}"])
-                        - float(self.acquisition_tool.image_acquisition_call_history[-2][f"loc_{dir}"])
+                        float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
+                        - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
                         for dir in ["y", "x"]
                     ]
                     offset_to_subtract = [float(shift[i] - scan_pos_diff[i]) for i in [0, 1]]
@@ -276,8 +276,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             self.feature_tracking_task_manager.run_feature_tracking(
                 reference_image_path=target_image_path,
                 initial_position=(
-                    self.acquisition_tool.image_acquisition_call_history[-1]["loc_y"], 
-                    self.acquisition_tool.image_acquisition_call_history[-1]["loc_x"]
+                    self.acquisition_tool.image_acquisition_call_history[-1]["y_center"],
+                    self.acquisition_tool.image_acquisition_call_history[-1]["x_center"]
                 ),
                 initial_fov_size=(
                     self.acquisition_tool.image_acquisition_call_history[-1]["size_y"], 

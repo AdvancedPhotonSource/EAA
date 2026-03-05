@@ -35,20 +35,21 @@ class TestSimulatedParameterTuning(tutils.BaseTester):
             drift_factor=200,
         )
         
-        loc = (100, 100)
+        # center = top-left (100, 100) + half-size (64, 64)
+        center = (164, 164)
         size = (128, 128)
-        
+
         tuning_tool.set_parameters([1.0, 1.0, 0.0])
-        img = acquisition_tool.acquire_image(*loc, *size)
-        
+        img = acquisition_tool.acquire_image(*center, *size)
+
         if self.debug:
             import matplotlib.pyplot as plt
             plt.figure()
             plt.imshow(img)
             plt.show()
-        
+
         tuning_tool.set_parameters([1.0, 2.0, 2.5])
-        img = acquisition_tool.acquire_image(*loc, *size)
+        img = acquisition_tool.acquire_image(*center, *size)
         
         if self.debug:
             plt.figure()

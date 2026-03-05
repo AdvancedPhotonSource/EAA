@@ -52,17 +52,17 @@ class AcquireImage(BaseTool):
         return len(self.image_acquisition_call_history)
         
     def update_image_acquisition_call_history(
-        self, 
-        loc_x: float, 
-        loc_y: float, 
-        size_x: float, 
+        self,
+        x_center: float,
+        y_center: float,
+        size_x: float,
         size_y: float,
         psize_x: float,
         psize_y: float
     ):
         self.image_acquisition_call_history.append({
-            "loc_x": loc_x,
-            "loc_y": loc_y,
+            "x_center": x_center,
+            "y_center": y_center,
             "size_x": size_x,
             "size_y": size_y,
             "psize_x": psize_x,
@@ -401,21 +401,20 @@ class SimulatedAcquireImage(AcquireImage):
     @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_image(
         self,
-        loc_y: Annotated[float, "The y-coordinate of the top-left corner of the image to acquire."],
-        loc_x: Annotated[float, "The x-coordinate of the top-left corner of the image to acquire."],
+        y_center: Annotated[float, "The y-coordinate of the center of the image to acquire."],
+        x_center: Annotated[float, "The x-coordinate of the center of the image to acquire."],
         size_y: Annotated[int, "The height of the image to acquire."],
         size_x: Annotated[int, "The width of the image to acquire."],
         scan_step: Annotated[float, "The step size between sampled points in both y and x directions."] = 1,
     ) -> Annotated[str, "The path to the acquired image."]:
-        """Acquire an image of a given size from the whole image at a given
-        location.
+        """Acquire an image of a given size from the whole image centered at a
+        given location.
 
         Parameters
         ----------
-        loc_y, loc_x : float
-            The top-left corner location of the image to acquire. The location
-            can be floating point number, in which case the image will be
-            interpolated.
+        y_center, x_center : float
+            The center of the image to acquire. The location can be a floating
+            point number, in which case the image will be interpolated.
         size_y, size_x : int
             The size of the image to acquire.
 
@@ -424,11 +423,13 @@ class SimulatedAcquireImage(AcquireImage):
         str
             The path of the acquired image saved in hard drive.
         """
-        self.update_image_acquisition_call_history(loc_x, loc_y, size_x, size_y, psize_x=scan_step, psize_y=scan_step)
+        loc_y = y_center - size_y / 2
+        loc_x = x_center - size_x / 2
+        self.update_image_acquisition_call_history(x_center, y_center, size_x, size_y, psize_x=scan_step, psize_y=scan_step)
 
         loc = [loc_y, loc_x]
         size = [size_y, size_x]
-        logger.info(f"Acquiring image of size {size} at location {loc} with scan_step={scan_step}.")
+        logger.info(f"Acquiring image of size {size} centered at ({y_center}, {x_center}) with scan_step={scan_step}.")
         y = np.arange(loc[0], loc[0] + size[0], scan_step)
         x = np.arange(loc[1], loc[1] + size[1], scan_step)
         yy, xx = np.meshgrid(y + self.offset[0], x + self.offset[1], indexing="ij")
@@ -442,7 +443,7 @@ class SimulatedAcquireImage(AcquireImage):
         self.update_image_buffers(arr, psize=scan_step)
             
         if self.return_message:
-            filename = f"image_{loc_y}_{loc_x}_{size_y}_{size_x}_{get_timestamp()}.png"
+            filename = f"image_{y_center}_{x_center}_{size_y}_{size_x}_{get_timestamp()}.png"
             fig = ip.plot_2d_image(
                 arr if not self.plot_image_in_log_scale else np.log10(arr + 1),
                 add_axis_ticks=self.add_axis_ticks,
@@ -548,10 +549,10 @@ class SimulatedAcquireImage(AcquireImage):
             image_to_plot = self.image_k
             if self.plot_image_in_log_scale:
                 image_to_plot = np.log10(image_to_plot + 1)
-            image_x_min = image_info["loc_x"]
-            image_x_max = image_info["loc_x"] + image_info["size_x"]
-            image_y_min = image_info["loc_y"]
-            image_y_max = image_info["loc_y"] + image_info["size_y"]
+            image_x_min = image_info["x_center"] - image_info["size_x"] / 2
+            image_x_max = image_info["x_center"] + image_info["size_x"] / 2
+            image_y_min = image_info["y_center"] - image_info["size_y"] / 2
+            image_y_max = image_info["y_center"] + image_info["size_y"] / 2
             image_ax.imshow(
                 image_to_plot,
                 cmap="inferno",
@@ -571,10 +572,10 @@ class SimulatedAcquireImage(AcquireImage):
             first_image_to_plot = self.image_0
             if self.plot_image_in_log_scale:
                 first_image_to_plot = np.log10(first_image_to_plot + 1)
-            first_image_x_min = first_image_info["loc_x"]
-            first_image_x_max = first_image_info["loc_x"] + first_image_info["size_x"]
-            first_image_y_min = first_image_info["loc_y"]
-            first_image_y_max = first_image_info["loc_y"] + first_image_info["size_y"]
+            first_image_x_min = first_image_info["x_center"] - first_image_info["size_x"] / 2
+            first_image_x_max = first_image_info["x_center"] + first_image_info["size_x"] / 2
+            first_image_y_min = first_image_info["y_center"] - first_image_info["size_y"] / 2
+            first_image_y_max = first_image_info["y_center"] + first_image_info["size_y"] / 2
             first_image_ax.imshow(
                 first_image_to_plot,
                 cmap="inferno",

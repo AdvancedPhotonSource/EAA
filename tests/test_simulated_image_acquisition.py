@@ -24,10 +24,11 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         )
         
         tool = SimulatedAcquireImage(whole_image, return_message=False)
-        
-        loc = (100, 100)
+
+        # center = top-left (100, 100) + half-size (128, 128)
+        center = (228, 228)
         size = (256, 256)
-        img = tool.acquire_image(*loc, *size)
+        img = tool.acquire_image(*center, *size)
         return img
 
     # Deliberately skipping result comparison because of non-deterministicness
@@ -39,18 +40,18 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
                 'cameraman.tiff'
             )
         )
-        
+
         tool = SimulatedAcquireImage(
-            whole_image, 
+            whole_image,
             poisson_noise_scale=100,
             scan_jitter=1.0,
             gaussian_psf_sigma=1.0,
             return_message=False
         )
-        
-        loc = (100, 100)
+
+        center = (228, 228)
         size = (256, 256)
-        img = tool.acquire_image(*loc, *size)
+        img = tool.acquire_image(*center, *size)
         if self.debug:
             import matplotlib.pyplot as plt
             plt.imshow(img)
