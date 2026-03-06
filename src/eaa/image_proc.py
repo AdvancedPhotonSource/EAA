@@ -206,6 +206,7 @@ def error_minimization_registration(
     ref: np.ndarray,
     y_valid_fraction: float = 0.8,
     x_valid_fraction: float = 0.8,
+    subpixel: bool = True,
 ) -> np.ndarray:
     """Image registration by exhaustive integer-shift MSE search with quadratic
     subpixel refinement.
@@ -231,6 +232,8 @@ def error_minimization_registration(
         Values close to 1 leave little margin and therefore a small search range.
     x_valid_fraction : float
         Same as *y_valid_fraction* along the x (column) axis.
+    subpixel : bool
+        If True, perform subpixel refinement using a 2D quadratic fit.
 
     Returns
     -------
@@ -271,6 +274,9 @@ def error_minimization_registration(
     # Fit quadratic in a local neighbourhood around the integer minimum.
     # Neighbourhood half-width: 10% of image size / 2, at least 1 (→ 3×3 minimum).
     min_i, min_j = np.unravel_index(np.argmin(error_map), error_map.shape)
+    if not subpixel:
+        return -np.array([float(dy_vals[min_i]), float(dx_vals[min_j])])
+
     half_y = max(1, int(round(0.05 * h)))
     half_x = max(1, int(round(0.05 * w)))
     i_lo = max(0, min_i - half_y)

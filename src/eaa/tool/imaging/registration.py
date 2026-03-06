@@ -378,6 +378,7 @@ class ImageRegistration(BaseTool):
             - `registration_method="error_minimization"`:
               - `y_valid_fraction` (float, default: `0.8`)
               - `x_valid_fraction` (float, default: `0.8`)
+              - `subpixel` (bool, default: `True`)
 
             - `registration_method="sift"` or `"llm"`:
               - No algorithm kwargs are currently supported; pass `None` or `{}`.
@@ -425,7 +426,7 @@ class ImageRegistration(BaseTool):
                 **mi_kwargs,
             )
         elif method == "error_minimization":
-            em_kwargs = {"y_valid_fraction": 0.8, "x_valid_fraction": 0.8}
+            em_kwargs = {"y_valid_fraction": 0.8, "x_valid_fraction": 0.8, "subpixel": True}
             em_kwargs.update(algorithm_kwargs)
             offset = error_minimization_registration(image_t, image_r, **em_kwargs)
         elif method == "sift":
