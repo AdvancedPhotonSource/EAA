@@ -18,6 +18,7 @@ from sciagent.tool.base import BaseTool
 from sciagent.message_proc import print_message
 
 from eaa.tool.imaging.acquisition import AcquireImage
+from eaa.tool.imaging.line_scan_predictor import LineScanPredictor
 from eaa.tool.imaging.param_tuning import SetParameters
 from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
@@ -62,6 +63,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         run_offset_calibration: bool = True,
         use_linear_drift_prediction: bool = False,
         n_parameter_drift_points_before_prediction: int = 3,
+        line_scan_predictor_tool: Optional[LineScanPredictor] = None,
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -138,6 +140,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         n_parameter_drift_points_before_prediction : int, optional
             Number of parameter-drift samples to collect before using linear
             drift prediction for image acquisitions.
+        line_scan_predictor_tool : LineScanPredictor, optional
+            If provided, this tool is used instead of image registration to
+            update scan positions after each 2D acquisition. It predicts the
+            optimal line scan center from the reference image, reference line
+            scan position, and current image, then shifts both line scan and
+            image acquisition kwargs by the predicted drift so they stay in
+            sync. Requires ``run_offset_calibration=True`` so that a 2D image
+            is acquired before the prediction is made.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -177,6 +187,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.run_line_scan_checker = run_line_scan_checker
         self.run_offset_calibration = run_offset_calibration
         self.use_linear_drift_prediction = use_linear_drift_prediction
+        if line_scan_predictor_tool is not None and not run_offset_calibration:
+            raise ValueError(
+                "`line_scan_predictor_tool` requires `run_offset_calibration=True` "
+                "because a 2D image must be acquired before the predictor can run."
+            )
+        
+        self.line_scan_predictor_tool = line_scan_predictor_tool
         self.n_parameter_drift_points_before_prediction = (
             n_parameter_drift_points_before_prediction
         )
@@ -868,14 +885,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 if self.should_apply_linear_drift_prediction():
                     self.apply_predicted_image_acquisition_position(x_current)
                 self.run_2d_scan()
-                line_scan_pos_offset, alignment_offset = self.find_offset()
-                if np.any(np.isnan(line_scan_pos_offset)):
-                    x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
-                    continue
-                self.apply_offset_to_line_scan_kwargs(line_scan_pos_offset)
-                self.apply_offset_to_image_acquisition_kwargs(alignment_offset)
-                self.update_linear_drift_models(x_current)
-                self.record_linear_drift_model_visualizations()
+                if self.line_scan_predictor_tool is not None:
+                    self.apply_line_scan_predictor_offset()
+                else:
+                    line_scan_pos_offset, alignment_offset = self.find_offset()
+                    if np.any(np.isnan(line_scan_pos_offset)):
+                        x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
+                        continue
+                    self.apply_offset_to_line_scan_kwargs(line_scan_pos_offset)
+                    self.apply_offset_to_image_acquisition_kwargs(alignment_offset)
+                    self.update_linear_drift_models(x_current)
+                    self.record_linear_drift_model_visualizations()
             try:
                 fwhm = self.run_line_scan()
                 if np.isnan(fwhm):
@@ -885,6 +905,28 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 continue
             self.update_optimization_model(fwhm)
             return
+
+    def apply_line_scan_predictor_offset(self) -> None:
+        """Update scan positions using the line scan predictor.
+
+        Calls :meth:`LineScanPredictor.predict_line_scan_position` to obtain
+        the predicted line scan center in the current image, computes the
+        drift relative to the current line scan center, then shifts both
+        ``line_scan_kwargs`` and ``image_acquisition_kwargs`` by that drift so
+        that the two sets of coordinates stay in sync.
+        """
+        current_center = self.extract_scan_position(self.line_scan_kwargs)
+        result = json.loads(self.line_scan_predictor_tool.predict_line_scan_position())
+        predicted_center = np.array([result["center_y"], result["center_x"]], dtype=float)
+        drift = predicted_center - current_center
+        self.record_system_message(
+            f"Line scan predictor: current center={current_center.tolist()}, "
+            f"predicted center={predicted_center.tolist()}, "
+            f"drift={drift.tolist()}"
+        )
+        # apply_offset_to_*_kwargs(o) does position -= o; passing -drift gives position += drift.
+        self.apply_offset_to_line_scan_kwargs(-drift)
+        self.apply_offset_to_image_acquisition_kwargs(-drift)
 
     def apply_user_correction_offset(self) -> bool:
         message = (
