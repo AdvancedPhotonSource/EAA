@@ -519,7 +519,7 @@ class SimulatedAcquireImage(AcquireImage):
             fwhm = np.nan
         else:
             val_gauss = eaa.maths.gaussian_1d(ds, a, mu, sigma, c)
-            fwhm = 2.35 * sigma
+            fwhm = 2.35 * np.abs(sigma)
         
         show_scan_line = self.image_k is not None and len(self.image_acquisition_call_history) > 0
         show_first_scan_line = (
