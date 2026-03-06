@@ -201,6 +201,118 @@ def phase_cross_correlation(
     return shift
 
 
+def error_minimization_registration(
+    moving: np.ndarray,
+    ref: np.ndarray,
+    y_valid_fraction: float = 0.8,
+    x_valid_fraction: float = 0.8,
+) -> np.ndarray:
+    """Image registration by exhaustive integer-shift MSE search with quadratic
+    subpixel refinement.
+
+    A central window of size ``(y_valid_fraction * h, x_valid_fraction * w)``
+    is fixed in the reference image.  The moving image is sampled at the same
+    window position for every integer shift (dy, dx) within the margins
+    ``[-max_dy, max_dy] × [-max_dx, max_dx]``, where the margins are the pixel
+    gaps between the valid window and the image boundary.  No wrap-around pixels
+    are ever included: the valid window is identical for all shifts.
+
+    The resulting 2-D MSE map is fitted with a 2-D quadratic polynomial.  The
+    analytic minimum of that polynomial is returned as the sub-pixel shift.
+
+    Parameters
+    ----------
+    moving : np.ndarray
+        2-D image to register.
+    ref : np.ndarray
+        2-D reference image with the same shape as *moving*.
+    y_valid_fraction : float
+        Fraction of the image height occupied by the comparison window.
+        Values close to 1 leave little margin and therefore a small search range.
+    x_valid_fraction : float
+        Same as *y_valid_fraction* along the x (column) axis.
+
+    Returns
+    -------
+    np.ndarray
+        Estimated (dy, dx) shift to apply to *moving* so that it aligns with
+        *ref*.
+    """
+    assert moving.shape == ref.shape, (
+        "The shapes of the moving and reference images must be the same."
+    )
+    h, w = ref.shape
+
+    vh = int(round(y_valid_fraction * h))
+    vw = int(round(x_valid_fraction * w))
+
+    # Centre the valid window; margin on each side = max search range
+    r0 = (h - vh) // 2
+    c0 = (w - vw) // 2
+    r1, c1 = r0 + vh, c0 + vw
+    max_dy, max_dx = r0, c0
+
+    if max_dy == 0 and max_dx == 0:
+        return np.zeros(2)
+
+    dy_vals = np.arange(-max_dy, max_dy + 1)
+    dx_vals = np.arange(-max_dx, max_dx + 1)
+
+    ref_crop = ref[r0:r1, c0:c1].astype(float)
+    moving_f = moving.astype(float)
+
+    # Exhaustive integer-shift MSE map
+    error_map = np.empty((len(dy_vals), len(dx_vals)))
+    for i, dy in enumerate(dy_vals):
+        for j, dx in enumerate(dx_vals):
+            diff = moving_f[r0 + dy : r1 + dy, c0 + dx : c1 + dx] - ref_crop
+            error_map[i, j] = np.mean(diff * diff)
+
+    # Fit quadratic in a local neighbourhood around the integer minimum.
+    # Neighbourhood half-width: 10% of image size / 2, at least 1 (→ 3×3 minimum).
+    min_i, min_j = np.unravel_index(np.argmin(error_map), error_map.shape)
+    half_y = max(1, int(round(0.05 * h)))
+    half_x = max(1, int(round(0.05 * w)))
+    i_lo = max(0, min_i - half_y)
+    i_hi = min(len(dy_vals) - 1, min_i + half_y)
+    j_lo = max(0, min_j - half_x)
+    j_hi = min(len(dx_vals) - 1, min_j + half_x)
+    local_dy = dy_vals[i_lo : i_hi + 1]
+    local_dx = dx_vals[j_lo : j_hi + 1]
+    local_err = error_map[i_lo : i_hi + 1, j_lo : j_hi + 1]
+
+    # The 2-D quadratic has 6 parameters; require ≥3 points in each dimension so
+    # the design matrix is well-determined and the Hessian is not rank-deficient.
+    if len(local_dy) >= 3 and len(local_dx) >= 3:
+        # Fit: f(dy, dx) = a*dy² + b*dx² + c*dy*dx + d*dy + e*dx + g
+        dy_mesh, dx_mesh = np.meshgrid(local_dy, local_dx, indexing="ij")
+        dy_f = dy_mesh.ravel()
+        dx_f = dx_mesh.ravel()
+        design = np.column_stack(
+            [dy_f**2, dx_f**2, dy_f * dx_f, dy_f, dx_f, np.ones(len(dy_f))]
+        )
+        coeffs, _, _, _ = np.linalg.lstsq(design, local_err.ravel(), rcond=None)
+        a, b, c, d, e, _ = coeffs
+
+        # Analytic minimum: solve Hessian @ [dy_min, dx_min]ᵀ = -gradient
+        # Hessian = [[2a, c], [c, 2b]]; gradient at origin = [d, e]
+        hess = np.array([[2.0 * a, c], [c, 2.0 * b]])
+        try:
+            if np.all(np.linalg.eigvalsh(hess) > 0):
+                shift = np.linalg.solve(hess, np.array([-d, -e]))
+            else:
+                raise np.linalg.LinAlgError("Hessian not positive definite")
+        except np.linalg.LinAlgError:
+            shift = np.array([float(dy_vals[min_i]), float(dx_vals[min_j])])
+    else:
+        shift = np.array([float(dy_vals[min_i]), float(dx_vals[min_j])])
+
+    # Negate: the MSE is minimised at the offset where moving[r0+dy:] matches
+    # ref[r0:], but the caller wants the shift to apply to moving so that
+    # roll(moving, shift) ≈ ref, which is the opposite direction.
+    return -shift
+
+
 def normalize_image_01(image: np.ndarray) -> np.ndarray:
     """Normalize image intensities to [0, 1]."""
     image = np.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)

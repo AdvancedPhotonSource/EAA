@@ -15,7 +15,11 @@ from sciagent.api.llm_config import LLMConfig
 from sciagent.api.memory import MemoryManagerConfig
 
 from eaa.tool.imaging.acquisition import AcquireImage
-from eaa.image_proc import phase_cross_correlation, translation_nmi_registration
+from eaa.image_proc import (
+    error_minimization_registration,
+    phase_cross_correlation,
+    translation_nmi_registration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ class ImageRegistration(BaseTool):
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
-        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "phase_correlation",
+        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"] = "phase_correlation",
         log_scale: bool = False,
         require_approval: bool = False,
         *args,
@@ -66,10 +70,12 @@ class ImageRegistration(BaseTool):
             When this argument is set to "center", the test image is padded/cropped
             centrally. When it is set to "top_left", the test image is on the bottom
             and right sides.
-        registration_method : Literal["phase_correlation", "sift", "mutual_information"], optional
+        registration_method : Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"], optional
             The method used to estimate translational offsets. "phase_correlation"
-            uses phase correlation, "sift" uses feature matching, and
-            "mutual_information" uses pyramid-based normalized mutual information.
+            uses phase correlation, "sift" uses feature matching,
+            "mutual_information" uses pyramid-based normalized mutual information,
+            and "error_minimization" uses exhaustive integer-shift MSE search with
+            local quadratic subpixel refinement.
         log_scale : bool, optional
             If True, images are transformed as `log10(x + 1)` before registration.
         """
@@ -329,12 +335,12 @@ class ImageRegistration(BaseTool):
         ], dtype=float)
 
     def register_images(
-        self, 
-        image_t: np.ndarray, 
-        image_r: np.ndarray, 
-        psize_t: float, 
+        self,
+        image_t: np.ndarray,
+        image_r: np.ndarray,
+        psize_t: float,
         psize_r: float,
-        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "llm"]] = None,
+        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"]] = None,
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
     ) -> np.ndarray | Tuple[np.ndarray, float] | str:
         """
@@ -369,6 +375,10 @@ class ImageRegistration(BaseTool):
               - `max_iter` (int, default: `60`)
               - `tol` (float, default: `1e-4`)
 
+            - `registration_method="error_minimization"`:
+              - `y_valid_fraction` (float, default: `0.8`)
+              - `x_valid_fraction` (float, default: `0.8`)
+
             - `registration_method="sift"` or `"llm"`:
               - No algorithm kwargs are currently supported; pass `None` or `{}`.
 
@@ -388,11 +398,11 @@ class ImageRegistration(BaseTool):
             # Resize the target image to have the same pixel size as the reference image
             image_t = ndi.zoom(image_t, psize_t / psize_r)
         
-        if method in {"phase_correlation", "mutual_information"}:
+        if method in {"phase_correlation", "mutual_information", "error_minimization"}:
             image_t = self.reconcile_image_shape(image_t, image_r.shape)
 
         if method == "phase_correlation":
-            phase_kwargs = {"use_hanning_window": True}
+            phase_kwargs = {"filtering_method": "hanning"}
             phase_kwargs.update(algorithm_kwargs)
             offset = phase_cross_correlation(
                 image_t,
@@ -414,6 +424,10 @@ class ImageRegistration(BaseTool):
                 ref=image_r,
                 **mi_kwargs,
             )
+        elif method == "error_minimization":
+            em_kwargs = {"y_valid_fraction": 0.8, "x_valid_fraction": 0.8}
+            em_kwargs.update(algorithm_kwargs)
+            offset = error_minimization_registration(image_t, image_r, **em_kwargs)
         elif method == "sift":
             if len(algorithm_kwargs) > 0:
                 raise ValueError(
