@@ -94,8 +94,8 @@ class LineScanPredictor(BaseTool):
         ref_line_info = acq.line_scan_call_history[0]
 
         # Compute the center of the reference line scan in physical coordinates.
-        ref_center_x_phys = (ref_line_info["start_x"] + ref_line_info["end_x"]) / 2.0
-        ref_center_y_phys = (ref_line_info["start_y"] + ref_line_info["end_y"]) / 2.0
+        ref_center_x_phys = ref_line_info["x_center"]
+        ref_center_y_phys = ref_line_info["y_center"]
 
         # Convert to fractions of the reference image dimensions.
         ref_center_x_frac = (

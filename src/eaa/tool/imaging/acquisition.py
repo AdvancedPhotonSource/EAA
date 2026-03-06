@@ -71,18 +71,18 @@ class AcquireImage(BaseTool):
         
     def update_line_scan_call_history(
         self,
-        start_x: float,
-        start_y: float,
-        end_x: float,
-        end_y: float,
-        step: float
+        step: float,
+        x_center: float,
+        y_center: float,
+        length: float,
+        angle: float,
     ):
         self.line_scan_call_history.append({
-            "start_x": start_x,
-            "start_y": start_y,
-            "end_x": end_x,
-            "end_y": end_y,
-            "step": step
+            "step": step,
+            "x_center": x_center,
+            "y_center": y_center,
+            "length": length,
+            "angle": angle,
         })
     
 
@@ -463,11 +463,11 @@ class SimulatedAcquireImage(AcquireImage):
     @tool(name="acquire_line_scan", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_line_scan(
         self,
-        start_x: Annotated[float, "The x-coordinate of the starting point of the line scan."],
-        start_y: Annotated[float, "The y-coordinate of the starting point of the line scan."],
-        end_x: Annotated[float, "The x-coordinate of the ending point of the line scan."],
-        end_y: Annotated[float, "The y-coordinate of the ending point of the line scan."],
+        x_center: Annotated[float, "The x-coordinate of the center of the line scan."],
+        y_center: Annotated[float, "The y-coordinate of the center of the line scan."],
+        length: Annotated[float, "The length of the line scan."],
         scan_step: float,
+        angle: Annotated[float, "The angle of the line scan in degrees. 0 degrees means horizontal (along the x-axis). Positive angles rotate counter-clockwise."] = 0.0,
     ) -> Annotated[str, "The path to the plot of the line scan."]:
         """Scan along a line in the sample. This function
         generates a plot of the line scan, and a Gaussian fit
@@ -475,20 +475,32 @@ class SimulatedAcquireImage(AcquireImage):
 
         Parameters
         ----------
-        start_x, start_y : float
-            The starting point of the line scan.
-        end_x, end_y : float
-            The ending point of the line scan.
+        x_center, y_center : float
+            The center of the line scan.
+        length : float
+            The length of the line scan.
         scan_step : float
             The step size of the line scan.
-        
+        angle : float
+            The angle of the line scan in degrees. 0 degrees means horizontal
+            (along the x-axis). Positive angles rotate counter-clockwise.
+
         Returns
         -------
         str
             The path of the plot of the line scan saved in hard drive.
         """
-        self.update_line_scan_call_history(start_x, start_y, end_x, end_y, scan_step)
-        
+        angle_rad = np.radians(angle)
+        half = length / 2
+        start_x = x_center - half * np.cos(angle_rad)
+        end_x = x_center + half * np.cos(angle_rad)
+        start_y = y_center - half * np.sin(angle_rad)
+        end_y = y_center + half * np.sin(angle_rad)
+        self.update_line_scan_call_history(
+            step=scan_step, x_center=x_center, y_center=y_center,
+            length=length, angle=angle,
+        )
+
         pt_start = np.array([start_y, start_x])
         pt_end = np.array([end_y, end_x])
         d_tot = np.linalg.norm(pt_end - pt_start)
@@ -582,9 +594,17 @@ class SimulatedAcquireImage(AcquireImage):
                 origin="upper",
                 extent=[first_image_x_min, first_image_x_max, first_image_y_max, first_image_y_min],
             )
+            _half = first_line_info["length"] / 2
+            _angle_rad = np.radians(first_line_info["angle"])
             first_image_ax.plot(
-                [first_line_info["start_x"], first_line_info["end_x"]],
-                [first_line_info["start_y"], first_line_info["end_y"]],
+                [
+                    first_line_info["x_center"] - _half * np.cos(_angle_rad),
+                    first_line_info["x_center"] + _half * np.cos(_angle_rad),
+                ],
+                [
+                    first_line_info["y_center"] - _half * np.sin(_angle_rad),
+                    first_line_info["y_center"] + _half * np.sin(_angle_rad),
+                ],
                 color="blue",
                 linewidth=2,
             )
@@ -600,7 +620,7 @@ class SimulatedAcquireImage(AcquireImage):
             os.makedirs(".tmp")
         fname = os.path.join(
             ".tmp",
-            f"line_scan_{start_y}_{end_y}_{start_x}_{end_x}_{scan_step}_{get_timestamp()}.png"
+            f"line_scan_{y_center}_{x_center}_{length}_{angle}_{scan_step}_{get_timestamp()}.png"
         )
         fig.savefig(fname)
         plt.close(fig)
@@ -643,5 +663,13 @@ class SimulatedAcquireImage(AcquireImage):
             The path of the plot of the line scan saved in hard drive.
         """
         start_x, start_y, end_x, end_y = self.line_scan_candidates[choice]
-        self.update_line_scan_call_history(start_x, start_y, end_x, end_y, scan_step)
-        return self.acquire_line_scan(start_x, start_y, end_x, end_y, scan_step=scan_step)
+        dx = end_x - start_x
+        dy = end_y - start_y
+        x_center = (start_x + end_x) / 2
+        y_center = (start_y + end_y) / 2
+        length = np.sqrt(dx**2 + dy**2)
+        angle = np.degrees(np.arctan2(dy, dx))
+        return self.acquire_line_scan(
+            x_center=x_center, y_center=y_center, length=length,
+            scan_step=scan_step, angle=angle,
+        )

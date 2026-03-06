@@ -71,10 +71,9 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         tool = SimulatedAcquireImage(whole_image, return_message=False)
         
         fname = tool.acquire_line_scan(
-            start_y=140,
-            end_y=140,
-            start_x=408,
-            end_x=415,
+            x_center=411.5,
+            y_center=140,
+            length=7,
             scan_step=0.2,
         )
         return fname

@@ -224,12 +224,12 @@ class BlueSkyAcquireImage(AcquireImage):
     @tool(name="acquire_line_scan", return_type=ToolReturnType.IMAGE_PATH)
     def acquire_line_scan(
         self,
-        width: Annotated[float, "The width of the scan area in microns"] = 0,
+        length: Annotated[float, "The length of the scan area in microns"] = 0,
         x_center: Annotated[float, "The center of the scan area in the x direction in microns"] = None,
         y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
         stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
     )->Annotated[str, "The path to the plot of the line scan."]:
-        """Acquire a horizontal line scan of a given width at a given center position.
+        """Acquire a horizontal line scan of a given length at a given center position.
         This function returns a plot of the acquired data, and a Gaussian fit of it.
         The FWHM of the Gaussian fit is annotated on the plot.
         
@@ -253,25 +253,25 @@ class BlueSkyAcquireImage(AcquireImage):
         """
         self.set_motor_y(y_center)
         
-        start_x = x_center - width/2
-        end_x = x_center + width/2
+        start_x = x_center - length/2
+        end_x = x_center + length/2
         self.update_line_scan_call_history(
-            start_x=start_x,
-            end_x=end_x,
             step=stepsize_x,
-            start_y=y_center,
-            end_y=y_center,
+            x_center=x_center,
+            y_center=y_center,
+            length=length,
+            angle=0.0,
         )
 
         try:
             validate_position_in_range(start_x, self.allowable_x_range, "x")
             validate_position_in_range(end_x, self.allowable_x_range, "x")
-            logger.info(f"Acquiring line scan of width {width} um at center location of {x_center} um.")
+            logger.info(f"Acquiring line scan of width {length} um at center location of {x_center} um.")
 
             if self.RE is not None:
                 self.RE(self.scan1d_plan(
                     samplename=self.sample_name,
-                    width=width,
+                    width=length,
                     x_center=x_center,
                     stepsize_x=stepsize_x,
                     dwell_ms=self.dwell_line_scan*1000,
@@ -328,9 +328,17 @@ class BlueSkyAcquireImage(AcquireImage):
                             origin="upper",
                             extent=[x_min, x_max, y_max, y_min],
                         )
+                        _half = line_info["length"] / 2
+                        _angle_rad = np.radians(line_info["angle"])
                         ax.plot(
-                            [line_info["start_x"], line_info["end_x"]],
-                            [line_info["start_y"], line_info["end_y"]],
+                            [
+                                line_info["x_center"] - _half * np.cos(_angle_rad),
+                                line_info["x_center"] + _half * np.cos(_angle_rad),
+                            ],
+                            [
+                                line_info["y_center"] - _half * np.sin(_angle_rad),
+                                line_info["y_center"] + _half * np.sin(_angle_rad),
+                            ],
                             color=line_color,
                             linewidth=2,
                         )
@@ -362,10 +370,7 @@ class BlueSkyAcquireImage(AcquireImage):
                         and len(self.line_scan_call_history) > 1
                     ):
                         first_line_info = self.line_scan_call_history[0]
-                        if (
-                            first_line_info["start_y"] is not None
-                            and first_line_info["end_y"] is not None
-                        ):
+                        if first_line_info["y_center"] is not None:
                             overlays.append(
                                 render_scan_overlay(
                                     image_array=self.image_0,

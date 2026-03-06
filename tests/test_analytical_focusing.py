@@ -48,8 +48,8 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             acquisition_tool=acquisition_tool,
             initial_parameters={"z": 10.0},
             parameter_ranges=[(0.0,), (10.0,)],
-            line_scan_tool_x_coordinate_args=("start_x", "end_x"),
-            line_scan_tool_y_coordinate_args=("start_y", "end_y"),
+            line_scan_tool_x_coordinate_args=("x_center",),
+            line_scan_tool_y_coordinate_args=("y_center",),
             image_acquisition_tool_x_coordinate_args=("x_center",),
             image_acquisition_tool_y_coordinate_args=("y_center",),
         )
@@ -63,10 +63,9 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         task_manager.run(
             initial_2d_scan_kwargs={"y_center": 175, "x_center": 175, "size_y": 350, "size_x": 350},
             initial_line_scan_kwargs={
-                "start_x": 130,
-                "start_y": 170,
-                "end_x": 190,
-                "end_y": 170,
+                "x_center": 160,
+                "y_center": 170,
+                "length": 60,
                 "scan_step": 1.0,
             },
             n_initial_points=n_initial_points,
@@ -89,10 +88,9 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         task_manager.run(
             initial_2d_scan_kwargs=None,
             initial_line_scan_kwargs={
-                "start_x": 130,
-                "start_y": 170,
-                "end_x": 190,
-                "end_y": 170,
+                "x_center": 160,
+                "y_center": 170,
+                "length": 60,
                 "scan_step": 1.0,
             },
             n_initial_points=n_initial_points,
@@ -118,10 +116,9 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             "size_x": 128,
         }
         task_manager.line_scan_kwargs = {
-            "start_x": 1.0,
-            "start_y": 2.0,
-            "end_x": 3.0,
-            "end_y": 4.0,
+            "x_center": 1.0,
+            "y_center": 2.0,
+            "length": 10.0,
             "scan_step": 1.0,
         }
 
@@ -139,10 +136,8 @@ class TestAnalyticalFocusing(tutils.BaseTester):
 
         assert np.isclose(task_manager.image_acquisition_kwargs["y_center"], 19.0)
         assert np.isclose(task_manager.image_acquisition_kwargs["x_center"], 19.0)
-        assert np.isclose(task_manager.line_scan_kwargs["start_y"], 21.0)
-        assert np.isclose(task_manager.line_scan_kwargs["end_y"], 23.0)
-        assert np.isclose(task_manager.line_scan_kwargs["start_x"], 20.0)
-        assert np.isclose(task_manager.line_scan_kwargs["end_x"], 22.0)
+        assert np.isclose(task_manager.line_scan_kwargs["y_center"], 21.0)
+        assert np.isclose(task_manager.line_scan_kwargs["x_center"], 20.0)
 
     def test_run_iteration_applies_registration_offset_and_updates_model(self, monkeypatch):
         task_manager, acquisition_tool = self._build_task_manager()
@@ -151,10 +146,9 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         task_manager.initial_image_acquisition_position = np.array([0.0, 0.0], dtype=float)
         task_manager.initialize_kwargs_buffers(
             initial_line_scan_kwargs={
-                "start_x": 130.0,
-                "start_y": 170.0,
-                "end_x": 190.0,
-                "end_y": 170.0,
+                "x_center": 160.0,
+                "y_center": 170.0,
+                "length": 60.0,
                 "scan_step": 1.0,
             },
             initial_2d_scan_kwargs={"y_center": 0.0, "x_center": 0.0, "size_y": 200, "size_x": 200},
@@ -199,10 +193,9 @@ class TestAnalyticalFocusing(tutils.BaseTester):
 
         task_manager.initialize_kwargs_buffers(
             initial_line_scan_kwargs={
-                "start_x": 130.0,
-                "start_y": 170.0,
-                "end_x": 190.0,
-                "end_y": 170.0,
+                "x_center": 160.0,
+                "y_center": 170.0,
+                "length": 60.0,
                 "scan_step": 1.0,
             },
             initial_2d_scan_kwargs={"y_center": 0.0, "x_center": 0.0, "size_y": 200, "size_x": 200},
