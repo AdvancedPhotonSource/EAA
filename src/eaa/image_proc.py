@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
 import scipy.ndimage as ndi
 from scipy import optimize
+from scipy.special import erf
 from skimage.metrics import normalized_mutual_information
 from skimage.registration import phase_cross_correlation as skimage_phase_cross_correlation
 from sciagent.message_proc import generate_openai_message
@@ -117,10 +118,30 @@ def stitch_images(
     return buffer
 
 
+def _gaussian_rect_window(shape: tuple[int, int], decay_fraction: float = 0.2) -> np.ndarray:
+    """2D Gaussian-softened rectangle window.
+
+    The mask is 1 in the center and decays smoothly to 0 at each edge.
+    The decay is the convolution of a step function with a Gaussian, implemented
+    via the error function. The transition from 1 to 0 spans ``decay_fraction``
+    of the image size on each side.
+    """
+    def _win_1d(size: int) -> np.ndarray:
+        decay_len = decay_fraction * size
+        sigma = decay_len / 4.0
+        s2 = sigma * np.sqrt(2.0)
+        x = np.arange(size, dtype=float)
+        left = 0.5 * (1.0 + erf((x - decay_len / 2.0) / s2))
+        right = 0.5 * (1.0 - erf((x - (size - 1.0 - decay_len / 2.0)) / s2))
+        return np.minimum(left, right)
+
+    return np.outer(_win_1d(shape[0]), _win_1d(shape[1]))
+
+
 def phase_cross_correlation(
-    moving: np.ndarray, 
-    ref: np.ndarray, 
-    use_hanning_window: bool = True,
+    moving: np.ndarray,
+    ref: np.ndarray,
+    filtering_method: Optional[Literal["hanning", "gaussian"]] = "hanning",
     upsample_factor: int = 1,
 ) -> np.ndarray | Tuple[np.ndarray, float]:
     """Phase correlation with windowing. The result gives
@@ -133,9 +154,12 @@ def phase_cross_correlation(
         A 2D image.
     ref : np.ndarray
         A 2D image.
-    use_hanning_window : bool, optional
-        If True, a Hanning window is used to smooth the images before the
-        correlation is computed.
+    filtering_method : {"hanning", "gaussian"} or None, optional
+        Window function applied to both images before phase correlation to
+        reduce spectral leakage.  ``"hanning"`` uses a standard Hanning window.
+        ``"gaussian"`` uses a Gaussian-softened rectangle that is 1 in the
+        centre and decays to 0 at each edge over 20 % of the image size.
+        Pass ``None`` to disable windowing.
     upsample_factor : int, optional
         Upsampling factor for subpixel accuracy in phase correlation.
         A value of 1 yields pixel-level precision.
@@ -150,15 +174,24 @@ def phase_cross_correlation(
     )
     moving = moving - moving.mean()
     ref = ref - ref.mean()
-    if use_hanning_window:
+    if filtering_method == "hanning":
         win_y = np.hanning(moving.shape[0])
         win_x = np.hanning(moving.shape[1])
         win = np.outer(win_y, win_x)
         moving_for_registration = moving * win
         ref_for_registration = ref * win
-    else:
+    elif filtering_method == "gaussian":
+        win = _gaussian_rect_window(moving.shape, decay_fraction=0.2)
+        moving_for_registration = moving * win
+        ref_for_registration = ref * win
+    elif filtering_method is None:
         moving_for_registration = moving
         ref_for_registration = ref
+    else:
+        raise ValueError(
+            f"Unknown filtering_method {filtering_method!r}. "
+            "Use 'hanning', 'gaussian', or None."
+        )
 
     shift, _, _ = skimage_phase_cross_correlation(
         ref_for_registration,
