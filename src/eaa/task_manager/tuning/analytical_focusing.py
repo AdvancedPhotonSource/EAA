@@ -324,7 +324,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.run_line_scan()
             
             # Initialize optimization tool.
-            self.collect_initial_data_optimization_tool(
+            self.collect_initial_data_for_optimization_tool(
                 current_x=np.array(list(self.initial_parameters.values())),
                 sampling_range=initial_sampling_window_size,
                 n=n_initial_points,
@@ -384,8 +384,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     ):
         self.line_scan_kwargs = copy.deepcopy(initial_line_scan_kwargs)
         self.image_acquisition_kwargs = copy.deepcopy(initial_2d_scan_kwargs)
-        if self.line_scan_predictor_tool is not None and self.line_scan_kwargs is not None:
-            self.initial_line_scan_position = self.extract_scan_position(self.line_scan_kwargs)
+        if self.line_scan_kwargs is not None:
+            self.initial_line_scan_position = self.extract_line_scan_position(self.line_scan_kwargs)
         
     def run_line_scan(self) -> float:
         """Run a line scan and return the FWHM of the Gaussian fit.
@@ -451,7 +451,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 raise ValueError(f"Unable to parse JSON from response: {response_text}")
             return json.loads(match.group(0))
 
-    def extract_scan_position(self, kwargs: dict[str, float]) -> np.ndarray:
+    def extract_line_scan_position(self, kwargs: dict[str, float]) -> np.ndarray:
         if len(self.line_scan_tool_x_coordinate_args) == 0 or len(self.line_scan_tool_y_coordinate_args) == 0:
             raise ValueError("Line scan coordinate args must not be empty.")
         x_arg = self.line_scan_tool_x_coordinate_args[0]
@@ -484,15 +484,15 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     ):
         if self.line_scan_predictor_tool is None:
             return
-        if self.initial_image_acquisition_position is None:
+        if self.initial_line_scan_position is None:
             return
 
         if current_position_yx is None:
-            current_position_yx = self.extract_image_acquisition_position(
-                self.image_acquisition_kwargs
+            current_position_yx = self.extract_line_scan_position(
+                self.line_scan_kwargs
             )
 
-        delta_yx = current_position_yx - self.initial_image_acquisition_position
+        delta_yx = current_position_yx - self.initial_line_scan_position
         x_train = np.array(parameters, dtype=float).reshape(1, -1).tolist()
         self.drift_model_y.update(x=x_train, y=[[float(delta_yx[0])]])
         self.drift_model_x.update(x=x_train, y=[[float(delta_yx[1])]])
@@ -532,24 +532,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.record_system_message(
             content="Linear drift model status updated. Current status (y and x):",
             image_path=image_paths,
-        )
-
-    def apply_predicted_image_acquisition_position(self, parameters: np.ndarray):
-        current_pos = self.extract_image_acquisition_position(self.image_acquisition_kwargs)
-        x_in = np.array(parameters, dtype=float).reshape(1, -1).tolist()
-        delta_y = float(self.drift_model_y.predict(x_in)[0][0])
-        delta_x = float(self.drift_model_x.predict(x_in)[0][0])
-        predicted_pos = self.initial_image_acquisition_position + np.array(
-            [delta_y, delta_x],
-            dtype=float,
-        )
-        delta_pos = predicted_pos - current_pos
-        self.apply_offset_to_image_acquisition_kwargs(delta_pos)
-        self.apply_offset_to_line_scan_kwargs(delta_pos)
-        self.record_system_message(
-            "Using linear drift prediction for acquisition positions: "
-            f"```Predicted 2D scan yx = {predicted_pos.tolist()}"
-            f"Offset from last = {delta_pos.tolist()}```"
         )
 
     def build_line_scan_precheck_message(
@@ -721,8 +703,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             old_line_scan_kwargs = copy.deepcopy(self.line_scan_kwargs)
             merged_line_scan_kwargs = copy.deepcopy(self.line_scan_kwargs)
             merged_line_scan_kwargs.update(new_line_scan_kwargs)
-            old_scan_position = self.extract_scan_position(old_line_scan_kwargs)
-            new_scan_position = self.extract_scan_position(merged_line_scan_kwargs)
+            old_scan_position = self.extract_line_scan_position(old_line_scan_kwargs)
+            new_scan_position = self.extract_line_scan_position(merged_line_scan_kwargs)
             offset = new_scan_position - old_scan_position
             self.line_scan_kwargs = merged_line_scan_kwargs
             if self.run_offset_calibration:
@@ -774,14 +756,18 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             p_suggested = p_current + signs * step_sizes
         return p_suggested
     
-    def find_offset(self) -> np.ndarray:
-        """Find the offset between the latest image and the previous image.
+    def find_position_correction(self) -> np.ndarray:
+        """Find the correction that should be applied (added) to image acquisition and line scan positions.
 
         Returns
         -------
         np.ndarray
-            The offset between the latest image and the previous image.
-            Offset is in physical units, i.e., pixel size is already accounted for.
+            The correction that should be applied to the line scan positions, which include the
+            pure image registration offset and the scan-position difference.
+            The correction is in physical units, i.e., pixel size is already accounted for.
+        np.ndarray
+            The correction that should be applied to the image acquisition positions, which include only the
+            pure image registration offset.
         """
         alignment_offset = np.array(
             self.image_registration_tool.register_images(
@@ -793,6 +779,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             ),
             dtype=float,
         )
+        # Image registration offset is the offset by which the moving image should be rolled to match
+        # the reference. We want acquisition position correction here, which is the negation of it.
+        registration_correction = -alignment_offset
         
         # Count in the difference of scan positions.
         scan_pos_diff = np.array([
@@ -800,13 +789,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
             for dir in ["y", "x"]
         ]).astype(float)
-        offset_to_subtract = alignment_offset - scan_pos_diff
-        self.record_system_message(
-            f"Pure image registration offset (to apply to current image for alignment) is "
-            f"{alignment_offset}. Counting in scan-position difference {scan_pos_diff}, "
-            f"the offset to subtract from the next line scan positions is {offset_to_subtract}."
-        )
-        return offset_to_subtract, alignment_offset
+        line_scan_correction = registration_correction + scan_pos_diff
+        return line_scan_correction, registration_correction
     
     def apply_offset_to_line_scan_kwargs(self, offset: np.ndarray):
         for arg in self.line_scan_tool_x_coordinate_args:
@@ -820,7 +804,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         for arg in self.image_acquisition_tool_y_coordinate_args:
             self.image_acquisition_kwargs[arg] += offset[0]
             
-    def collect_initial_data_optimization_tool(
+    def collect_initial_data_for_optimization_tool(
         self, 
         current_x: np.ndarray,
         sampling_range: np.ndarray,
@@ -881,17 +865,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.param_setting_tool.set_parameters(x_current)
             if self.run_offset_calibration:
                 self.run_2d_scan()
-                if self.line_scan_predictor_tool is not None:
-                    self._apply_dual_drift_estimation(x_current)
-                else:
-                    line_scan_pos_offset, alignment_offset = self.find_offset()
-                    if np.any(np.isnan(line_scan_pos_offset)):
-                        x_current = rollback_and_shrink_delta("Image registration failed (NaN offset).")
-                        continue
-                    self.apply_offset_to_line_scan_kwargs(-line_scan_pos_offset)
-                    self.apply_offset_to_image_acquisition_kwargs(-alignment_offset)
-                    self.update_linear_drift_models(x_current)
-                    self.record_linear_drift_model_visualizations()
+                self.apply_drift_correction(x_current)
             try:
                 fwhm = self.run_line_scan()
                 if np.isnan(fwhm):
@@ -901,49 +875,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 continue
             self.update_optimization_model(fwhm)
             return
-
-    def _get_lsp_drift(self) -> np.ndarray:
-        """Return cumulative drift from initial line scan position via the LSP.
-
-        Calls the line scan predictor and subtracts the stored initial line
-        scan position to produce a drift vector in the same physical units
-        used throughout the tracker.
-
-        Returns
-        -------
-        np.ndarray
-            Shape ``(2,)`` array ``[drift_y, drift_x]`` from the initial line
-            scan center to the predictor's estimate.
-        """
-        lsp_json = json.loads(self.line_scan_predictor_tool.predict_line_scan_position())
-        predicted_center = np.array(
-            [lsp_json["center_y"], lsp_json["center_x"]], dtype=float
-        )
-        return predicted_center - self.initial_line_scan_position
-
-    def _get_reg_drift(self) -> np.ndarray | None:
-        """Return cumulative drift from initial acquisition position via image registration.
-
-        Runs image registration between the two most recent 2D acquisitions and
-        converts the incremental alignment offset into a cumulative drift from
-        the initial image acquisition position.
-
-        Returns
-        -------
-        np.ndarray or None
-            Shape ``(2,)`` array ``[drift_y, drift_x]``, or ``None`` if
-            registration returned NaN (failed).
-        """
-        _line_scan_pos_offset, alignment_offset = self.find_offset()
-        if np.any(np.isnan(alignment_offset)):
-            return None
-        # apply_offset_to_image_acquisition_kwargs(o) does position += o,
-        # so the registration caller passes -alignment_offset and the new tracked
-        # position would be current_acq_pos - alignment_offset.
-        current_acq_pos = self.extract_image_acquisition_position(
-            self.image_acquisition_kwargs
-        )
-        return current_acq_pos - alignment_offset - self.initial_image_acquisition_position
 
     def _select_drift(
         self,
@@ -1022,45 +953,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         return chosen_drift, chosen_source
 
-    def _apply_chosen_drift(self, chosen_drift: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Set scan positions to ``initial_position + chosen_drift`` for both trackers.
-
-        ``apply_offset_to_*_kwargs(o)`` subtracts ``o`` from the stored
-        position, so ``-(target - current)`` is passed to move the position
-        forward to the target.
-
-        Parameters
-        ----------
-        chosen_drift : np.ndarray
-            Cumulative drift from the initial position to apply.
-
-        Returns
-        -------
-        target_ls_pos : np.ndarray
-        target_acq_pos : np.ndarray
-        """
-        current_ls_pos = self.extract_scan_position(self.line_scan_kwargs)
-        target_ls_pos = self.initial_line_scan_position + chosen_drift
-        self.apply_offset_to_line_scan_kwargs(target_ls_pos - current_ls_pos)
-
-        current_acq_pos = self.extract_image_acquisition_position(self.image_acquisition_kwargs)
-        target_acq_pos = self.initial_image_acquisition_position + chosen_drift
-        self.apply_offset_to_image_acquisition_kwargs(target_acq_pos - current_acq_pos)
-
-        self.record_system_message(
-            f"Applied dual-drift correction:\n"
-            f"```chosen_drift={chosen_drift.tolist()}\n"
-            f"new line_scan_pos={target_ls_pos.tolist()}\n"
-            f"new acq_pos={target_acq_pos.tolist()}\n````"
-        )
-        return target_ls_pos, target_acq_pos
-
-    def _apply_dual_drift_estimation(self, x_current: np.ndarray) -> None:
+    def apply_drift_correction(self, x_current: np.ndarray) -> None:
         """Run both drift estimators, select the best estimate, and apply it.
-
-        Orchestrates :meth:`_get_lsp_drift`, :meth:`_get_reg_drift`,
-        :meth:`_select_drift`, and :meth:`_apply_chosen_drift`, then updates
-        the linear drift model for the next arbitration round.
 
         Parameters
         ----------
@@ -1069,19 +963,79 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         """
         if self.initial_line_scan_position is None or self.initial_image_acquisition_position is None:
             raise RuntimeError(
-                "_apply_dual_drift_estimation requires initial scan positions to be set. "
+                "apply_drift_correction requires initial scan positions to be set. "
                 "Ensure initialize_kwargs_buffers and run_2d_scan have been called first."
             )
 
-        lsp_drift = self._get_lsp_drift()
-        reg_drift = self._get_reg_drift()
-        chosen_drift, _chosen_source = self._select_drift(lsp_drift, reg_drift, x_current)
-        _target_ls_pos, target_acq_pos = self._apply_chosen_drift(chosen_drift)
+        # Get the offset from the registration.
+        # line_scan_pos_offset_reg: the offset counting in BOTH the pure image registration and the scan-position difference
+        # -> to be applied to the line scan position.
+        # pure_registration_offset: the offset counting in ONLY the pure image registration
+        # -> to be applied to the image acquisition position.
+        line_scan_correction_reg, image_acq_correction_reg = self.find_position_correction()
+        line_scan_correction_reg_wrt_prev = line_scan_correction_reg
+        line_scan_correction_reg_wrt_initial = (
+            self.extract_line_scan_position(self.line_scan_kwargs) + line_scan_correction_reg - self.initial_line_scan_position
+        )
+        image_acq_correction_reg_wrt_prev = image_acq_correction_reg
+        image_acq_correction_reg_wrt_initial = np.array([np.nan, np.nan])
+        
+        # Get the offset from the line scan predictor. Note that the offset is with regards to the initial image.
+        if self.line_scan_predictor_tool is not None:
+            lsp_json = json.loads(self.line_scan_predictor_tool.predict_line_scan_position())
+            predicted_center = np.array(
+                [lsp_json["center_y"], lsp_json["center_x"]], dtype=float
+            )
+            line_scan_correction_lsp_wrt_initial = predicted_center - self.initial_line_scan_position
+            line_scan_correction_lsp_wrt_prev = (
+                predicted_center - self.extract_line_scan_position(self.acquisition_tool.line_scan_call_history[-1])
+            )
+            scan_pos_diff = np.array([
+                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
+                - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
+                for dir in ["y", "x"]
+            ]).astype(float)
+            image_acq_correction_lsp_wrt_initial = line_scan_correction_lsp_wrt_initial - scan_pos_diff
+            image_acq_correction_lsp_wrt_prev = line_scan_correction_lsp_wrt_prev - scan_pos_diff
+
+            # Select the best correction to use.
+            chosen_line_scan_correction_wrt_initial, chosen_source = self._select_drift(
+                line_scan_correction_lsp_wrt_initial, line_scan_correction_reg_wrt_initial, x_current
+            )
+            chosen_image_acq_correction_wrt_prev = (
+                image_acq_correction_lsp_wrt_prev 
+                if chosen_source == "line_scan_predictor" 
+                else image_acq_correction_reg_wrt_prev
+            )
+            chosen_image_acq_correction_wrt_initial = (
+                image_acq_correction_lsp_wrt_initial
+                if chosen_source == "line_scan_predictor" 
+                else image_acq_correction_reg_wrt_prev
+            )
+        else:
+            chosen_source = "registration"
+            chosen_line_scan_correction_wrt_prev = line_scan_correction_reg_wrt_prev
+            chosen_line_scan_correction_wrt_initial = line_scan_correction_reg_wrt_initial
+            chosen_image_acq_correction_wrt_prev = image_acq_correction_reg_wrt_prev
+            chosen_image_acq_correction_wrt_initial = image_acq_correction_reg_wrt_initial
+            
+        self.apply_offset_to_line_scan_kwargs(chosen_line_scan_correction_wrt_prev)
+        self.apply_offset_to_image_acquisition_kwargs(chosen_image_acq_correction_wrt_prev)
+        
+        self.record_system_message(
+            f"Applied drift correction:\n"
+            f"```source = {chosen_source}\n"
+            f"image_registration_offset = {(-chosen_image_acq_correction_wrt_prev).tolist()}\n"
+            f"chosen_line_scan_correction_wrt_prev = {chosen_line_scan_correction_wrt_prev.tolist()}\n"
+            f"chosen_line_scan_correction_wrt_initial = {chosen_line_scan_correction_wrt_initial.tolist()}\n"
+            f"chosen_image_acq_correction_wrt_prev = {chosen_image_acq_correction_wrt_prev.tolist()}\n"
+            f"chosen_image_acq_correction_wrt_initial = {chosen_image_acq_correction_wrt_initial.tolist()}```"
+        )
 
         # Update model with (parameters -> chosen cumulative drift). Pass the
         # target position directly so the model is consistent regardless of
         # whether kwargs have been flushed to the underlying tool yet.
-        self.update_linear_drift_models(x_current, current_position_yx=target_acq_pos)
+        self.update_linear_drift_models(x_current, current_position_yx=chosen_line_scan_correction_wrt_initial)
         self.record_linear_drift_model_visualizations()
 
     def apply_user_correction_offset(self) -> bool:
