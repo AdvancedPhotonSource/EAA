@@ -57,7 +57,7 @@ class NNRegistration(BaseTool):
         tifffile.imwrite(buf, image.astype(np.float32))
         return buf.getvalue()
 
-    @tool(name="get_offset", return_type=ToolReturnType.TEXT)
+    @tool(name="get_offset", return_type=ToolReturnType.LIST)
     def get_offset(self, target: Literal["previous", "initial"] = "initial") -> np.ndarray:
         """Query the server and return the registration offset in physical units.
 

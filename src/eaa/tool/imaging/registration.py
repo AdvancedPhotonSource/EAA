@@ -1,4 +1,4 @@
-from typing import Annotated, Any, List, Literal, Optional, Tuple
+from typing import Annotated, Any, List, Literal, Optional, Tuple, Dict
 import logging
 import re
 from pathlib import Path
@@ -12,7 +12,6 @@ from sciagent.task_manager.base import BaseTaskManager
 from sciagent.message_proc import generate_openai_message
 from sciagent.skill import SkillMetadata
 from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.image_proc import (
@@ -37,11 +36,13 @@ class ImageRegistration(BaseTool):
         self,
         image_acquisition_tool: AcquireImage,
         llm_config: Optional[LLMConfig] = None,
-        memory_config: Optional[MemoryManagerConfig] = None,
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
-        registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"] = "phase_correlation",
+        registration_method: Literal[
+            "phase_correlation", "sift", "mutual_information", "llm", "error_minimization"
+        ] = "phase_correlation",
+        registration_algorithm_kwargs: Optional[Dict[str, Any]] = None,
         zoom: float = 1.0,
         log_scale: bool = False,
         require_approval: bool = False,
@@ -77,6 +78,8 @@ class ImageRegistration(BaseTool):
             "mutual_information" uses pyramid-based normalized mutual information,
             and "error_minimization" uses exhaustive integer-shift MSE search with
             local quadratic subpixel refinement.
+        registration_algorithm_kwargs : Optional[Dict[str, Any]], optional
+            Keyword arguments to pass to the registration algorithm.
         zoom : float, optional
             Zoom factor applied to both images before registration. Returned
             offsets are scaled back to the original image coordinates.
@@ -87,11 +90,11 @@ class ImageRegistration(BaseTool):
 
         self.image_acquisition_tool = image_acquisition_tool
         self.llm_config = llm_config
-        self.memory_config = memory_config
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
         self.image_coordinates_origin = image_coordinates_origin
         self.registration_method = registration_method
+        self.registration_algorithm_kwargs = registration_algorithm_kwargs or {}
         self.zoom = zoom
         self.log_scale = log_scale
 
@@ -136,32 +139,27 @@ class ImageRegistration(BaseTool):
             return image
         return ndi.zoom(image, zoom=self.zoom, order=1, mode="nearest")
 
-    @tool(name="get_offset_of_latest_image", return_type=ToolReturnType.LIST)
-    def get_offset_of_latest_image(
+    @tool(name="get_offset", return_type=ToolReturnType.LIST)
+    def get_offset(
         self,
-        register_with: Annotated[
-            Literal["previous", "first", "reference"],
-            "The image to register the latest image with. "
-            "Can be 'previous', 'first', or 'reference'. "
-            "'previous': register with the image collected by the acquisition tool before the latest. "
-            "'first': register with the first image collected by the acquisition tool. "
-            "'reference': register with the reference image provided to the tool. ",
-        ],
+        target: Annotated[
+            Literal["previous", "initial", "reference"],
+            "Reference image buffer against which the current image is compared.",
+        ] = "initial",
     ) -> Annotated[
         List[float],
-        "The translational offset [dy (vertical), dx (horizontal)] to apply to the latest "
-        "acquired image so it aligns with the reference image. Positive y means shifting the "
-        "latest image downward; positive x means shifting it rightward. The returned values are "
-        "in physical units, i.e., pixel size is already accounted for.",
+        "The translational offset [dy, dx] to apply to the latest image "
+        "so it aligns with the selected reference image.",
     ]:
-        """
-        Register the latest image collected by the image acquisition tool
+        """Register the latest image collected by the image acquisition tool
         and the reference image.
         """
+        register_with = "previous" if target == "previous" else "first"
         image_t, image_r, psize_t, psize_r = self.get_registration_inputs(register_with)
-        
-        offset = self.register_images(image_t, image_r, psize_t, psize_r)
-        return offset
+        return self.register_images(
+            image_t, image_r, psize_t, psize_r,
+            registration_algorithm_kwargs=self.registration_algorithm_kwargs
+        )
 
     def get_registration_inputs(
         self,
