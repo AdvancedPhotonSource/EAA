@@ -42,6 +42,7 @@ class ImageRegistration(BaseTool):
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
         registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"] = "phase_correlation",
+        zoom: float = 1.0,
         log_scale: bool = False,
         require_approval: bool = False,
         *args,
@@ -76,6 +77,9 @@ class ImageRegistration(BaseTool):
             "mutual_information" uses pyramid-based normalized mutual information,
             and "error_minimization" uses exhaustive integer-shift MSE search with
             local quadratic subpixel refinement.
+        zoom : float, optional
+            Zoom factor applied to both images before registration. Returned
+            offsets are scaled back to the original image coordinates.
         log_scale : bool, optional
             If True, images are transformed as `log10(x + 1)` before registration.
         """
@@ -88,6 +92,7 @@ class ImageRegistration(BaseTool):
         self.reference_pixel_size = reference_pixel_size
         self.image_coordinates_origin = image_coordinates_origin
         self.registration_method = registration_method
+        self.zoom = zoom
         self.log_scale = log_scale
 
     def set_reference_image(
@@ -122,6 +127,14 @@ class ImageRegistration(BaseTool):
         if self.log_scale:
             image = np.log10(image + 1)
         return image
+
+    def zoom_image(self, image: np.ndarray) -> np.ndarray:
+        """Apply the configured registration zoom factor to an image."""
+        if self.zoom <= 0:
+            raise ValueError("zoom must be positive.")
+        if self.zoom == 1.0:
+            return image
+        return ndi.zoom(image, zoom=self.zoom, order=1, mode="nearest")
 
     @tool(name="get_offset_of_latest_image", return_type=ToolReturnType.LIST)
     def get_offset_of_latest_image(
@@ -398,7 +411,10 @@ class ImageRegistration(BaseTool):
         if psize_t != psize_r:
             # Resize the target image to have the same pixel size as the reference image
             image_t = ndi.zoom(image_t, psize_t / psize_r)
-        
+
+        image_t = self.zoom_image(image_t)
+        image_r = self.zoom_image(image_r)
+
         if method in {"phase_correlation", "mutual_information", "error_minimization"}:
             image_t = self.reconcile_image_shape(image_t, image_r.shape)
 
@@ -445,7 +461,7 @@ class ImageRegistration(BaseTool):
             offset = self.register_images_llm(image_t=image_t, image_r=image_r)
         else:
             raise ValueError(f"Invalid registration method: {method}")
-        return offset
+        return np.array(offset, dtype=float) / self.zoom
 
     def reconcile_image_shape(
         self,
