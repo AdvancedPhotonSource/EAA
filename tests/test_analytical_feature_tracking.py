@@ -1,6 +1,5 @@
 import os
 import argparse
-import pytest
 
 import numpy as np
 import tifffile
