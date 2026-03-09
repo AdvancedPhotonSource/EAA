@@ -59,6 +59,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
         registration_method: Literal["phase_correlation", "sift", "mutual_information", "llm"] = "phase_correlation",
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
+        registration_target: Literal["previous", "initial"] = "previous",
         run_line_scan_checker: bool = True,
         run_offset_calibration: bool = True,
         line_scan_predictor_tool: Optional[LineScanPredictor] = None,
@@ -72,9 +73,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         The workflow is as follows:
         1. Acquire a 2D image in the user-specified region of interest.
         2. Run a line scan at user-specified coordinates and record the FWHM of the Gaussian fit.
-        3. Change parameter and acquire a new 2D image.
-        4. Run image registration to get the offset and adjust 1D/2D scan coordinates.
-        5. Repeat 1 - 3 a few times to collect initial data for Bayesian optimization.
+        3. Change parameter and acquire a new 2D image. The change of parameter causes the sample
+           to drift relative to the beam.
+        4. Register the acquired image with the reference image (previous or initial) to estimate
+           the drift correction that should be applied to the line scan and image acquisition tools.
+           Update the positions for line scan and image acquisition.
+        5. Repeat 1 - 4 a few times to collect initial data for Bayesian optimization.
         6. Use Bayesian optimization to suggest new parameters.
         7. Change parameter. 
         8. Run image registration or feature tracking as in 4.
@@ -125,6 +129,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         registration_algorithm_kwargs : Optional[dict[str, Any]]
             Optional keyword arguments forwarded to the selected image
             registration algorithm when aligning consecutive 2D scans.
+        registration_target : Literal["previous", "initial"], optional
+            The reference image used by the registration branch of drift
+            correction.  "previous" (default) registers each new 2D scan
+            against the immediately preceding one; small registration errors
+            therefore accumulate over many iterations.  "initial" registers
+            every new 2D scan against the very first scan, which prevents
+            error accumulation at the cost of requiring sufficient overlap
+            between the current and the initial image.
         run_line_scan_checker : bool, optional
             If True, run the LLM-based line-scan quality checker and allow it
             to request scan-argument adjustments before accepting a line scan.
@@ -172,6 +184,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.registration_algorithm_kwargs = copy.deepcopy(
             registration_algorithm_kwargs or {}
         )
+        if registration_target not in ("previous", "initial"):
+            raise ValueError(
+                f"`registration_target` must be 'previous' or 'initial', got {registration_target!r}."
+            )
+        self.registration_target = registration_target
         
         if hasattr(acquisition_tool, "line_scan_return_gaussian_fit"):
             acquisition_tool.line_scan_return_gaussian_fit = True
@@ -756,25 +773,58 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             p_suggested = p_current + signs * step_sizes
         return p_suggested
     
-    def find_position_correction(self) -> np.ndarray:
+    def find_position_correction(
+        self, target: Literal["previous", "initial"] = "previous"
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Find the correction that should be applied (added) to image acquisition and line scan positions.
+
+        Parameters
+        ----------
+        target : Literal["previous", "initial"]
+            The reference image to register against.
+            "previous": register the current image with the immediately preceding image.
+            "initial": register the current image with the very first image to prevent
+            error accumulation.
 
         Returns
         -------
         np.ndarray
-            The correction that should be applied to the line scan positions, which include the
-            pure image registration offset and the scan-position difference.
+            The correction that should be applied to the line scan positions, which includes
+            the pure image registration offset and the scan-position difference.
+            When target is "previous", this is the correction relative to the previous step.
+            When target is "initial", this is the cumulative correction from the initial position.
             The correction is in physical units, i.e., pixel size is already accounted for.
         np.ndarray
-            The correction that should be applied to the image acquisition positions, which include only the
-            pure image registration offset.
+            The correction that should be applied to the image acquisition positions, which
+            includes only the pure image registration offset.
+            When target is "previous", this is the correction relative to the previous step.
+            When target is "initial", this is the cumulative correction from the initial position.
         """
+        if target == "previous":
+            image_r = self.image_registration_tool.process_image(self.acquisition_tool.image_km1)
+            psize_r = self.acquisition_tool.psize_km1
+            scan_pos_diff = np.array([
+                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
+                - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
+                for dir in ["y", "x"]
+            ]).astype(float)
+        elif target == "initial":
+            image_r = self.image_registration_tool.process_image(self.acquisition_tool.image_0)
+            psize_r = self.acquisition_tool.psize_0
+            scan_pos_diff = np.array([
+                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
+                - float(self.acquisition_tool.image_acquisition_call_history[0][f"{dir}_center"])
+                for dir in ["y", "x"]
+            ]).astype(float)
+        else:
+            raise ValueError(f"`target` must be 'previous' or 'initial', got {target!r}.")
+
         alignment_offset = np.array(
             self.image_registration_tool.register_images(
                 image_t=self.image_registration_tool.process_image(self.acquisition_tool.image_k),
-                image_r=self.image_registration_tool.process_image(self.acquisition_tool.image_km1),
+                image_r=image_r,
                 psize_t=self.acquisition_tool.psize_k,
-                psize_r=self.acquisition_tool.psize_km1,
+                psize_r=psize_r,
                 registration_algorithm_kwargs=self.registration_algorithm_kwargs,
             ),
             dtype=float,
@@ -782,13 +832,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         # Image registration offset is the offset by which the moving image should be rolled to match
         # the reference. We want acquisition position correction here, which is the negation of it.
         registration_correction = -alignment_offset
-        
+
         # Count in the difference of scan positions.
-        scan_pos_diff = np.array([
-            float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
-            - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
-            for dir in ["y", "x"]
-        ]).astype(float)
         line_scan_correction = registration_correction + scan_pos_diff
         return line_scan_correction, registration_correction
     
@@ -972,13 +1017,38 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         # -> to be applied to the line scan position.
         # pure_registration_offset: the offset counting in ONLY the pure image registration
         # -> to be applied to the image acquisition position.
-        line_scan_correction_reg, image_acq_correction_reg = self.find_position_correction()
-        line_scan_correction_reg_wrt_prev = line_scan_correction_reg
-        line_scan_correction_reg_wrt_initial = (
-            self.extract_line_scan_position(self.line_scan_kwargs) + line_scan_correction_reg - self.initial_line_scan_position
+        line_scan_correction_reg, image_acq_correction_reg = self.find_position_correction(
+            target=self.registration_target
         )
-        image_acq_correction_reg_wrt_prev = image_acq_correction_reg
-        image_acq_correction_reg_wrt_initial = np.array([np.nan, np.nan])
+        if self.registration_target == "previous":
+            # find_position_correction returns corrections relative to the previous step.
+            line_scan_correction_reg_wrt_prev = line_scan_correction_reg
+            line_scan_correction_reg_wrt_initial = (
+                self.extract_line_scan_position(self.line_scan_kwargs)
+                + line_scan_correction_reg
+                - self.initial_line_scan_position
+            )
+            image_acq_correction_reg_wrt_prev = image_acq_correction_reg
+            image_acq_correction_reg_wrt_initial = (
+                image_acq_correction_reg
+                + self.extract_image_acquisition_position(self.image_acquisition_kwargs)
+                - self.initial_image_acquisition_position
+            )
+        else:
+            # find_position_correction returns cumulative corrections from the initial position.
+            # Convert to wrt_prev so the apply helpers can add them to the current kwargs.
+            line_scan_correction_reg_wrt_initial = line_scan_correction_reg
+            line_scan_correction_reg_wrt_prev = (
+                self.initial_line_scan_position
+                + line_scan_correction_reg
+                - self.extract_line_scan_position(self.line_scan_kwargs)
+            )
+            image_acq_correction_reg_wrt_initial = image_acq_correction_reg
+            image_acq_correction_reg_wrt_prev = (
+                self.initial_image_acquisition_position
+                + image_acq_correction_reg
+                - self.extract_image_acquisition_position(self.image_acquisition_kwargs)
+            )
         
         # Get the offset from the line scan predictor. Note that the offset is with regards to the initial image.
         if self.line_scan_predictor_tool is not None:
@@ -1002,15 +1072,20 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             chosen_line_scan_correction_wrt_initial, chosen_source = self._select_drift(
                 line_scan_correction_lsp_wrt_initial, line_scan_correction_reg_wrt_initial, x_current
             )
+            chosen_line_scan_correction_wrt_prev = (
+                line_scan_correction_lsp_wrt_prev
+                if chosen_source == "line_scan_predictor"
+                else line_scan_correction_reg_wrt_prev
+            )
             chosen_image_acq_correction_wrt_prev = (
-                image_acq_correction_lsp_wrt_prev 
-                if chosen_source == "line_scan_predictor" 
+                image_acq_correction_lsp_wrt_prev
+                if chosen_source == "line_scan_predictor"
                 else image_acq_correction_reg_wrt_prev
             )
             chosen_image_acq_correction_wrt_initial = (
                 image_acq_correction_lsp_wrt_initial
-                if chosen_source == "line_scan_predictor" 
-                else image_acq_correction_reg_wrt_prev
+                if chosen_source == "line_scan_predictor"
+                else image_acq_correction_reg_wrt_initial
             )
         else:
             chosen_source = "registration"
