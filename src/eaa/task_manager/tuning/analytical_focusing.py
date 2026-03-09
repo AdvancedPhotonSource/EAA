@@ -18,7 +18,7 @@ from sciagent.tool.base import BaseTool
 from sciagent.message_proc import print_message
 
 from eaa.tool.imaging.acquisition import AcquireImage
-from eaa.tool.imaging.line_scan_predictor import LineScanPredictor
+from eaa.tool.imaging.nn_registration import NNRegistration
 from eaa.tool.imaging.param_tuning import SetParameters
 from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
@@ -62,9 +62,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         registration_target: Literal["previous", "initial"] = "previous",
         run_line_scan_checker: bool = True,
         run_offset_calibration: bool = True,
-        line_scan_predictor_tool: Optional[LineScanPredictor] = None,
+        nn_registration_tool: Optional[NNRegistration] = None,
         dual_drift_selection_priming_iterations: int = 3,
-        dual_drift_estimation_primary_source: Literal["registration", "line_scan_predictor"] = "line_scan_predictor",
+        dual_drift_estimation_primary_source: Literal["registration", "nn_registration"] = "nn_registration",
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -147,12 +147,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         dual_drift_selection_priming_iterations : int, optional
             Number of parameter–drift samples to collect (warm-up phase) before
             the linear model is used to arbitrate between image registration and
-            line scan predictor drift estimates.  Only relevant when
-            ``line_scan_predictor_tool`` is provided.
-        line_scan_predictor_tool : LineScanPredictor, optional
-            If provided, both image registration and the line scan predictor
-            are run after each 2D acquisition to estimate drift.  For the
-            first ``n_parameter_drift_points_before_prediction`` parameter
+            NN registration drift estimates.  Only relevant when
+            ``nn_registration_tool`` is provided.
+        nn_registration_tool : NNRegistration, optional
+            If provided, both classical image registration and the NN-based
+            registration are run after each 2D acquisition to estimate drift.
+            The NN model always registers the current image against the very
+            first (initial) image, so its output is a cumulative drift estimate.
+            For the first ``dual_drift_selection_priming_iterations`` parameter
             adjustments only the source selected by
             ``dual_drift_estimation_primary_source`` is used; concurrently a
             linear model is fit mapping optics parameters to cumulative drift
@@ -161,12 +163,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             that is closer to the linear model prediction is chosen as the
             correct drift, and the linear model is then updated with that
             chosen value.  Requires ``run_offset_calibration=True``.
-        dual_drift_estimation_primary_source : {"registration", "line_scan_predictor"}
+        dual_drift_estimation_primary_source : {"registration", "nn_registration"}
             Which drift-estimation method to trust exclusively during the first
-            ``n_parameter_drift_points_before_prediction`` iterations when
-            ``line_scan_predictor_tool`` is provided.  After that point both
+            ``dual_drift_selection_priming_iterations`` iterations when
+            ``nn_registration_tool`` is provided.  After that point both
             methods are evaluated and the linear model arbitrates.  Defaults
-            to ``"line_scan_predictor"``.
+            to ``"nn_registration"``.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -210,13 +212,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         self.run_line_scan_checker = run_line_scan_checker
         self.run_offset_calibration = run_offset_calibration
-        if line_scan_predictor_tool is not None and not run_offset_calibration:
+        if nn_registration_tool is not None and not run_offset_calibration:
             raise ValueError(
-                "`line_scan_predictor_tool` requires `run_offset_calibration=True` "
-                "because a 2D image must be acquired before the predictor can run."
+                "`nn_registration_tool` requires `run_offset_calibration=True` "
+                "because a 2D image must be acquired before the tool can run."
             )
-        
-        self.line_scan_predictor_tool = line_scan_predictor_tool
+
+        self.nn_registration_tool = nn_registration_tool
         self.dual_drift_estimation_primary_source = dual_drift_estimation_primary_source
         self.dual_drift_selection_priming_iterations = (
             dual_drift_selection_priming_iterations
@@ -499,7 +501,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         parameters: np.ndarray,
         current_position_yx: np.ndarray | None = None,
     ):
-        if self.line_scan_predictor_tool is None:
+        if self.nn_registration_tool is None:
             return
         if self.initial_line_scan_position is None:
             return
@@ -774,61 +776,82 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         return p_suggested
     
     def find_position_correction(
-        self, target: Literal["previous", "initial"] = "previous"
+        self,
+        method: Literal["traditional", "nn"] = "traditional",
+        target: Literal["previous", "initial"] = "previous",
     ) -> tuple[np.ndarray, np.ndarray]:
         """Find the correction that should be applied (added) to image acquisition and line scan positions.
 
         Parameters
         ----------
+        method : Literal["traditional", "nn"]
+            The registration algorithm to use.
+            "traditional": use :attr:`image_registration_tool` (classical image registration).
+            "nn": use :attr:`nn_registration_tool` (NN-based registration).
         target : Literal["previous", "initial"]
             The reference image to register against.
-            "previous": register the current image with the immediately preceding image.
-            "initial": register the current image with the very first image to prevent
-            error accumulation.
+            "previous": register the current image against the immediately
+            preceding image.  The returned corrections are relative to the
+            previous step.
+            "initial": register the current image against the very first
+            acquired image.  The returned corrections are cumulative from the
+            initial position, which prevents per-step error accumulation.
 
         Returns
         -------
         np.ndarray
-            The correction that should be applied to the line scan positions, which includes
-            the pure image registration offset and the scan-position difference.
-            When target is "previous", this is the correction relative to the previous step.
-            When target is "initial", this is the cumulative correction from the initial position.
-            The correction is in physical units, i.e., pixel size is already accounted for.
+            The correction to apply to the line scan positions, including
+            both the pure registration offset and the intentional scan-position
+            difference.
+            For target="previous": relative to the previous step.
+            For target="initial": cumulative from the initial position.
+            Values are in physical units (pixel size already accounted for).
         np.ndarray
-            The correction that should be applied to the image acquisition positions, which
-            includes only the pure image registration offset.
-            When target is "previous", this is the correction relative to the previous step.
-            When target is "initial", this is the cumulative correction from the initial position.
+            The correction to apply to the image acquisition positions (pure
+            registration offset only, without the intentional scan-position
+            difference).
+            For target="previous": relative to the previous step.
+            For target="initial": cumulative from the initial position.
         """
-        if target == "previous":
-            image_r = self.image_registration_tool.process_image(self.acquisition_tool.image_km1)
-            psize_r = self.acquisition_tool.psize_km1
-            scan_pos_diff = np.array([
-                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
-                - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
-                for dir in ["y", "x"]
-            ]).astype(float)
-        elif target == "initial":
-            image_r = self.image_registration_tool.process_image(self.acquisition_tool.image_0)
-            psize_r = self.acquisition_tool.psize_0
-            scan_pos_diff = np.array([
-                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
-                - float(self.acquisition_tool.image_acquisition_call_history[0][f"{dir}_center"])
-                for dir in ["y", "x"]
-            ]).astype(float)
-        else:
+        if target not in ("previous", "initial"):
             raise ValueError(f"`target` must be 'previous' or 'initial', got {target!r}.")
 
-        alignment_offset = np.array(
-            self.image_registration_tool.register_images(
-                image_t=self.image_registration_tool.process_image(self.acquisition_tool.image_k),
-                image_r=image_r,
-                psize_t=self.acquisition_tool.psize_k,
-                psize_r=psize_r,
-                registration_algorithm_kwargs=self.registration_algorithm_kwargs,
-            ),
-            dtype=float,
-        )
+        # Scan-position difference depends only on the target image.
+        ref_history_idx = -2 if target == "previous" else 0
+        scan_pos_diff = np.array([
+            float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
+            - float(self.acquisition_tool.image_acquisition_call_history[ref_history_idx][f"{dir}_center"])
+            for dir in ["y", "x"]
+        ]).astype(float)
+
+        # Alignment offset depends on the registration method (and the target image).
+        if method == "traditional":
+            if target == "previous":
+                image_r = self.image_registration_tool.process_image(self.acquisition_tool.image_km1)
+                psize_r = self.acquisition_tool.psize_km1
+            else:  # "initial"
+                image_r = self.image_registration_tool.process_image(self.acquisition_tool.image_0)
+                psize_r = self.acquisition_tool.psize_0
+            alignment_offset = np.array(
+                self.image_registration_tool.register_images(
+                    image_t=self.image_registration_tool.process_image(self.acquisition_tool.image_k),
+                    image_r=image_r,
+                    psize_t=self.acquisition_tool.psize_k,
+                    psize_r=psize_r,
+                    registration_algorithm_kwargs=self.registration_algorithm_kwargs,
+                ),
+                dtype=float,
+            )
+        elif method == "nn":
+            if self.nn_registration_tool is None:
+                raise RuntimeError(
+                    "`nn_registration_tool` is not set. Provide one in the constructor "
+                    "to use method='nn'."
+                )
+            alignment_offset = self.nn_registration_tool.get_offset(target=target)
+        else:
+            raise ValueError(f"`method` must be 'traditional' or 'nn', got {method!r}.")
+
         # Image registration offset is the offset by which the moving image should be rolled to match
         # the reference. We want acquisition position correction here, which is the negation of it.
         registration_correction = -alignment_offset
@@ -923,7 +946,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
     def _select_drift(
         self,
-        lsp_drift: np.ndarray,
+        nn_drift: np.ndarray,
         reg_drift: np.ndarray | None,
         x_current: np.ndarray,
     ) -> tuple[np.ndarray, str]:
@@ -936,10 +959,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         Parameters
         ----------
-        lsp_drift : np.ndarray
-            Cumulative drift from the line scan predictor.
+        nn_drift : np.ndarray
+            Cumulative drift from NN registration.
         reg_drift : np.ndarray or None
-            Cumulative drift from image registration, or ``None`` on failure.
+            Cumulative drift from classical image registration, or ``None`` on failure.
         x_current : np.ndarray
             Current optics parameter vector (used in the arbitration phase).
 
@@ -947,25 +970,25 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         -------
         chosen_drift : np.ndarray
         chosen_source : str
-            ``"line_scan_predictor"`` or ``"registration"``.
+            ``"nn_registration"`` or ``"registration"``.
         """
         n_collected = self.drift_model_y.get_n_parameter_drift_points_collected()
         n_needed = self.dual_drift_selection_priming_iterations
 
         if n_collected < n_needed:
-            if self.dual_drift_estimation_primary_source == "line_scan_predictor" or reg_drift is None:
-                chosen_drift, chosen_source = lsp_drift, "line_scan_predictor"
+            if self.dual_drift_estimation_primary_source == "nn_registration" or reg_drift is None:
+                chosen_drift, chosen_source = nn_drift, "nn_registration"
             else:
                 chosen_drift, chosen_source = reg_drift, "registration"
             if reg_drift is None:
                 self.record_system_message(
                     "Dual drift estimation: image registration returned NaN; "
-                    "falling back to line scan predictor."
+                    "falling back to nn_registration."
                 )
             self.record_system_message(
                 f"Dual drift estimation (primary phase, n={n_collected}/{n_needed}): "
                 f"```using {chosen_source}\n"
-                f"lsp_drift={lsp_drift.tolist()}\n"
+                f"nn_drift={nn_drift.tolist()}\n"
                 f"reg_drift={reg_drift.tolist() if reg_drift is not None else 'NaN'}```"
             )
         else:
@@ -977,21 +1000,21 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 ],
                 dtype=float,
             )
-            dist_lsp = float(np.linalg.norm(lsp_drift - model_drift))
+            dist_nn = float(np.linalg.norm(nn_drift - model_drift))
             dist_reg = (
                 float(np.linalg.norm(reg_drift - model_drift))
                 if reg_drift is not None
                 else np.inf
             )
-            if dist_lsp <= dist_reg:
-                chosen_drift, chosen_source = lsp_drift, "line_scan_predictor"
+            if dist_nn <= dist_reg:
+                chosen_drift, chosen_source = nn_drift, "nn_registration"
             else:
                 chosen_drift, chosen_source = reg_drift, "registration"
             dist_reg_str = f"{dist_reg:.4f}" if reg_drift is not None else "inf"
             self.record_system_message(
                 f"Dual drift estimation (arbitration phase):\n"
                 f"```model_drift={model_drift.tolist()}\n"
-                f"lsp_drift={lsp_drift.tolist()} (dist={dist_lsp:.4f})\n"
+                f"nn_drift={nn_drift.tolist()} (dist={dist_nn:.4f})\n"
                 f"reg_drift={reg_drift.tolist() if reg_drift is not None else 'NaN'} (dist={dist_reg_str})\n"
                 f"Chosen: {chosen_source}```"
             )
@@ -1018,7 +1041,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         # pure_registration_offset: the offset counting in ONLY the pure image registration
         # -> to be applied to the image acquisition position.
         line_scan_correction_reg, image_acq_correction_reg = self.find_position_correction(
-            target=self.registration_target
+            method="traditional", target=self.registration_target
         )
         if self.registration_target == "previous":
             # find_position_correction returns corrections relative to the previous step.
@@ -1050,41 +1073,55 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 - self.extract_image_acquisition_position(self.image_acquisition_kwargs)
             )
         
-        # Get the offset from the line scan predictor. Note that the offset is with regards to the initial image.
-        if self.line_scan_predictor_tool is not None:
-            lsp_json = json.loads(self.line_scan_predictor_tool.predict_line_scan_position())
-            predicted_center = np.array(
-                [lsp_json["center_y"], lsp_json["center_x"]], dtype=float
+        # Get the offset from the NN registration tool using the same target as classical registration.
+        if self.nn_registration_tool is not None:
+            line_scan_correction_nn, image_acq_correction_nn = self.find_position_correction(
+                method="nn", target=self.registration_target
             )
-            line_scan_correction_lsp_wrt_initial = predicted_center - self.initial_line_scan_position
-            line_scan_correction_lsp_wrt_prev = (
-                predicted_center - self.extract_line_scan_position(self.acquisition_tool.line_scan_call_history[-1])
-            )
-            scan_pos_diff = np.array([
-                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
-                - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
-                for dir in ["y", "x"]
-            ]).astype(float)
-            image_acq_correction_lsp_wrt_initial = line_scan_correction_lsp_wrt_initial - scan_pos_diff
-            image_acq_correction_lsp_wrt_prev = line_scan_correction_lsp_wrt_prev - scan_pos_diff
+            if self.registration_target == "previous":
+                line_scan_correction_nn_wrt_prev = line_scan_correction_nn
+                line_scan_correction_nn_wrt_initial = (
+                    self.extract_line_scan_position(self.line_scan_kwargs)
+                    + line_scan_correction_nn
+                    - self.initial_line_scan_position
+                )
+                image_acq_correction_nn_wrt_prev = image_acq_correction_nn
+                image_acq_correction_nn_wrt_initial = (
+                    image_acq_correction_nn
+                    + self.extract_image_acquisition_position(self.image_acquisition_kwargs)
+                    - self.initial_image_acquisition_position
+                )
+            else:  # "initial"
+                line_scan_correction_nn_wrt_initial = line_scan_correction_nn
+                line_scan_correction_nn_wrt_prev = (
+                    self.initial_line_scan_position
+                    + line_scan_correction_nn
+                    - self.extract_line_scan_position(self.line_scan_kwargs)
+                )
+                image_acq_correction_nn_wrt_initial = image_acq_correction_nn
+                image_acq_correction_nn_wrt_prev = (
+                    self.initial_image_acquisition_position
+                    + image_acq_correction_nn
+                    - self.extract_image_acquisition_position(self.image_acquisition_kwargs)
+                )
 
             # Select the best correction to use.
             chosen_line_scan_correction_wrt_initial, chosen_source = self._select_drift(
-                line_scan_correction_lsp_wrt_initial, line_scan_correction_reg_wrt_initial, x_current
+                line_scan_correction_nn_wrt_initial, line_scan_correction_reg_wrt_initial, x_current
             )
             chosen_line_scan_correction_wrt_prev = (
-                line_scan_correction_lsp_wrt_prev
-                if chosen_source == "line_scan_predictor"
+                line_scan_correction_nn_wrt_prev
+                if chosen_source == "nn_registration"
                 else line_scan_correction_reg_wrt_prev
             )
             chosen_image_acq_correction_wrt_prev = (
-                image_acq_correction_lsp_wrt_prev
-                if chosen_source == "line_scan_predictor"
+                image_acq_correction_nn_wrt_prev
+                if chosen_source == "nn_registration"
                 else image_acq_correction_reg_wrt_prev
             )
             chosen_image_acq_correction_wrt_initial = (
-                image_acq_correction_lsp_wrt_initial
-                if chosen_source == "line_scan_predictor"
+                image_acq_correction_nn_wrt_initial
+                if chosen_source == "nn_registration"
                 else image_acq_correction_reg_wrt_initial
             )
         else:
