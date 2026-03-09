@@ -18,7 +18,9 @@ from sciagent.tool.base import BaseTool
 from sciagent.message_proc import print_message
 
 from eaa.tool.imaging.acquisition import AcquireImage
-from eaa.tool.imaging.nn_registration import NNRegistration
+from eaa.tool.imaging.aps_mic.test_target_landmark_fitting import (
+    TestPatternLandmarkFitting,
+)
 from eaa.tool.imaging.param_tuning import SetParameters
 from eaa.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa.tool.imaging.registration import ImageRegistration
@@ -62,9 +64,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         registration_target: Literal["previous", "initial"] = "previous",
         run_line_scan_checker: bool = True,
         run_offset_calibration: bool = True,
-        nn_registration_tool: Optional[NNRegistration] = None,
+        landmark_fitting_tool: Optional[TestPatternLandmarkFitting] = None,
         dual_drift_selection_priming_iterations: int = 3,
-        dual_drift_estimation_primary_source: Literal["registration", "nn_registration"] = "nn_registration",
+        dual_drift_estimation_primary_source: Literal["registration", "landmark_fitting"] = "landmark_fitting",
         *args, **kwargs
     ):
         """Analytical scanning microscope focusing task manager driven
@@ -147,13 +149,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         dual_drift_selection_priming_iterations : int, optional
             Number of parameter–drift samples to collect (warm-up phase) before
             the linear model is used to arbitrate between image registration and
-            NN registration drift estimates.  Only relevant when
-            ``nn_registration_tool`` is provided.
-        nn_registration_tool : NNRegistration, optional
-            If provided, both classical image registration and the NN-based
+            landmark fitting drift estimates.  Only relevant when
+            ``landmark_fitting_tool`` is provided.
+        landmark_fitting_tool : TestPatternLandmarkFitting, optional
+            If provided, both classical image registration and the landmark-based
             registration are run after each 2D acquisition to estimate drift.
-            The NN model always registers the current image against the very
-            first (initial) image, so its output is a cumulative drift estimate.
+            The landmark-fitting branch estimates the disk center in the
+            current image and in the selected reference image, then subtracts
+            those centers to obtain a physical drift estimate.
             For the first ``dual_drift_selection_priming_iterations`` parameter
             adjustments only the source selected by
             ``dual_drift_estimation_primary_source`` is used; concurrently a
@@ -163,12 +166,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             that is closer to the linear model prediction is chosen as the
             correct drift, and the linear model is then updated with that
             chosen value.  Requires ``run_offset_calibration=True``.
-        dual_drift_estimation_primary_source : {"registration", "nn_registration"}
+        dual_drift_estimation_primary_source : {"registration", "landmark_fitting"}
             Which drift-estimation method to trust exclusively during the first
             ``dual_drift_selection_priming_iterations`` iterations when
-            ``nn_registration_tool`` is provided.  After that point both
+            ``landmark_fitting_tool`` is provided.  After that point both
             methods are evaluated and the linear model arbitrates.  Defaults
-            to ``"nn_registration"``.
+            to ``"landmark_fitting"``.
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
@@ -212,13 +215,18 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         self.run_line_scan_checker = run_line_scan_checker
         self.run_offset_calibration = run_offset_calibration
-        if nn_registration_tool is not None and not run_offset_calibration:
+        if landmark_fitting_tool is not None and not run_offset_calibration:
             raise ValueError(
-                "`nn_registration_tool` requires `run_offset_calibration=True` "
+                "`landmark_fitting_tool` requires `run_offset_calibration=True` "
                 "because a 2D image must be acquired before the tool can run."
             )
 
-        self.nn_registration_tool = nn_registration_tool
+        self.landmark_fitting_tool = landmark_fitting_tool
+        if (
+            self.landmark_fitting_tool is not None
+            and self.landmark_fitting_tool.image_acquisition_tool is None
+        ):
+            self.landmark_fitting_tool.image_acquisition_tool = acquisition_tool
         self.dual_drift_estimation_primary_source = dual_drift_estimation_primary_source
         self.dual_drift_selection_priming_iterations = (
             dual_drift_selection_priming_iterations
@@ -266,7 +274,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             reference_pixel_size=1.0,
             image_coordinates_origin="top_left",
             registration_method=registration_method,
-            log_scale=True
+            log_scale=True,
+            zoom=4
         )
         return image_registration_tool
     
@@ -501,7 +510,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         parameters: np.ndarray,
         current_position_yx: np.ndarray | None = None,
     ):
-        if self.nn_registration_tool is None:
+        if self.landmark_fitting_tool is None:
             return
         if self.initial_line_scan_position is None:
             return
@@ -777,17 +786,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     
     def find_position_correction(
         self,
-        method: Literal["traditional", "nn"] = "traditional",
+        method: Literal["traditional", "landmark"] = "traditional",
         target: Literal["previous", "initial"] = "previous",
     ) -> tuple[np.ndarray, np.ndarray]:
         """Find the correction that should be applied (added) to image acquisition and line scan positions.
 
         Parameters
         ----------
-        method : Literal["traditional", "nn"]
+        method : Literal["traditional", "landmark"]
             The registration algorithm to use.
             "traditional": use :attr:`image_registration_tool` (classical image registration).
-            "nn": use :attr:`nn_registration_tool` (NN-based registration).
+            "landmark": use :attr:`landmark_fitting_tool` (landmark-based registration).
         target : Literal["previous", "initial"]
             The reference image to register against.
             "previous": register the current image against the immediately
@@ -842,15 +851,41 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 ),
                 dtype=float,
             )
-        elif method == "nn":
-            if self.nn_registration_tool is None:
+        elif method == "landmark":
+            if self.landmark_fitting_tool is None:
                 raise RuntimeError(
-                    "`nn_registration_tool` is not set. Provide one in the constructor "
-                    "to use method='nn'."
+                    "`landmark_fitting_tool` is not set. Provide one in the constructor "
+                    "to use method='landmark'."
                 )
-            alignment_offset = self.nn_registration_tool.get_offset(target=target)
+            alignment_offset = np.array(
+                self.landmark_fitting_tool.get_offset(target=target),
+                dtype=float,
+            )
+            landmark_fig = None
+            try:
+                landmark_fig = self.landmark_fitting_tool.plot_last_fit()
+                landmark_fig_path = BaseTool.save_image_to_temp_dir(
+                    fig=landmark_fig,
+                    filename="landmark_fitting_overlay.png",
+                    add_timestamp=True,
+                )
+                self.record_system_message(
+                    content=(
+                        "Landmark fitting result for drift estimation:\n"
+                        f"```target={target}\n"
+                        f"alignment_offset={alignment_offset.tolist()}```"
+                    ),
+                    image_path=landmark_fig_path,
+                )
+            except Exception as exc:
+                logger.warning("Failed to render landmark fitting overlay: %s", exc)
+            finally:
+                if landmark_fig is not None:
+                    plt.close(landmark_fig)
         else:
-            raise ValueError(f"`method` must be 'traditional' or 'nn', got {method!r}.")
+            raise ValueError(
+                f"`method` must be 'traditional' or 'landmark', got {method!r}."
+            )
 
         # Image registration offset is the offset by which the moving image should be rolled to match
         # the reference. We want acquisition position correction here, which is the negation of it.
@@ -946,7 +981,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
     def _select_drift(
         self,
-        nn_drift: np.ndarray,
+        landmark_drift: np.ndarray,
         reg_drift: np.ndarray | None,
         x_current: np.ndarray,
     ) -> tuple[np.ndarray, str]:
@@ -959,8 +994,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         Parameters
         ----------
-        nn_drift : np.ndarray
-            Cumulative drift from NN registration.
+        landmark_drift : np.ndarray
+            Cumulative drift from landmark fitting.
         reg_drift : np.ndarray or None
             Cumulative drift from classical image registration, or ``None`` on failure.
         x_current : np.ndarray
@@ -970,25 +1005,25 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         -------
         chosen_drift : np.ndarray
         chosen_source : str
-            ``"nn_registration"`` or ``"registration"``.
+            ``"landmark_fitting"`` or ``"registration"``.
         """
         n_collected = self.drift_model_y.get_n_parameter_drift_points_collected()
         n_needed = self.dual_drift_selection_priming_iterations
 
         if n_collected < n_needed:
-            if self.dual_drift_estimation_primary_source == "nn_registration" or reg_drift is None:
-                chosen_drift, chosen_source = nn_drift, "nn_registration"
+            if self.dual_drift_estimation_primary_source == "landmark_fitting" or reg_drift is None:
+                chosen_drift, chosen_source = landmark_drift, "landmark_fitting"
             else:
                 chosen_drift, chosen_source = reg_drift, "registration"
             if reg_drift is None:
                 self.record_system_message(
                     "Dual drift estimation: image registration returned NaN; "
-                    "falling back to nn_registration."
+                    "falling back to landmark_fitting."
                 )
             self.record_system_message(
                 f"Dual drift estimation (primary phase, n={n_collected}/{n_needed}): "
                 f"```using {chosen_source}\n"
-                f"nn_drift={nn_drift.tolist()}\n"
+                f"landmark_drift={landmark_drift.tolist()}\n"
                 f"reg_drift={reg_drift.tolist() if reg_drift is not None else 'NaN'}```"
             )
         else:
@@ -1000,21 +1035,21 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 ],
                 dtype=float,
             )
-            dist_nn = float(np.linalg.norm(nn_drift - model_drift))
+            dist_landmark = float(np.linalg.norm(landmark_drift - model_drift))
             dist_reg = (
                 float(np.linalg.norm(reg_drift - model_drift))
                 if reg_drift is not None
                 else np.inf
             )
-            if dist_nn <= dist_reg:
-                chosen_drift, chosen_source = nn_drift, "nn_registration"
+            if dist_landmark <= dist_reg:
+                chosen_drift, chosen_source = landmark_drift, "landmark_fitting"
             else:
                 chosen_drift, chosen_source = reg_drift, "registration"
             dist_reg_str = f"{dist_reg:.4f}" if reg_drift is not None else "inf"
             self.record_system_message(
                 f"Dual drift estimation (arbitration phase):\n"
                 f"```model_drift={model_drift.tolist()}\n"
-                f"nn_drift={nn_drift.tolist()} (dist={dist_nn:.4f})\n"
+                f"landmark_drift={landmark_drift.tolist()} (dist={dist_landmark:.4f})\n"
                 f"reg_drift={reg_drift.tolist() if reg_drift is not None else 'NaN'} (dist={dist_reg_str})\n"
                 f"Chosen: {chosen_source}```"
             )
@@ -1073,55 +1108,57 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 - self.extract_image_acquisition_position(self.image_acquisition_kwargs)
             )
         
-        # Get the offset from the NN registration tool using the same target as classical registration.
-        if self.nn_registration_tool is not None:
-            line_scan_correction_nn, image_acq_correction_nn = self.find_position_correction(
-                method="nn", target=self.registration_target
+        # Get the offset from the landmark fitting tool using the same target as classical registration.
+        if self.landmark_fitting_tool is not None:
+            line_scan_correction_landmark, image_acq_correction_landmark = self.find_position_correction(
+                method="landmark", target=self.registration_target
             )
             if self.registration_target == "previous":
-                line_scan_correction_nn_wrt_prev = line_scan_correction_nn
-                line_scan_correction_nn_wrt_initial = (
+                line_scan_correction_landmark_wrt_prev = line_scan_correction_landmark
+                line_scan_correction_landmark_wrt_initial = (
                     self.extract_line_scan_position(self.line_scan_kwargs)
-                    + line_scan_correction_nn
+                    + line_scan_correction_landmark
                     - self.initial_line_scan_position
                 )
-                image_acq_correction_nn_wrt_prev = image_acq_correction_nn
-                image_acq_correction_nn_wrt_initial = (
-                    image_acq_correction_nn
+                image_acq_correction_landmark_wrt_prev = image_acq_correction_landmark
+                image_acq_correction_landmark_wrt_initial = (
+                    image_acq_correction_landmark
                     + self.extract_image_acquisition_position(self.image_acquisition_kwargs)
                     - self.initial_image_acquisition_position
                 )
             else:  # "initial"
-                line_scan_correction_nn_wrt_initial = line_scan_correction_nn
-                line_scan_correction_nn_wrt_prev = (
+                line_scan_correction_landmark_wrt_initial = line_scan_correction_landmark
+                line_scan_correction_landmark_wrt_prev = (
                     self.initial_line_scan_position
-                    + line_scan_correction_nn
+                    + line_scan_correction_landmark
                     - self.extract_line_scan_position(self.line_scan_kwargs)
                 )
-                image_acq_correction_nn_wrt_initial = image_acq_correction_nn
-                image_acq_correction_nn_wrt_prev = (
+                image_acq_correction_landmark_wrt_initial = image_acq_correction_landmark
+                image_acq_correction_landmark_wrt_prev = (
                     self.initial_image_acquisition_position
-                    + image_acq_correction_nn
+                    + image_acq_correction_landmark
                     - self.extract_image_acquisition_position(self.image_acquisition_kwargs)
                 )
 
             # Select the best correction to use.
             chosen_line_scan_correction_wrt_initial, chosen_source = self._select_drift(
-                line_scan_correction_nn_wrt_initial, line_scan_correction_reg_wrt_initial, x_current
+                line_scan_correction_landmark_wrt_initial,
+                line_scan_correction_reg_wrt_initial,
+                x_current,
             )
             chosen_line_scan_correction_wrt_prev = (
-                line_scan_correction_nn_wrt_prev
-                if chosen_source == "nn_registration"
+                line_scan_correction_landmark_wrt_prev
+                if chosen_source == "landmark_fitting"
                 else line_scan_correction_reg_wrt_prev
             )
             chosen_image_acq_correction_wrt_prev = (
-                image_acq_correction_nn_wrt_prev
-                if chosen_source == "nn_registration"
+                image_acq_correction_landmark_wrt_prev
+                if chosen_source == "landmark_fitting"
                 else image_acq_correction_reg_wrt_prev
             )
             chosen_image_acq_correction_wrt_initial = (
-                image_acq_correction_nn_wrt_initial
-                if chosen_source == "nn_registration"
+                image_acq_correction_landmark_wrt_initial
+                if chosen_source == "landmark_fitting"
                 else image_acq_correction_reg_wrt_initial
             )
         else:

@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 import logging
 
 import matplotlib.pyplot as plt
@@ -149,6 +149,34 @@ class TestPatternLandmarkFitting(BaseTool):
             return image
         return ndi.zoom(image, zoom=self.zoom, order=1, mode="nearest")
 
+    def resolve_pixel_size(
+        self,
+        pixel_size: Optional[float],
+        image_role: Literal["current", "previous", "initial"],
+    ) -> float:
+        """Resolve the pixel size for converting pixel coordinates to physical units."""
+        if pixel_size is not None:
+            return float(pixel_size)
+        if self.image_acquisition_tool is None:
+            raise ValueError(
+                "pixel_size must be provided when image_acquisition_tool is unavailable."
+            )
+
+        if image_role == "current":
+            resolved = self.image_acquisition_tool.psize_k
+        elif image_role == "previous":
+            resolved = self.image_acquisition_tool.psize_km1
+        elif image_role == "initial":
+            resolved = self.image_acquisition_tool.psize_0
+        else:
+            raise ValueError(f"Unsupported image_role: {image_role!r}.")
+
+        if resolved is None:
+            raise ValueError(
+                f"Pixel size for image_role={image_role!r} is unavailable."
+            )
+        return float(resolved)
+
     @staticmethod
     def normalize_image(image: np.ndarray) -> np.ndarray:
         """Robustly normalize an image to ``[0, 1]`` using percentiles."""
@@ -293,9 +321,17 @@ class TestPatternLandmarkFitting(BaseTool):
             Optional[np.ndarray],
             "Optional 2D image array. When omitted, the tool uses image_acquisition_tool.image_k.",
         ] = None,
+        pixel_size: Annotated[
+            Optional[float],
+            "Pixel size used to convert the fitted center from pixels to physical units.",
+        ] = None,
+        image_role: Annotated[
+            Literal["current", "previous", "initial"],
+            "Which acquisition buffer the image corresponds to when pixel_size is omitted.",
+        ] = "current",
     ) -> Annotated[
         list[float],
-        "The fitted landmark center as [center_y, center_x] in the coordinates of the original image.",
+        "The fitted landmark center as [center_y, center_x] in physical units.",
     ]:
         """Detect the right-side disk feature and return its center.
 
@@ -304,29 +340,91 @@ class TestPatternLandmarkFitting(BaseTool):
         image : Optional[np.ndarray], optional
             Explicit image array to process. If omitted, the latest image from
             ``image_acquisition_tool`` is used.
+        pixel_size : Optional[float], optional
+            Pixel size in physical units per pixel. If omitted, the value is
+            taken from ``image_acquisition_tool`` according to ``image_role``.
+        image_role : {"current", "previous", "initial"}, optional
+            Acquisition-buffer role used to resolve the pixel size when
+            ``pixel_size`` is omitted.
 
         Returns
         -------
         list[float]
             Landmark center as ``[center_y, center_x]`` in the coordinates of
-            the original image.
+            the original image, expressed in physical units.
         """
         image_arr = self.get_input_image(image)
+        resolved_pixel_size = self.resolve_pixel_size(pixel_size, image_role)
         processed_image = self.zoom_image(image_arr)
         points = self.detect_edge_points(processed_image)
         model, inliers = self.fit_circle(
             points,
             cropped_shape=processed_image.shape,
         )
-        center_x, center_y, radius = model.params
-        circle_model = measure.CircleModel()
-        circle_model.params = (
-            float(center_x / self.zoom),
-            float(center_y / self.zoom),
-            float(radius / self.zoom),
+        center_x_px, center_y_px, radius_px = model.params
+        circle_model_px = measure.CircleModel()
+        circle_model_px.params = (
+            float(center_x_px / self.zoom),
+            float(center_y_px / self.zoom),
+            float(radius_px / self.zoom),
         )
         self.latest_image = image_arr
         self.latest_processed_image = processed_image
-        self.latest_circle_model = circle_model
+        self.latest_circle_model = circle_model_px
         self.latest_circle_inliers = inliers
-        return [float(center_y / self.zoom), float(center_x / self.zoom)]
+        return [
+            float(circle_model_px.params[1] * resolved_pixel_size),
+            float(circle_model_px.params[0] * resolved_pixel_size),
+        ]
+
+    @tool(name="get_offset", return_type=ToolReturnType.LIST)
+    def get_offset(
+        self,
+        target: Annotated[
+            Literal["previous", "initial"],
+            "Reference image buffer against which the current image is compared.",
+        ] = "initial",
+    ) -> Annotated[
+        list[float],
+        "The landmark-based registration offset [dy, dx] in physical units.",
+    ]:
+        """Return the shift to apply to the test image to match the reference.
+
+        The returned offset follows the same convention as the other image
+        registration tools in this codebase: it is the physical-space
+        translation ``[dy, dx]`` that should be applied to the current (test)
+        image so it aligns with the selected reference image.
+        """
+        if self.image_acquisition_tool is None:
+            raise RuntimeError(
+                "image_acquisition_tool is required to compare current and reference images."
+            )
+        if self.image_acquisition_tool.image_k is None:
+            raise RuntimeError("Current image buffer (image_k) is not populated.")
+
+        if target == "previous":
+            reference_image = self.image_acquisition_tool.image_km1
+            reference_role: Literal["previous", "initial"] = "previous"
+        elif target == "initial":
+            reference_image = self.image_acquisition_tool.image_0
+            reference_role = "initial"
+        else:
+            raise ValueError(f"`target` must be 'previous' or 'initial', got {target!r}.")
+
+        if reference_image is None:
+            raise RuntimeError(
+                f"Reference image buffer for target={target!r} is not populated."
+            )
+
+        center_ref = np.array(
+            self.fit_landmark_center(image=reference_image, image_role=reference_role),
+            dtype=float,
+        )
+        center_test = np.array(
+            self.fit_landmark_center(
+                image=self.image_acquisition_tool.image_k,
+                image_role="current",
+            ),
+            dtype=float,
+        )
+        return (center_ref - center_test).tolist()
