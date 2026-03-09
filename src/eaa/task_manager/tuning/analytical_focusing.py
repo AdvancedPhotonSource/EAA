@@ -511,6 +511,43 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             f"n_samples={self.drift_model_y.get_n_parameter_drift_points_collected()}.```"
         )
 
+    def snapshot_acquisition_state(self) -> dict[str, Any]:
+        """Capture mutable acquisition-tool state for retry rollback."""
+        state = {
+            "image_0": copy.deepcopy(self.acquisition_tool.image_0),
+            "image_km1": copy.deepcopy(self.acquisition_tool.image_km1),
+            "image_k": copy.deepcopy(self.acquisition_tool.image_k),
+            "psize_0": copy.deepcopy(self.acquisition_tool.psize_0),
+            "psize_km1": copy.deepcopy(self.acquisition_tool.psize_km1),
+            "psize_k": copy.deepcopy(self.acquisition_tool.psize_k),
+            "image_acquisition_call_history": copy.deepcopy(
+                self.acquisition_tool.image_acquisition_call_history
+            ),
+            "line_scan_call_history": copy.deepcopy(
+                self.acquisition_tool.line_scan_call_history
+            ),
+        }
+        for attr in ["blur", "offset", "line_scan_candidates"]:
+            if hasattr(self.acquisition_tool, attr):
+                state[attr] = copy.deepcopy(getattr(self.acquisition_tool, attr))
+        return state
+
+    def restore_acquisition_state(self, state: dict[str, Any]) -> None:
+        """Restore acquisition-tool state captured by snapshot_acquisition_state."""
+        self.acquisition_tool.image_0 = state["image_0"]
+        self.acquisition_tool.image_km1 = state["image_km1"]
+        self.acquisition_tool.image_k = state["image_k"]
+        self.acquisition_tool.psize_0 = state["psize_0"]
+        self.acquisition_tool.psize_km1 = state["psize_km1"]
+        self.acquisition_tool.psize_k = state["psize_k"]
+        self.acquisition_tool.image_acquisition_call_history = state[
+            "image_acquisition_call_history"
+        ]
+        self.acquisition_tool.line_scan_call_history = state["line_scan_call_history"]
+        for attr in ["blur", "offset", "line_scan_candidates"]:
+            if attr in state:
+                setattr(self.acquisition_tool, attr, state[attr])
+
     def record_linear_drift_model_visualizations(self) -> None:
         image_paths = []
         for axis_name, model in [("y", self.drift_model_y), ("x", self.drift_model_x)]:
@@ -911,6 +948,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         x_current = np.array(x, dtype=float)
         line_scan_kwargs_before = copy.deepcopy(self.line_scan_kwargs)
         image_acquisition_kwargs_before = copy.deepcopy(self.image_acquisition_kwargs)
+        acquisition_state_before = self.snapshot_acquisition_state()
 
         def rollback_and_shrink_delta(message_prefix: str) -> np.ndarray:
             for parameter_name in self.param_setting_tool.parameter_names:
@@ -918,6 +956,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     self.param_setting_tool.parameter_history[parameter_name].pop()
             self.line_scan_kwargs = copy.deepcopy(line_scan_kwargs_before)
             self.image_acquisition_kwargs = copy.deepcopy(image_acquisition_kwargs_before)
+            self.restore_acquisition_state(acquisition_state_before)
             delta = x_current - x_original
             x_next = x_original + delta / 2
             self.record_system_message(
@@ -931,9 +970,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         while True:
             self.record_system_message(f"Setting parameters to new value:```{x_current}```")
             self.param_setting_tool.set_parameters(x_current)
+            chosen_line_scan_correction_wrt_initial = None
             if self.run_offset_calibration:
                 self.run_2d_scan()
-                self.apply_drift_correction(x_current)
+                chosen_line_scan_correction_wrt_initial = self.apply_drift_correction(x_current)
             try:
                 fwhm = self.run_line_scan()
                 if np.isnan(fwhm):
@@ -941,6 +981,15 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             except LineScanValidationFailed:
                 x_current = rollback_and_shrink_delta("Line scan validation failed.")
                 continue
+            if (
+                self.run_offset_calibration
+                and chosen_line_scan_correction_wrt_initial is not None
+            ):
+                self.update_linear_drift_models(
+                    x_current,
+                    current_position_yx=chosen_line_scan_correction_wrt_initial,
+                )
+                self.record_linear_drift_model_visualizations()
             self.update_optimization_model(fwhm)
             return
 
@@ -1002,7 +1051,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
 
         return chosen_drift, chosen_source
 
-    def apply_drift_correction(self, x_current: np.ndarray) -> None:
+    def apply_drift_correction(self, x_current: np.ndarray) -> np.ndarray:
         """Run the configured registration tools, select a drift estimate, and apply it.
 
         Parameters
@@ -1105,11 +1154,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             f"chosen_image_acq_correction_wrt_initial = {chosen_image_acq_correction_wrt_initial.tolist()}```"
         )
 
-        # Update model with (parameters -> chosen cumulative drift). Pass the
-        # target position directly so the model is consistent regardless of
-        # whether kwargs have been flushed to the underlying tool yet.
-        self.update_linear_drift_models(x_current, current_position_yx=chosen_line_scan_correction_wrt_initial)
-        self.record_linear_drift_model_visualizations()
+        return chosen_line_scan_correction_wrt_initial
 
     def apply_user_correction_offset(self) -> bool:
         message = (
