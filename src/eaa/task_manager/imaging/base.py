@@ -3,10 +3,10 @@ from typing import Optional
 
 from PIL import Image
 
-from sciagent.task_manager.base import BaseTaskManager
-from sciagent.tool.base import BaseTool
-from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
+from eaa.api.llm_config import LLMConfig
+from eaa.api.memory import MemoryManagerConfig
+from eaa.core.task_manager.base import BaseTaskManager
+from eaa.core.tooling.base import BaseTool
 
 from eaa.image_proc import stitch_images
 
@@ -62,7 +62,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         )
             
     def prerun_check(self, *args, **kwargs) -> bool:
-        if len(self.agent.tool_manager.tools) == 0:
+        if len(self.tool_executor.tools) == 0:
             logger.warning("No tools registered for the main agent.")
         return super().prerun_check(*args, **kwargs)
     

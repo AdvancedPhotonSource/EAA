@@ -7,12 +7,17 @@
 
 # IDE
 .vscode/
+.loglogin
 
 # Build files
 **/*egg-info/
 
-# Workspace
+# Development files
 workspace/
+notes/
+skill_factory/
+AGENTS.md
+CLAUDE.md
 
 # Images
 **/*.png

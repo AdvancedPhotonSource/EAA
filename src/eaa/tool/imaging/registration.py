@@ -7,11 +7,11 @@ import numpy as np
 import scipy.ndimage as ndi
 import matplotlib.pyplot as plt
 from skimage import feature
-from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
-from sciagent.task_manager.base import BaseTaskManager
-from sciagent.message_proc import generate_openai_message
-from sciagent.skill import SkillMetadata
-from sciagent.api.llm_config import LLMConfig
+from eaa.api.llm_config import LLMConfig
+from eaa.core.message_proc import generate_openai_message
+from eaa.core.skill import SkillMetadata
+from eaa.core.task_manager.base import BaseTaskManager
+from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.image_proc import (

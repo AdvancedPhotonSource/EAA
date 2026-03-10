@@ -1,7 +1,7 @@
 from typing import Annotated, Optional, Tuple
 import logging
 
-from sciagent.tool.base import ToolReturnType, tool
+from eaa.core.tooling.base import ToolReturnType, tool
 
 from eaa.tool.imaging.param_tuning import SetParameters
 from eaa.tool.imaging.aps_mic.util import validate_position_in_range

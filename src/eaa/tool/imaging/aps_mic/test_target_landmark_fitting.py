@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.ndimage as ndi
 from skimage import filters, measure
-from sciagent.tool.base import BaseTool, ToolReturnType, check, tool
+from eaa.core.tooling.base import BaseTool, ToolReturnType, check, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 

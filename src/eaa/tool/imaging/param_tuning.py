@@ -2,7 +2,7 @@ from typing import Annotated
 import json
 
 import numpy as np
-from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import SimulatedAcquireImage
 

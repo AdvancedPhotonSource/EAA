@@ -1,10 +1,10 @@
 from typing import Optional
 import logging
 
-from sciagent.task_manager.base import BaseTaskManager
-from sciagent.tool.base import BaseTool
-from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
+from eaa.api.llm_config import LLMConfig
+from eaa.api.memory import MemoryManagerConfig
+from eaa.core.task_manager.base import BaseTaskManager
+from eaa.core.tooling.base import BaseTool
 
 from eaa.tool.imaging.param_tuning import SetParameters
 

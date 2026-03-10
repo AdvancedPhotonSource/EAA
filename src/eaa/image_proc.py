@@ -8,8 +8,8 @@ from scipy import optimize
 from scipy.special import erf
 from skimage.metrics import normalized_mutual_information
 from skimage.registration import phase_cross_correlation as skimage_phase_cross_correlation
-from sciagent.message_proc import generate_openai_message
-from sciagent.task_manager.base import BaseTaskManager
+from eaa.core.message_proc import generate_openai_message
+from eaa.core.task_manager.base import BaseTaskManager
 
 
 def stitch_images(
@@ -622,7 +622,7 @@ def add_marker_to_imgae(
                 ymax=ax.get_ylim()[1], 
                 linestyle="--",
                 linewidth=0.5,
-                color="inferno"
+                color="gray"
             )
             ax.hlines(
                 marker_params["y"], 
@@ -630,7 +630,7 @@ def add_marker_to_imgae(
                 xmax=ax.get_xlim()[1], 
                 linestyle="--",
                 linewidth=0.5,
-                color="inferno"
+                color="gray"
             )
     elif marker_type == "rectangle":
         if x_range is not None and y_range is not None:

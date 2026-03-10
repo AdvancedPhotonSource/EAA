@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from sciagent.util import get_timestamp
+from eaa.core.util import get_timestamp
 
 
 _message_db_path = None

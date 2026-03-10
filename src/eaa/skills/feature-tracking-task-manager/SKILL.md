@@ -6,12 +6,13 @@ description: Tracks or searches for sample features with image acquisition and r
 # Feature Tracking Task Manager
 
 ## Overview
-`FeatureTrackingTaskManager` guides an agent to locate or re-center a feature in a microscope field of view.
-It uses acquisition and registration tools to move the FOV until the feature is centered.
+`ROISearchTaskManager` guides an agent to locate a feature in a microscope field of view.
+`FeatureTrackingTaskManager` re-centers a previously seen feature after drift.
+They use acquisition and registration tools to move the FOV until the feature is centered.
 
 ## Task Manager Interface
-This task manager provides `run_fov_search()` for initial discovery and `run_feature_tracking()` for
-recovering drift based on a reference image.
+`ROISearchTaskManager` provides `run()` for initial discovery.
+`FeatureTrackingTaskManager` provides `run()` for recovering drift based on a reference image.
 
 See `references/api_reference.md` for full signatures.
 
@@ -35,7 +36,7 @@ task_manager = FeatureTrackingTaskManager(
     message_db_path="messages.db",
 )
 
-task_manager.run_feature_tracking(
+task_manager.run(
     reference_image_path="reference.png",
     initial_position=(0.0, 0.0),
     initial_fov_size=(64.0, 64.0),

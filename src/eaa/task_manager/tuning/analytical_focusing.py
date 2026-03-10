@@ -8,14 +8,14 @@ from pathlib import Path
 import numpy as np
 import botorch.acquisition
 import matplotlib.pyplot as plt
-from sciagent.message_proc import generate_openai_message
-from sciagent.skill import SkillMetadata
 
-from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
-from sciagent.task_manager.base import BaseTaskManager
-from sciagent.tool.base import BaseTool
-from sciagent.message_proc import print_message
+from eaa.api.llm_config import LLMConfig
+from eaa.api.memory import MemoryManagerConfig
+from eaa.core.message_proc import generate_openai_message
+from eaa.core.message_proc import print_message
+from eaa.core.skill import SkillMetadata
+from eaa.core.task_manager.base import BaseTaskManager
+from eaa.core.tooling.base import BaseTool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.aps_mic.test_target_landmark_fitting import (

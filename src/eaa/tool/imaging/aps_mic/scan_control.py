@@ -2,7 +2,7 @@
 
 # ruff: noqa: F403
 
-from sciagent.tool.base import BaseTool
+from eaa.core.tooling.base import BaseTool
 from eaa.tool.imaging.aps_mic.acquisition import BlueSkyAcquireImage
 from eaa.tool.imaging.aps_mic.param_tuning import BlueskySetParameters
 

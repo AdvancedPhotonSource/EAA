@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import tifffile
 
-from sciagent.api.llm_config import OpenAIConfig
+from eaa.api.llm_config import OpenAIConfig
 
 from eaa.task_manager.imaging import analytical_feature_tracking
 from eaa.task_manager.imaging.analytical_feature_tracking import (

@@ -72,9 +72,9 @@ section of `pyproject.toml`.
 ## Quickstart guide
 
 First, choose a task manager that contains the workflow you need. In this example,
-we use `FeatureTrackingTaskManager` for a field-of-view search task.
+we use `ROISearchTaskManager` for a field-of-view search task.
 ```
-from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa.task_manager.imaging.roi_search import ROISearchTaskManager
 from eaa.api.llm_config import OpenAIConfig
 ```
 
@@ -86,13 +86,13 @@ acquisition_tool = SimulatedAcquireImage(whole_image=<ndarray of simulation imag
 
 Create the task manager:
 ```
-task_manager = FeatureTrackingTaskManager(
+task_manager = ROISearchTaskManager(
     llm_config=OpenAIConfig(
         model=<name of the model to use>,
         base_url=<base URL of the inference host>,
         api_key=<your API key>,
     ),
-    tools=[acquisition_tool],
+    image_acquisition_tool=acquisition_tool,
 )
 ```
 The model name, base URL and API key should be provided by the LLM provider.
@@ -103,7 +103,7 @@ limitations in the support.
 
 With the task manager created, you can either run the workflow defined in the logic:
 ```
-task_manager.run_fov_search(
+task_manager.run(
     feature_description="the center of a Siemens star",
     y_range=(0, 600),
     x_range=(0, 600),
@@ -165,9 +165,9 @@ This allows you to use the tools in EAA with other MCP clients such as
 Claude Code and Gemini CLI.
 
 We will illustrate how an MCP server can be set up using a simple example. A
-calculator tool, subclassing `BaseTool`, is created in 
-`sciagent/tool/example_calculator.py`. To turn it into an MCP server, we
-use `sciagent.mcp.run_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
+calculator tool, subclassing `BaseTool`, is created in
+`eaa/tool/example_calculator.py`. To turn it into an MCP server, we
+use `eaa.mcp.run_mcp_server_from_tools`. See `examples/mcp_calculator_server.py`
 for an example.
 
 After the server script is created, add it to the config JSON of your MCP client.
@@ -214,7 +214,7 @@ The object should then be passed to the task manager in the same way as other `B
 objects.
 
 ```python
-from sciagent.tool.mcp import MCPTool
+from eaa.tool.mcp import MCPTool
 
 config = {
     "mcpServers": {
@@ -228,6 +228,7 @@ config = {
 mcp_tool = MCPTool(config)
 ```
 
-Known issue(s):
-- EAA currently cannot tell if an MCP tool returns an image path, and as such,
-  routines in task managers that handle images will not work properly. 
+EAA preserves MCP tool return types for tools served through `eaa.mcp`, including
+`IMAGE_PATH` returns used by image-aware task-manager workflows. For arbitrary
+third-party MCP servers that do not expose EAA's return-type metadata, EAA
+falls back to treating the remote tool result as text.

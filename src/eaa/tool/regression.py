@@ -2,7 +2,7 @@ from typing import Annotated
 
 import numpy as np
 import matplotlib.pyplot as plt
-from sciagent.tool.base import BaseTool, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
 
 
 class MultivariateLinearRegression(BaseTool):

@@ -11,7 +11,7 @@ from botorch.models.transforms.input import Normalize
 from botorch.acquisition import AcquisitionFunction
 import gpytorch
 import torch
-from sciagent.tool.base import BaseTool, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
 
 from eaa.util import to_tensor
 

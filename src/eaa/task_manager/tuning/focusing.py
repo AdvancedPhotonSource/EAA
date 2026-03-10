@@ -4,15 +4,15 @@ import copy
 
 import numpy as np
 
-from sciagent.message_proc import (
+from eaa.core.message_proc import (
     generate_openai_message,
     purge_context_images,
     print_message,
 )
-from sciagent.tool.base import ToolReturnType, BaseTool
-from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
-from sciagent.exceptions import MaxRoundsReached
+from eaa.api.llm_config import LLMConfig
+from eaa.api.memory import MemoryManagerConfig
+from eaa.core.exceptions import MaxRoundsReached
+from eaa.core.tooling.base import ToolReturnType, BaseTool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
@@ -173,7 +173,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                         generate_openai_message(content="Image 1", image=self.acquisition_tool.image_km1),
                         generate_openai_message(content="Image 2", image=self.acquisition_tool.image_k)
                     ]
-                    response, outgoing = self.agent.receive(
+                    response, outgoing = self.invoke_model_raw(
                         "Does the last image have any overlap with the previous one? "
                         "Just answer with 'yes' or 'no'.",
                         image_path=image_path,
@@ -273,7 +273,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         )
         
         try:
-            self.feature_tracking_task_manager.run_feature_tracking(
+            self.feature_tracking_task_manager.run(
                 reference_image_path=target_image_path,
                 initial_position=(
                     self.acquisition_tool.image_acquisition_call_history[-1]["y_center"],

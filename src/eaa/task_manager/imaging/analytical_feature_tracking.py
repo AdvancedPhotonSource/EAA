@@ -3,8 +3,8 @@ import copy
 import logging
 
 import numpy as np
-from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
+from eaa.api.llm_config import LLMConfig
+from eaa.api.memory import MemoryManagerConfig
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.registration import ImageRegistration

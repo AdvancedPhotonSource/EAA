@@ -7,7 +7,7 @@ import json
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
-from sciagent.tool.base import ToolReturnType, tool
+from eaa.core.tooling.base import ToolReturnType, tool
 
 from eaa.tool.imaging.aps_mic.util import (
     process_xrfdata,

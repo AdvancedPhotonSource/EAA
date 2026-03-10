@@ -5,9 +5,9 @@ import torch
 import numpy as np
 from PIL import Image
 
-from sciagent.tool.base import BaseTool
-from sciagent.api.llm_config import LLMConfig
-from sciagent.api.memory import MemoryManagerConfig
+from eaa.api.llm_config import LLMConfig
+from eaa.api.memory import MemoryManagerConfig
+from eaa.core.tooling.base import BaseTool
 
 from eaa.task_manager.tuning.bo import BayesianOptimizationTaskManager
 from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
@@ -148,7 +148,8 @@ class MicroscopyOpticsTuningBOTaskManager(
             
             # Now the original feature will have drifted. Run feature tracking
             # to bring it back.
-            self.run_feature_tracking(
+            FeatureTrackingTaskManager.run(
+                self,
                 **self.feature_tracking_kwargs
             )
             

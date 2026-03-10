@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
-from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
-from sciagent.util import get_timestamp
+from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.util import get_timestamp
 
 import eaa.maths
 import eaa.image_proc as ip

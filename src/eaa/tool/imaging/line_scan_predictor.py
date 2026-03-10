@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import requests
 import tifffile
-from sciagent.tool.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 
