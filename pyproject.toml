@@ -23,6 +23,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "chromadb",
+    "langchain-chroma>=1.1.0",
 ]
 dynamic = ["version"]
 

@@ -157,6 +157,28 @@ def get_message_elements_as_text(message: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def extract_message_text(message: Dict[str, Any]) -> str:
+    """Extract textual content from an OpenAI-style message payload.
+
+    Parameters
+    ----------
+    message : dict
+        Message payload to read.
+
+    Returns
+    -------
+    str
+        Concatenated text content from the message.
+    """
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [part.get("text", "") for part in content if part.get("type") == "text"]
+        return "\n".join(part for part in parts if part)
+    return ""
+
+
 def get_message_elements(message: Dict[str, Any]) -> Dict[str, Any]:
     """Return structured message elements."""
     image = []

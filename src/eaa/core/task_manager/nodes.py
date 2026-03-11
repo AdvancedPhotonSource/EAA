@@ -3,10 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from langgraph.graph import END
+from langgraph.runtime import Runtime
 
 from eaa.core.exceptions import MaxRoundsReached
 from eaa.core.message_proc import generate_openai_message, has_tool_call, print_message, purge_context_images
-from eaa.core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
+from eaa.core.task_manager.state import (
+    ChatGraphState,
+    ChatRuntimeContext,
+    FeedbackLoopState,
+    TaskManagerState,
+)
 
 if TYPE_CHECKING:
     from eaa.core.task_manager.base import BaseTaskManager
@@ -155,7 +161,11 @@ class NodeFactory:
             return END
         return "call_model"
 
-    def call_model(self, state: TaskManagerState) -> dict[str, object]:
+    def call_model(
+        self,
+        state: TaskManagerState,
+        runtime: Runtime[ChatRuntimeContext] | None = None,
+    ) -> dict[str, object]:
         """Call the model for the current graph turn.
 
         Args:
@@ -171,16 +181,46 @@ class NodeFactory:
         )
         message = None
         image_path = None
+        context = self.task_manager.context
         if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
             message = state.initial_prompt
             image_path = state.initial_image_path
+        memory_message = None
+        latest_message = state.messages[-1] if state.messages else None
+        is_chat_user_turn = isinstance(state, ChatGraphState) and state.last_message_is_from_user()
+        if (
+            is_chat_user_turn
+            and runtime is not None
+            and runtime.context is not None
+            and runtime.context.memory_store is not None
+        ):
+            memory_results = self.task_manager.memory_manager.retrieve_user_memories(
+                latest_message,
+                runtime.context.memory_namespace,
+            )
+            memory_message = self.task_manager.memory_manager.build_memory_context_message(memory_results)
+            context = self.task_manager.memory_manager.inject_memory_context(
+                list(self.task_manager.context),
+                memory_message,
+            )
         result = self.task_manager.invoke_model_for_state(
             state,
             message=message,
             image_path=image_path,
-            context=self.task_manager.context,
+            context=context,
             await_user_input_resolver=await_user_input_resolver,
         )
+        if (
+            is_chat_user_turn
+            and runtime is not None
+            and runtime.context is not None
+            and runtime.context.memory_store is not None
+            and self.task_manager.memory_manager.user_message_triggers_memory(latest_message)
+        ):
+            self.task_manager.memory_manager.save_user_memory(
+                latest_message,
+                runtime.context.memory_namespace,
+            )
         if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
             state.initial_prompt_pending = False
             result["initial_prompt_pending"] = False

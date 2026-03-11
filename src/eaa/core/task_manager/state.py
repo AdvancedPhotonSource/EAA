@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,12 @@ class TaskManagerState(BaseModel):
             if role is None or self.messages[index].get("role") == role:
                 return index
         return None
+
+    def last_message_is_from_user(self) -> bool:
+        """Return whether the latest message is a user message."""
+        if not self.messages:
+            return False
+        return self.messages[-1].get("role") == "user"
 
     @property
     def latest_response(self) -> Optional[dict[str, Any]]:
@@ -82,6 +89,14 @@ class ChatGraphState(TaskManagerState):
     bootstrap_message: Optional[Any] = None
     exit_requested: bool = False
     return_requested: bool = False
+
+
+@dataclass
+class ChatRuntimeContext:
+    """Runtime context for the base chat graph."""
+
+    memory_namespace: str
+    memory_store: Any = None
 
 
 class FeedbackLoopState(TaskManagerState):

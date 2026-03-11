@@ -19,9 +19,15 @@ from eaa.core.message_proc import (
     print_message,
 )
 from eaa.core.skill import SkillMetadata, SkillTool, load_skills, split_markdown_into_message_sections
+from eaa.core.task_manager.memory_manager import MemoryManager
 from eaa.core.task_manager.nodes import NodeFactory
 from eaa.core.task_manager.persistence import SQLiteMessageStore
-from eaa.core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
+from eaa.core.task_manager.state import (
+    ChatGraphState,
+    ChatRuntimeContext,
+    FeedbackLoopState,
+    TaskManagerState,
+)
 from eaa.core.task_manager.tool_executor import SerialToolExecutor
 from eaa.core.tooling.base import BaseTool, ToolReturnType
 from eaa.tool.coding import BashCodingTool, PythonCodingTool
@@ -79,10 +85,6 @@ class BaseTaskManager:
         allow_parallel_tool_execution: bool = False,
         build: bool = True,
         *args,
-        memory_vector_store: Optional[Any] = None,
-        memory_notability_filter: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
-        memory_formatter: Optional[Callable[[list[Any]], str]] = None,
-        memory_embedder: Optional[Callable[[Sequence[str]], list[list[float]]]] = None,
         **kwargs,
     ):
         """Initialize the task manager."""
@@ -101,10 +103,7 @@ class BaseTaskManager:
         self.message_db_path = message_db_path
         self.fill_context_with_message_db = fill_context_with_message_db
         self.webui_user_input_last_timestamp = 0
-        self._memory_vector_store = memory_vector_store
-        self._memory_notability_filter = memory_notability_filter
-        self._memory_formatter = memory_formatter
-        self._memory_embedder = memory_embedder
+        self.memory_manager = MemoryManager(self)
         self.persistence = SQLiteMessageStore(message_db_path)
         self.tool_executor = SerialToolExecutor(
             approval_handler=self._request_tool_approval_via_task_manager,
@@ -146,6 +145,7 @@ class BaseTaskManager:
         self.build_db()
         self.build_model()
         self.build_tools()
+        self.build_memory_store()
         self.chat_graph = self.build_chat_graph()
         self.feedback_loop_graph = self.build_feedback_loop_graph()
         self.task_graph = self.build_task_graph()
@@ -170,6 +170,10 @@ class BaseTaskManager:
     def build_tools(self, *args, **kwargs):
         """Register local and skill-provided tools."""
         self.tool_executor.register_tools(self._collect_base_tools())
+
+    def build_memory_store(self) -> None:
+        """Build the long-term memory store used by the chat graph."""
+        self.memory_manager.build_store()
 
     def build_task_graph(self):
         """Build the task-manager-specific graph if needed."""
@@ -859,7 +863,7 @@ class BaseTaskManager:
     def build_chat_graph(self):
         """Build the base chat graph."""
         node_factory = self.node_factory
-        builder = StateGraph(ChatGraphState)
+        builder = StateGraph(ChatGraphState, context_schema=ChatRuntimeContext)
         builder.add_node(
             "await_or_ingest_user_input",
             node_factory.await_or_ingest_user_input,
@@ -968,7 +972,10 @@ class BaseTaskManager:
         )
         self.state = initial_state
         try:
-            final_state = self.chat_graph.invoke(initial_state)
+            final_state = self.chat_graph.invoke(
+                initial_state,
+                context=self.memory_manager.get_runtime_context(),
+            )
         except KeyboardInterrupt:
             interrupt_message = generate_openai_message(
                 content=(

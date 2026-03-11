@@ -266,10 +266,6 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             image_acquisition_tool=copy.deepcopy(self.acquisition_tool),
             image_registration_tool=copy.deepcopy(self.image_registration_tool),
             message_db_path=self.message_db_path,
-            memory_vector_store=self._memory_vector_store,
-            memory_notability_filter=self._memory_notability_filter,
-            memory_formatter=self._memory_formatter,
-            memory_embedder=self._memory_embedder,
         )
         
         try:
