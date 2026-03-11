@@ -679,7 +679,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 path=str(skill_path.parent),
             )
         ]
-        checker_task_manager._inject_skill_doc_messages_to_context(
+        for message in checker_task_manager.tool_executor.build_skill_doc_messages(
             tool_response={
                 "content": {
                     "path": str(skill_path.parent),
@@ -687,7 +687,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 }
             },
             tool_call_info={"function": {"name": skill_tool_name}},
-        )
+            skill_catalog=checker_task_manager.skill_catalog,
+        ):
+            checker_task_manager.update_message_history(
+                message,
+                update_context=True,
+                update_full_history=True,
+            )
         fit_summary = (
             "Line-scan fit summary:\n"
             f"- fwhm: {line_scan_result.get('fwhm')}\n"

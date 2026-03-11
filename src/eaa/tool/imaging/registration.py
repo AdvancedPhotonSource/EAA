@@ -306,7 +306,7 @@ class ImageRegistration(BaseTool):
                 path=str(skill_path.parent),
             )
         ]
-        registration_task._inject_skill_doc_messages_to_context(
+        for message in registration_task.tool_executor.build_skill_doc_messages(
             tool_response={
                 "content": {
                     "path": str(skill_path.parent),
@@ -314,7 +314,13 @@ class ImageRegistration(BaseTool):
                 }
             },
             tool_call_info={"function": {"name": skill_tool_name}},
-        )
+            skill_catalog=registration_task.skill_catalog,
+        ):
+            registration_task.update_message_history(
+                message,
+                update_context=True,
+                update_full_history=True,
+            )
         registration_task.run_conversation(
             message=generate_openai_message(
                 content=(

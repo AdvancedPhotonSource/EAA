@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Literal, Optional, Sequence
 import json
 import logging
@@ -15,10 +14,9 @@ from eaa.core.message_proc import (
     generate_openai_message,
     get_message_elements_as_text,
     get_tool_call_info,
-    has_tool_call,
     print_message,
 )
-from eaa.core.skill import SkillMetadata, SkillTool, load_skills, split_markdown_into_message_sections
+from eaa.core.skill import SkillMetadata, SkillTool, load_skills
 from eaa.core.task_manager.memory_manager import MemoryManager
 from eaa.core.task_manager.nodes import NodeFactory
 from eaa.core.task_manager.persistence import SQLiteMessageStore
@@ -29,7 +27,7 @@ from eaa.core.task_manager.state import (
     TaskManagerState,
 )
 from eaa.core.task_manager.tool_executor import SerialToolExecutor
-from eaa.core.tooling.base import BaseTool, ToolReturnType
+from eaa.core.tooling.base import BaseTool
 from eaa.tool.coding import BashCodingTool, PythonCodingTool
 
 logger = logging.getLogger(__name__)
@@ -60,7 +58,7 @@ class TaskManagerAgentAdapter:
 
     def handle_tool_call(self, message: dict[str, Any], return_tool_return_types: bool = False):
         """Execute tool calls found in an assistant response."""
-        return self.task_manager.execute_tool_calls_from_message(
+        return self.task_manager.tool_executor.execute_tool_calls_from_message(
             message,
             return_tool_return_types=return_tool_return_types,
         )
@@ -365,101 +363,6 @@ class BaseTaskManager:
             return response, outgoing_message
         return response
 
-    def execute_tool_calls_from_message(
-        self,
-        message: dict[str, Any],
-        *,
-        return_tool_return_types: bool = False,
-    ):
-        """Execute tool calls found in an assistant message."""
-        if not has_tool_call(message):
-            empty = ([], []) if return_tool_return_types else []
-            return empty
-        results = self.tool_executor.execute_tool_calls(message["tool_calls"])
-        tool_messages = [result.message for result in results]
-        tool_return_types = [result.return_type for result in results]
-        return (tool_messages, tool_return_types) if return_tool_return_types else tool_messages
-
-    def _parse_tool_response_payload(self, content: Any) -> Optional[Dict[str, Any]]:
-        """Parse dict-like tool payloads from tool message content."""
-        if isinstance(content, dict):
-            return content
-        if not isinstance(content, str):
-            return None
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-
-    def _extract_image_paths_from_tool_response(self, content: Any) -> list[str]:
-        """Extract one or multiple image paths from a tool response payload."""
-        payload = self._parse_tool_response_payload(content)
-        if payload is not None:
-            image_paths = payload.get("image_paths")
-            if isinstance(image_paths, list):
-                return [value for value in image_paths if isinstance(value, str)]
-            image_path = payload.get("image_path")
-            if isinstance(image_path, str):
-                return [image_path]
-            return []
-        if isinstance(content, str):
-            return [content]
-        return []
-
-    def _build_skill_doc_messages(
-        self,
-        tool_response: Dict[str, Any],
-        tool_call_info: Optional[Dict[str, Any]],
-    ) -> list[Dict[str, Any]]:
-        """Expand skill documentation payloads into message sections."""
-        if tool_call_info is None:
-            return []
-        tool_name = tool_call_info.get("function", {}).get("name")
-        skill_tool_names = {skill.tool_name for skill in self.skill_catalog}
-        if tool_name not in skill_tool_names:
-            return []
-        payload = self._parse_tool_response_payload(tool_response.get("content"))
-        if payload is None or not isinstance(payload.get("files"), dict):
-            return []
-        skill_root = payload.get("path")
-        skill_root_path = Path(skill_root) if isinstance(skill_root, str) else None
-        messages = []
-        for relative_path, file_content in payload["files"].items():
-            if not isinstance(relative_path, str) or not isinstance(file_content, str):
-                continue
-            markdown_path = skill_root_path / relative_path if skill_root_path is not None else None
-            for section in split_markdown_into_message_sections(file_content, markdown_path=markdown_path):
-                if len(section["image_paths"]) == 0:
-                    messages.append(generate_openai_message(content=section["text"], role="user"))
-                    continue
-                try:
-                    messages.append(
-                        generate_openai_message(
-                            content=section["text"],
-                            role="user",
-                            image_path=section["image_paths"][0],
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning("Failed to load skill image '%s': %s", section["image_paths"][0], exc)
-                    messages.append(generate_openai_message(content=section["text"], role="user"))
-                for image_path in section["image_paths"][1:]:
-                    try:
-                        messages.append(generate_openai_message(content="", role="user", image_path=image_path))
-                    except Exception as exc:
-                        logger.warning("Failed to load skill image '%s': %s", image_path, exc)
-        return messages
-
-    def _inject_skill_doc_messages_to_context(
-        self,
-        tool_response: Dict[str, Any],
-        tool_call_info: Optional[Dict[str, Any]],
-    ) -> None:
-        """Append expanded skill-doc messages to context and full history."""
-        for message in self._build_skill_doc_messages(tool_response, tool_call_info):
-            self.update_message_history(message, update_context=True, update_full_history=True)
-
     def get_manager_metadata_summary(self) -> str:
         """Return a JSON summary of the task manager configuration."""
         llm_summary = repr(self.llm_config)
@@ -654,64 +557,6 @@ class BaseTaskManager:
             )
         )
 
-    def postprocess_tool_result(
-        self,
-        tool_response: Dict[str, Any],
-        tool_response_type: ToolReturnType,
-        *,
-        message_with_yielded_image: str,
-        allow_non_image_tool_responses: bool,
-        hook_functions: Optional[dict[str, Callable]] = None,
-        tool_call_info: Optional[Dict[str, Any]] = None,
-    ) -> list[dict[str, Any]]:
-        """Generate follow-up messages after a tool finishes."""
-        hook_functions = hook_functions or {}
-        followup_messages: list[dict[str, Any]] = []
-        for skill_doc_message in self._build_skill_doc_messages(tool_response, tool_call_info):
-            followup_messages.append(skill_doc_message)
-        if tool_response_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
-            image_paths = self._extract_image_paths_from_tool_response(tool_response.get("content"))
-            if len(image_paths) > 0:
-                hook = hook_functions.get("image_path_tool_response")
-                if hook is not None:
-                    for image_path in image_paths:
-                        hook_messages = hook(image_path) or []
-                        followup_messages.extend(list(hook_messages))
-                else:
-                    followup_messages.append(
-                        generate_openai_message(
-                            content=message_with_yielded_image,
-                            image_path=image_paths,
-                            role="user",
-                        )
-                    )
-            elif tool_response_type == ToolReturnType.IMAGE_PATH:
-                logger.warning(
-                    "Tool returned IMAGE_PATH but no valid image path was found in %s",
-                    tool_response.get("content"),
-                )
-            elif not allow_non_image_tool_responses:
-                followup_messages.append(
-                    generate_openai_message(
-                        content=(
-                            f"The tool should return an image path, but got {str(tool_response_type)}. "
-                            "Make sure you call the right tool correctly."
-                        ),
-                        role="user",
-                    )
-                )
-        elif not allow_non_image_tool_responses:
-            followup_messages.append(
-                generate_openai_message(
-                    content=(
-                        f"The tool should return an image path, but got {str(tool_response_type)}. "
-                        "Make sure you call the right tool correctly."
-                    ),
-                    role="user",
-                )
-            )
-        return followup_messages
-
     def prerun_check(self, *args, **kwargs) -> bool:
         """Run preflight validation before execution."""
         return True
@@ -831,11 +676,11 @@ class BaseTaskManager:
         """
         self.state = state
         response = state.latest_response
-        tool_messages, tool_return_types = self.execute_tool_calls_from_message(
+        tool_messages, tool_return_types = self.tool_executor.execute_tool_calls_from_message(
             response,
             return_tool_return_types=True,
         )
-        tool_call_info_list = get_tool_call_info(response, index=None) if has_tool_call(response) else []
+        tool_call_info_list = get_tool_call_info(response, index=None) or []
         for tool_message in tool_messages:
             if not self.use_webui:
                 print_message(tool_message)
@@ -845,9 +690,10 @@ class BaseTaskManager:
         for index, (tool_message, tool_return_type) in enumerate(zip(tool_messages, tool_return_types)):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
             followup_messages.extend(
-                self.postprocess_tool_result(
+                self.tool_executor.build_tool_followup_messages(
                     tool_message,
                     tool_return_type,
+                    skill_catalog=self.skill_catalog,
                     message_with_yielded_image=message_with_yielded_image,
                     allow_non_image_tool_responses=allow_non_image_tool_responses,
                     hook_functions=hook_functions,

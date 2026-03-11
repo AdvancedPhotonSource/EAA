@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 import json
 import logging
 
 from eaa.core.message_proc import generate_openai_message
+from eaa.core.skill import SkillMetadata, split_markdown_into_message_sections
 from eaa.core.tooling.base import (
     BaseTool,
     ExposedToolSpec,
@@ -67,6 +69,39 @@ class SerialToolExecutor:
         """Execute assistant-requested tool calls serially."""
         return [self.execute_tool_call(tool_call) for tool_call in tool_calls]
 
+    def execute_tool_calls_from_message(
+        self,
+        message: dict[str, Any],
+        *,
+        return_tool_return_types: bool = False,
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], list[ToolReturnType]]:
+        """Execute tool calls found in an assistant message.
+
+        Parameters
+        ----------
+        message : dict[str, Any]
+            Assistant message that may contain tool calls.
+        return_tool_return_types : bool, default=False
+            Whether to return the normalized tool return types together with
+            the tool messages.
+
+        Returns
+        -------
+        list[dict[str, Any]] or tuple[list[dict[str, Any]], list[ToolReturnType]]
+            Tool messages alone, or tool messages paired with their return
+            types when ``return_tool_return_types`` is ``True``.
+        """
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list) or len(tool_calls) == 0:
+            empty = ([], []) if return_tool_return_types else []
+            return empty
+        results = self.execute_tool_calls(tool_calls)
+        tool_messages = [result.message for result in results]
+        tool_return_types = [result.return_type for result in results]
+        if return_tool_return_types:
+            return tool_messages, tool_return_types
+        return tool_messages
+
     def execute_tool_call(self, tool_call: dict[str, Any]) -> ToolExecutionResult:
         """Execute one tool call and normalize its response."""
         function = tool_call.get("function", {})
@@ -116,6 +151,216 @@ class SerialToolExecutor:
         if not isinstance(parsed, dict):
             raise ValueError("Tool arguments must decode into a dictionary.")
         return parsed
+
+    @staticmethod
+    def parse_tool_response_payload(content: Any) -> Optional[Dict[str, Any]]:
+        """Parse dict-like tool payloads from tool message content.
+
+        Parameters
+        ----------
+        content : Any
+            Tool message content payload.
+
+        Returns
+        -------
+        dict[str, Any] or None
+            Parsed dictionary payload when available.
+        """
+        if isinstance(content, dict):
+            return content
+        if not isinstance(content, str):
+            return None
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @classmethod
+    def extract_image_paths_from_tool_response(cls, content: Any) -> list[str]:
+        """Extract one or more image paths from a tool response payload.
+
+        Parameters
+        ----------
+        content : Any
+            Tool message content payload.
+
+        Returns
+        -------
+        list[str]
+            Extracted image paths.
+        """
+        payload = cls.parse_tool_response_payload(content)
+        if payload is not None:
+            image_paths = payload.get("image_paths")
+            if isinstance(image_paths, list):
+                return [value for value in image_paths if isinstance(value, str)]
+            image_path = payload.get("image_path")
+            if isinstance(image_path, str):
+                return [image_path]
+            return []
+        if isinstance(content, str):
+            return [content]
+        return []
+
+    @classmethod
+    def build_skill_doc_messages(
+        cls,
+        tool_response: Dict[str, Any],
+        tool_call_info: Optional[Dict[str, Any]],
+        skill_catalog: list[SkillMetadata],
+    ) -> list[Dict[str, Any]]:
+        """Expand skill-documentation tool payloads into OpenAI messages.
+
+        Parameters
+        ----------
+        tool_response : dict[str, Any]
+            Tool response message containing the documentation payload.
+        tool_call_info : dict[str, Any], optional
+            Tool call metadata from the originating assistant message.
+        skill_catalog : list[SkillMetadata]
+            Skills available to the task manager.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Message sequence extracted from the skill documentation payload.
+        """
+        if tool_call_info is None:
+            return []
+        tool_name = tool_call_info.get("function", {}).get("name")
+        skill_tool_names = {skill.tool_name for skill in skill_catalog}
+        if tool_name not in skill_tool_names:
+            return []
+        payload = cls.parse_tool_response_payload(tool_response.get("content"))
+        if payload is None or not isinstance(payload.get("files"), dict):
+            return []
+        skill_root = payload.get("path")
+        skill_root_path = Path(skill_root) if isinstance(skill_root, str) else None
+        messages = []
+        for relative_path, file_content in payload["files"].items():
+            if not isinstance(relative_path, str) or not isinstance(file_content, str):
+                continue
+            markdown_path = skill_root_path / relative_path if skill_root_path is not None else None
+            for section in split_markdown_into_message_sections(
+                file_content,
+                markdown_path=markdown_path,
+            ):
+                if len(section["image_paths"]) == 0:
+                    messages.append(generate_openai_message(content=section["text"], role="user"))
+                    continue
+                try:
+                    messages.append(
+                        generate_openai_message(
+                            content=section["text"],
+                            role="user",
+                            image_path=section["image_paths"][0],
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to load skill image '%s': %s",
+                        section["image_paths"][0],
+                        exc,
+                    )
+                    messages.append(generate_openai_message(content=section["text"], role="user"))
+                for image_path in section["image_paths"][1:]:
+                    try:
+                        messages.append(generate_openai_message(content="", role="user", image_path=image_path))
+                    except Exception as exc:
+                        logger.warning("Failed to load skill image '%s': %s", image_path, exc)
+        return messages
+
+    @classmethod
+    def build_tool_followup_messages(
+        cls,
+        tool_response: Dict[str, Any],
+        tool_response_type: ToolReturnType,
+        *,
+        skill_catalog: list[SkillMetadata],
+        message_with_yielded_image: str,
+        allow_non_image_tool_responses: bool,
+        hook_functions: Optional[dict[str, Callable]] = None,
+        tool_call_info: Optional[Dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
+        """Generate follow-up messages after a tool finishes.
+
+        Parameters
+        ----------
+        tool_response : dict[str, Any]
+            Normalized tool response message.
+        tool_response_type : ToolReturnType
+            Declared return type for the executed tool.
+        skill_catalog : list[SkillMetadata]
+            Skills available to the task manager.
+        message_with_yielded_image : str
+            User-facing text used when an image path is returned.
+        allow_non_image_tool_responses : bool
+            Whether non-image tool results are acceptable in the current flow.
+        hook_functions : dict[str, Callable], optional
+            Optional post-tool hook mapping.
+        tool_call_info : dict[str, Any], optional
+            Tool call metadata from the originating assistant message.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Follow-up messages to append after tool execution.
+        """
+        hook_functions = hook_functions or {}
+        followup_messages = cls.build_skill_doc_messages(
+            tool_response,
+            tool_call_info,
+            skill_catalog,
+        )
+        if tool_response_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
+            image_paths = cls.extract_image_paths_from_tool_response(tool_response.get("content"))
+            if len(image_paths) > 0:
+                hook = hook_functions.get("image_path_tool_response")
+                if hook is not None:
+                    for image_path in image_paths:
+                        hook_messages = hook(image_path) or []
+                        followup_messages.extend(list(hook_messages))
+                else:
+                    followup_messages.append(
+                        generate_openai_message(
+                            content=message_with_yielded_image,
+                            image_path=image_paths,
+                            role="user",
+                        )
+                    )
+            elif tool_response_type == ToolReturnType.IMAGE_PATH:
+                logger.warning(
+                    "Tool returned IMAGE_PATH but no valid image path was found in %s",
+                    tool_response.get("content"),
+                )
+            elif not allow_non_image_tool_responses:
+                followup_messages.append(cls.build_non_image_tool_warning(tool_response_type))
+        elif not allow_non_image_tool_responses:
+            followup_messages.append(cls.build_non_image_tool_warning(tool_response_type))
+        return followup_messages
+
+    @staticmethod
+    def build_non_image_tool_warning(tool_response_type: ToolReturnType) -> dict[str, Any]:
+        """Build a warning message for unexpected non-image tool results.
+
+        Parameters
+        ----------
+        tool_response_type : ToolReturnType
+            Declared return type for the executed tool.
+
+        Returns
+        -------
+        dict[str, Any]
+            User message warning about the unexpected tool result type.
+        """
+        return generate_openai_message(
+            content=(
+                f"The tool should return an image path, but got {str(tool_response_type)}. "
+                "Make sure you call the right tool correctly."
+            ),
+            role="user",
+        )
 
     @staticmethod
     def serialize_result(result: Any, return_type: ToolReturnType) -> str:
