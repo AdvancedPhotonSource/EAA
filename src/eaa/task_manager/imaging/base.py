@@ -29,7 +29,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         llm_config: LLMConfig = None,
         memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (), 
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         *args, **kwargs
     ) -> None:
@@ -44,7 +44,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             Memory configuration forwarded to the agent.
         tools : list[BaseTool]
             A list of tools provided to the agent.
-        message_db_path : Optional[str]
+        session_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -56,7 +56,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             llm_config=llm_config,
             memory_config=memory_config,
             tools=tools, 
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             *args, **kwargs
         )
@@ -80,5 +80,14 @@ class ImagingBaseTaskManager(BaseTaskManager):
         return new_image_path
         
     def run(self, *args, **kwargs) -> None:
-        """Run the task manager."""
-        super().run(*args, **kwargs)
+        """Run the imaging task manager.
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised because concrete imaging task managers must
+            implement their own `run()` method.
+        """
+        raise NotImplementedError(
+            "Concrete imaging task managers must implement `run()`."
+        )

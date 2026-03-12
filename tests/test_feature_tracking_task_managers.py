@@ -18,6 +18,7 @@ def test_roi_search_task_manager_run_uses_feedback_loop(monkeypatch):
         build=False,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
+        session_db_path=None,
     )
     captured = {}
 
@@ -43,6 +44,7 @@ def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
         build=False,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
+        session_db_path=None,
     )
     captured = {}
 

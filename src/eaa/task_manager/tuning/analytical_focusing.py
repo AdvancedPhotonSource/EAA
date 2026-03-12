@@ -57,7 +57,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         optimization_tool: Optional[BaseSequentialOptimizationTool] = None,
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         line_scan_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
@@ -113,7 +113,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             2 tuples, where the first tuple gives the lower bounds and the
             second tuple gives the upper bounds. The order of the parameters
             should match the order of the initial parameters.
-        message_db_path : Optional[str], optional
+        session_db_path : Optional[str], optional
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -244,10 +244,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             param_setting_tool=param_setting_tool,
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             *args, **kwargs
         )
+
 
     def create_bo_tool(self, parameter_ranges: list[tuple[float, ...], tuple[float, ...]]):
         bo_tool = BayesianOptimizationTool(
@@ -419,7 +420,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             content = f"Line scan completed with kwargs: ```{self.line_scan_kwargs}```\nFWHM = {res['fwhm']:.4f}"
             image_path = res.get("image_path")
             if isinstance(image_path, str):
-                self.record_system_message(content, image_path=image_path)
+                self.record_system_message(content, image_path=image_path, update_context=False)
             else:
                 self.record_system_message(content)
 
@@ -577,6 +578,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.record_system_message(
             content="Linear drift model status updated. Current status (y and x):",
             image_path=image_paths,
+            update_context=False,
         )
 
     def build_line_scan_precheck_message(
@@ -666,7 +668,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             llm_config=self.llm_config,
             memory_config=self.memory_config,
             tools=[self.acquisition_tool],
-            message_db_path=None,
+            session_db_path=None,
             use_coding_tools=False,
             build=True,
         )
@@ -780,6 +782,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.record_system_message(
                 "Optimization status updated.",
                 image_path=fig_path,
+                update_context=False,
             )
         except Exception as exc:
             logger.warning("Failed to visualize optimization status: %s", exc)
@@ -793,7 +796,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             )
         content = f"Acquired 2D scan with kwargs: ```{self.image_acquisition_kwargs}```"
         if isinstance(image_path, str):
-            self.record_system_message(content, image_path=image_path)
+            self.record_system_message(content, image_path=image_path, update_context=False)
         else:
             self.record_system_message(content)
 
@@ -834,6 +837,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     f"alignment_offset={alignment_offset.tolist()}```"
                 ),
                 image_path=registration_fig_path,
+                update_context=False,
             )
         except Exception as exc:
             logger.warning(

@@ -39,7 +39,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
         use_feature_tracking_subtask: bool = False,
         feature_tracking_kwargs: Optional[dict] = None,
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         *args, **kwargs
     ):
@@ -103,7 +103,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
 
             Initial positions should not be included in the dictionary because
             they will be determined by the logic.
-        message_db_path : Optional[str], optional
+        session_db_path : Optional[str], optional
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -131,7 +131,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             additional_tools=[acquisition_tool, *additional_tools],
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             *args, **kwargs
         )
@@ -265,7 +265,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             memory_config=self.memory_config,
             image_acquisition_tool=copy.deepcopy(self.acquisition_tool),
             image_registration_tool=copy.deepcopy(self.image_registration_tool),
-            message_db_path=self.message_db_path,
+            session_db_path=self.session_db_path,
         )
         
         try:
@@ -375,6 +375,8 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         additional_prompt : Optional[str]
             If provided, this prompt will be added to the initial prompt.
         """
+        self.prerun_check()
+
         if reference_image_path is None and reference_feature_description is None:
             raise ValueError(
                 "Either `reference_image_path` or `reference_feature_description` must be provided."
@@ -535,6 +537,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             *args, **kwargs
         )
 
+    def run_from_checkpoint(self) -> None:
+        """Resume the scanning-microscope focusing workflow from a checkpoint."""
+        self.prerun_check()
+        self.run_feedback_loop_from_checkpoint(
+            hook_functions=self.active_feedback_hook_functions,
+        )
+
 
 class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
     
@@ -546,7 +555,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
         acquisition_tool: AcquireImage = None,
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         *args, **kwargs
     ) -> None:
@@ -573,7 +582,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
             2 tuples, where the first tuple gives the lower bounds and the
             second tuple gives the upper bounds. The order of the parameters
             should match the order of the initial parameters.
-        message_db_path : Optional[str]
+        session_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -594,7 +603,7 @@ class ParameterTuningTaskManager(BaseParameterTuningTaskManager):
             additional_tools=[param_setting_tool],
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             *args, **kwargs
         )

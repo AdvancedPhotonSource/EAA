@@ -30,11 +30,9 @@ class SerialToolExecutor:
     def __init__(
         self,
         approval_handler: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
-        allow_parallel_tool_execution: bool = False,
-    ):
+    ) -> None:
         """Initialize the executor."""
         self.approval_handler = approval_handler
-        self.allow_parallel_tool_execution = allow_parallel_tool_execution
         self.tools: list[BaseTool] = []
         self.tool_specs: dict[str, ExposedToolSpec] = {}
         self.tool_execution_history: list[dict[str, Any]] = []

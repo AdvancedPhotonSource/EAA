@@ -24,7 +24,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 20,
         objective_function: Callable = None,
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         *args, **kwargs
     ) -> None:
@@ -53,7 +53,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             a single argument, which is a (n_points, n_features) tensor of
             points to evaluate the objective function at. It should return
             a (n_points, n_objectives) tensor of objective function values.
-        message_db_path : Optional[str]
+        session_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -87,7 +87,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             llm_config=llm_config,
             memory_config=memory_config,
             tools=additional_tools,
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             *args, **kwargs
         )

@@ -139,16 +139,16 @@ class MemoryManager:
         """Return the persistence directory for long-term memory."""
         if self.config is not None and self.config.persist_directory:
             return self.config.persist_directory
-        if self.task_manager.message_db_path:
-            return str(Path(self.task_manager.message_db_path).resolve().parent / ".eaa_memory")
+        if self.task_manager.session_db_path:
+            return str(Path(self.task_manager.session_db_path).resolve().parent / ".eaa_memory")
         return str(Path.cwd() / ".eaa_memory")
 
     def get_namespace(self) -> str:
         """Return the namespace used for long-term memory."""
         if self.config is not None and self.config.namespace:
             return self.config.namespace
-        if self.task_manager.message_db_path:
-            return Path(self.task_manager.message_db_path).stem
+        if self.task_manager.session_db_path:
+            return Path(self.task_manager.session_db_path).stem
         return self.task_manager.__class__.__name__
 
     def get_runtime_context(self) -> ChatRuntimeContext:

@@ -43,7 +43,7 @@ task_manager = MicroscopyOpticsTuningBOTaskManager(
     parameter_setting_tool=parameter_tool,
     bayesian_optimization_tool=bo_tool,
     image_acquisition_kwargs={"loc_x": 0.0, "loc_y": 0.0, "size_x": 64, "size_y": 64},
-    message_db_path="messages.db",
+    session_db_path="messages.db",
 )
 
 task_manager.run(n_iterations=5)

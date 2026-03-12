@@ -32,7 +32,7 @@ task_manager = AnalyticalFeatureTrackingTaskManager(
     image_acquisition_tool=acquisition_tool,
     image_acquisition_tool_x_coordinate_args=("loc_x",),
     image_acquisition_tool_y_coordinate_args=("loc_y",),
-    message_db_path="messages.db",
+    session_db_path="messages.db",
 )
 
 offset = task_manager.run(

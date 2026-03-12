@@ -19,7 +19,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (),
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         *args,
         **kwargs,
@@ -38,7 +38,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             Optional registration tool available during ROI search.
         additional_tools : list[BaseTool], optional
             Additional tools to register alongside the imaging tools.
-        message_db_path : str, optional
+        session_db_path : str, optional
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
@@ -54,7 +54,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             image_acquisition_tool=image_acquisition_tool,
             image_registration_tool=image_registration_tool,
             additional_tools=additional_tools,
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             args=args,
             kwargs=kwargs,
@@ -106,6 +106,8 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         **kwargs
             Unused keyword compatibility arguments.
         """
+        self.prerun_check()
+
         if initial_prompt is None:
             initial_prompt = (
                 f"You are given a tool that acquires an image of a sub-region "
@@ -165,4 +167,11 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             max_rounds=max_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
+        )
+
+    def run_from_checkpoint(self) -> None:
+        """Resume the ROI-search workflow from a checkpoint."""
+        self.prerun_check()
+        self.run_feedback_loop_from_checkpoint(
+            hook_functions=self.active_feedback_hook_functions,
         )

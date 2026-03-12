@@ -18,7 +18,7 @@ def initialize_feature_tracking_task_manager(
     image_acquisition_tool: AcquireImage = None,
     image_registration_tool: ImageRegistration = None,
     additional_tools: list[BaseTool] = (),
-    message_db_path: Optional[str] = None,
+    session_db_path: Optional[str] = "session.sqlite",
     build: bool = True,
     args: tuple = (),
     kwargs: Optional[dict] = None,
@@ -39,7 +39,7 @@ def initialize_feature_tracking_task_manager(
         Optional registration tool used by the workflow.
     additional_tools : list[BaseTool], optional
         Additional tools to register alongside the imaging tools.
-    message_db_path : str, optional
+    session_db_path : str, optional
         SQLite path used for transcript persistence.
     build : bool, optional
         Whether to build the task manager immediately.
@@ -65,7 +65,7 @@ def initialize_feature_tracking_task_manager(
         llm_config=llm_config,
         memory_config=memory_config,
         tools=tools,
-        message_db_path=message_db_path,
+        session_db_path=session_db_path,
         build=build,
         *(args or ()),
         **(kwargs or {}),
@@ -130,7 +130,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (),
-        message_db_path: Optional[str] = None,
+        session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
         *args,
         **kwargs,
@@ -149,7 +149,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             Optional registration tool used during feature tracking.
         additional_tools : list[BaseTool], optional
             Additional tools to register alongside the imaging tools.
-        message_db_path : str, optional
+        session_db_path : str, optional
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
@@ -165,7 +165,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             image_acquisition_tool=image_acquisition_tool,
             image_registration_tool=image_registration_tool,
             additional_tools=additional_tools,
-            message_db_path=message_db_path,
+            session_db_path=session_db_path,
             build=build,
             args=args,
             kwargs=kwargs,
@@ -246,6 +246,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         max_arounds_reached_behavior : {"return", "raise"}, optional
             Behavior when the workflow reaches ``max_rounds``.
         """
+        self.prerun_check()
+
         if reference_image_path is None:
             user_image_input = self.get_user_input(
                 prompt="Please provide the reference image as: <img /path/to/image.png>.",
@@ -332,6 +334,13 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             },
             termination_behavior=termination_behavior,
             max_arounds_reached_behavior=max_arounds_reached_behavior,
+        )
+
+    def run_from_checkpoint(self) -> None:
+        """Resume the feature-tracking workflow from a checkpoint."""
+        self.prerun_check()
+        self.run_feedback_loop_from_checkpoint(
+            hook_functions=self.active_feedback_hook_functions,
         )
 
 __all__ = [

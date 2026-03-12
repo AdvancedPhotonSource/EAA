@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Literal, Optional, Sequence
 import json
 import logging
+import sqlite3
 import time
 
 from langgraph.graph import START, StateGraph
@@ -19,7 +21,7 @@ from eaa.core.message_proc import (
 from eaa.core.skill import SkillMetadata, SkillTool, load_skills
 from eaa.core.task_manager.memory_manager import MemoryManager
 from eaa.core.task_manager.nodes import NodeFactory
-from eaa.core.task_manager.persistence import SQLiteMessageStore
+from eaa.core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
 from eaa.core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
@@ -65,7 +67,35 @@ class TaskManagerAgentAdapter:
 
 
 class BaseTaskManager:
-    """LangGraph-backed base task manager for EAA."""
+    """LangGraph-backed base task manager for EAA.
+
+    Parameters
+    ----------
+    llm_config : LLMConfig, optional
+        Configuration used to build the chat model.
+    memory_config : Optional[MemoryManagerConfig], optional
+        Configuration for the long-term memory store.
+    tools : list[BaseTool], optional
+        Base tools exposed to the task manager.
+    skill_dirs : Optional[Sequence[str]], optional
+        Directories searched for EAA skills.
+    session_db_path : Optional[str], default="session.sqlite"
+        Path to the shared SQLite session database. This database stores
+        LangGraph checkpoints, explicit WebUI display messages, WebUI input
+        messages, and WebUI status flags.
+    use_webui : bool, default=False
+        Whether to enable WebUI-driven user input and WebUI display writes.
+    use_coding_tools : bool, default=True
+        Whether to register built-in coding tools.
+    run_codes_in_sandbox : bool, default=False
+        Whether built-in coding tools should execute code in sandbox mode.
+    prune_checkpoints : bool, default=True
+        Whether to keep only the latest checkpoint per graph thread in the
+        shared SQLite session database.
+    build : bool, default=True
+        Whether to initialize persistence, model, tools, memory, and graphs
+        during construction.
+    """
 
     assistant_system_message = ""
 
@@ -75,12 +105,11 @@ class BaseTaskManager:
         memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (),
         skill_dirs: Optional[Sequence[str]] = None,
-        message_db_path: Optional[str] = None,
-        fill_context_with_message_db: bool = False,
+        session_db_path: Optional[str] = "session.sqlite",
         use_webui: bool = False,
         use_coding_tools: bool = True,
         run_codes_in_sandbox: bool = False,
-        allow_parallel_tool_execution: bool = False,
+        prune_checkpoints: bool = True,
         build: bool = True,
         *args,
         **kwargs,
@@ -97,15 +126,12 @@ class BaseTaskManager:
         self.use_webui = use_webui
         self.use_coding_tools = use_coding_tools
         self.run_codes_in_sandbox = run_codes_in_sandbox
-        self.allow_parallel_tool_execution = allow_parallel_tool_execution
-        self.message_db_path = message_db_path
-        self.fill_context_with_message_db = fill_context_with_message_db
-        self.webui_user_input_last_timestamp = 0
+        self.prune_checkpoints = prune_checkpoints
+        self.session_db_path = session_db_path
         self.memory_manager = MemoryManager(self)
-        self.persistence = SQLiteMessageStore(message_db_path)
+        self.persistence = SQLiteMessageStore(self.session_db_path)
         self.tool_executor = SerialToolExecutor(
             approval_handler=self._request_tool_approval_via_task_manager,
-            allow_parallel_tool_execution=allow_parallel_tool_execution,
         )
         self.model = None
         self.agent = TaskManagerAgentAdapter(self)
@@ -113,8 +139,13 @@ class BaseTaskManager:
         self.chat_graph = None
         self.feedback_loop_graph = None
         self.task_graph = None
-        if use_webui and not message_db_path:
-            raise ValueError("`use_webui` requires `message_db_path` to be set.")
+        self.active_feedback_hook_functions: dict[str, Callable] = {}
+
+        self.checkpoint_connections: dict[tuple[str, str], sqlite3.Connection] = {}
+        self.checkpoint_graphs: dict[tuple[str, str], Any] = {}
+
+        if use_webui and not session_db_path:
+            raise ValueError("`use_webui` requires `session_db_path` to be set.")
         if build:
             self.build()
 
@@ -151,12 +182,6 @@ class BaseTaskManager:
     def build_db(self, *args, **kwargs):
         """Initialize message persistence and optionally hydrate prior messages."""
         self.persistence.connect()
-        if self.use_webui:
-            self.webui_user_input_last_timestamp = self.persistence.get_latest_webui_input_timestamp()
-        if self.fill_context_with_message_db:
-            loaded_messages = self.persistence.load_messages()
-            self.context.extend(loaded_messages)
-            self.full_history.extend(loaded_messages)
 
     def build_model(self, *args, **kwargs):
         """Build the chat model if an LLM config is provided."""
@@ -173,9 +198,98 @@ class BaseTaskManager:
         """Build the long-term memory store used by the chat graph."""
         self.memory_manager.build_store()
 
-    def build_task_graph(self):
+    def build_task_graph(self, checkpointer: Any = None):
         """Build the task-manager-specific graph if needed."""
         return None
+
+    def resolve_checkpoint_storage(self, graph_name: str) -> tuple[str, str]:
+        """Resolve the shared checkpoint database path and graph thread id.
+
+        Parameters
+        ----------
+        graph_name : str
+            Graph identifier being checkpointed.
+
+        Returns
+        -------
+        tuple[str, str]
+            Resolved SQLite database path and checkpoint thread id.
+        """
+        if self.session_db_path is None:
+            raise ValueError(
+                "Checkpointing requires `session_db_path` because the WebUI relay "
+                "and LangGraph checkpoints share one SQLite file."
+            )
+        shared_path = str(Path(self.session_db_path).expanduser().resolve())
+        return shared_path, graph_name
+
+    def get_state_checkpoint_config(
+        self,
+        checkpoint_thread_id: str,
+    ) -> dict[str, Any]:
+        """Return the LangGraph config used for a checkpoint file."""
+        return {
+            "configurable": {
+                "thread_id": checkpoint_thread_id,
+            }
+        }
+
+    def get_checkpointed_graph(
+        self,
+        graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+    ) -> tuple[Any, Optional[dict[str, Any]]]:
+        """Return a graph compiled with the shared persistent checkpointer."""
+        resolved_checkpoint_path, checkpoint_thread_id = self.resolve_checkpoint_storage(
+            graph_name,
+        )
+        cache_key = (graph_name, resolved_checkpoint_path)
+        if cache_key not in self.checkpoint_graphs:
+            connection = sqlite3.connect(resolved_checkpoint_path, check_same_thread=False)
+            saver = PrunableSqliteSaver(
+                connection,
+                prune_checkpoints=self.prune_checkpoints,
+            )
+            saver.setup()
+            if graph_name == "chat_graph":
+                graph = self.build_chat_graph(checkpointer=saver)
+            elif graph_name == "feedback_loop_graph":
+                graph = self.build_feedback_loop_graph(checkpointer=saver)
+            elif graph_name == "task_graph":
+                graph = self.build_task_graph(checkpointer=saver)
+            else:
+                raise ValueError(f"Unsupported graph name for checkpointing: {graph_name}.")
+            self.checkpoint_connections[cache_key] = connection
+            self.checkpoint_graphs[cache_key] = graph
+        return self.checkpoint_graphs[cache_key], self.get_state_checkpoint_config(
+            checkpoint_thread_id=checkpoint_thread_id,
+        )
+
+    def get_checkpoint_state_model(
+        self,
+        graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+    ) -> type[TaskManagerState]:
+        """Return the state model for a checkpointed graph."""
+        if graph_name == "chat_graph":
+            return ChatGraphState
+        if graph_name == "feedback_loop_graph":
+            return FeedbackLoopState
+        if graph_name == "task_graph":
+            return TaskManagerState
+        raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
+
+    def load_state_from_checkpoint(
+        self,
+        graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+    ) -> Optional[TaskManagerState]:
+        """Load the latest state snapshot for a graph, if it exists."""
+        graph, config = self.get_checkpointed_graph(graph_name)
+        if graph is None or config is None:
+            return None
+        snapshot = graph.get_state(config)
+        if snapshot.created_at is None or snapshot.values is None or len(snapshot.values) == 0:
+            return None
+        state_model = self.get_checkpoint_state_model(graph_name)
+        return state_model.model_validate(snapshot.values)
 
     def _collect_base_tools(self) -> list[BaseTool]:
         tools: list[BaseTool] = list(self.tools)
@@ -226,13 +340,27 @@ class BaseTaskManager:
         self,
         content: str,
         image_path: Optional[str | list[str]] = None,
-        update_context: bool = False,
+        update_context: bool = True,
+        write_to_webui: bool = True,
     ) -> None:
-        """Append a system message to history."""
+        """Append a system message to history.
+
+        Parameters
+        ----------
+        content : str
+            Message text to append.
+        image_path : Optional[str | list[str]], optional
+            Optional image path or paths to attach to the system message.
+        update_context : bool, default=False
+            Whether to append the system message to the active model context.
+        write_to_webui : bool, default=True
+            Whether to append the message to the explicit WebUI display table.
+        """
         self.update_message_history(
             generate_openai_message(content=content, role="system", image_path=image_path),
             update_context=update_context,
             update_full_history=True,
+            write_to_webui=write_to_webui,
         )
 
     def update_message_history(
@@ -240,18 +368,36 @@ class BaseTaskManager:
         message: Dict[str, Any],
         update_context: bool = True,
         update_full_history: bool = True,
-        update_db: bool = True,
+        write_to_webui: bool = True,
     ) -> None:
-        """Append a message to in-memory and persisted history."""
+        """Append a message to in-memory history for checkpoint persistence.
+
+        Parameters
+        ----------
+        message : Dict[str, Any]
+            Message payload to append.
+        update_context : bool, default=True
+            Whether to append the message to the active context.
+        update_full_history : bool, default=True
+            Whether to append the message to the transcript history.
+        write_to_webui : bool, default=True
+            Whether to append the message to the explicit WebUI display table.
+        """
         if update_context:
             self.context.append(message)
         if update_full_history:
             self.full_history.append(message)
-        if update_db:
+        if write_to_webui and self.session_db_path is not None:
             self.persistence.append_message(message)
 
-    def add_message_to_db(self, message: Dict[str, Any]) -> None:
-        """Persist a message to the SQLite transcript store."""
+    def add_webui_message_to_db(self, message: Dict[str, Any]) -> None:
+        """Append a display-only message to the WebUI.
+
+        Parameters
+        ----------
+        message : Dict[str, Any]
+            Message payload to expose through the WebUI.
+        """
         self.persistence.append_message(message)
 
     def get_user_input(
@@ -266,13 +412,17 @@ class BaseTaskManager:
             logger.info("Waiting for user input through the WebUI relay database.")
             self.set_user_input_requested(True)
             if display_prompt_in_webui:
-                self.add_message_to_db({"role": "system", "content": prompt})
+                self.update_message_history(
+                    {"role": "system", "content": prompt},
+                    update_context=False,
+                    update_full_history=False,
+                    write_to_webui=True,
+                )
             while True:
-                message = self.persistence.poll_new_webui_input(self.webui_user_input_last_timestamp)
-                if message is not None:
-                    self.webui_user_input_last_timestamp = self.persistence.get_latest_webui_input_timestamp()
+                queued_input = self.persistence.dequeue_webui_input()
+                if queued_input is not None:
                     self.set_user_input_requested(False)
-                    return message
+                    return queued_input
                 time.sleep(1)
         self.set_user_input_requested(True)
         message = input(prompt)
@@ -441,10 +591,10 @@ class BaseTaskManager:
             "* `/return`: return to upper level task\n"
         )
         if self.use_webui:
-            self.add_message_to_db({"role": "system", "content": text})
+            self.add_webui_message_to_db({"role": "system", "content": text})
         else:
             print(text)
-            self.add_message_to_db({"role": "system", "content": text})
+            self.add_webui_message_to_db({"role": "system", "content": text})
         return text
 
     def display_available_skills(self) -> str:
@@ -460,10 +610,10 @@ class BaseTaskManager:
                 ]
             )
         if self.use_webui:
-            self.add_message_to_db({"role": "system", "content": text})
+            self.add_webui_message_to_db({"role": "system", "content": text})
         else:
             print(text)
-            self.add_message_to_db({"role": "system", "content": text})
+            self.add_webui_message_to_db({"role": "system", "content": text})
         return text
 
     def enter_monitoring_mode(self, task_description: str):
@@ -517,7 +667,7 @@ class BaseTaskManager:
                 self.run_feedback_loop(initial_prompt=initial_prompt, termination_behavior="return")
                 time.sleep(time_interval)
             except KeyboardInterrupt:
-                self.add_message_to_db(
+                self.add_webui_message_to_db(
                     generate_openai_message(
                         content="Keyboard interrupt detected. Terminating monitoring task.",
                         role="system",
@@ -562,8 +712,35 @@ class BaseTaskManager:
         return True
 
     def run(self, *args, **kwargs) -> None:
-        """Run the task manager."""
+        """Run the task manager.
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised because concrete task managers must implement their
+            own `run()` method.
+        """
+        raise NotImplementedError(
+            "Concrete task managers must implement `run()`."
+        )
+
+    def run_from_checkpoint(self) -> None:
+        """Resume a task manager from a task-graph checkpoint."""
         self.prerun_check()
+        loaded_state = self.load_state_from_checkpoint("task_graph")
+        if loaded_state is None:
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage("task_graph")
+            raise ValueError(
+                f"No task-graph checkpoint found in shared checkpoint DB "
+                f"{resolved_checkpoint_path}."
+            )
+        self.state = loaded_state
+        graph, checkpoint_config = self.get_checkpointed_graph("task_graph")
+        self.task_graph = graph
+        if graph is None or checkpoint_config is None:
+            raise ValueError("The task manager does not define a checkpointable task graph.")
+        final_state = graph.invoke(None, config=checkpoint_config)
+        self.state = TaskManagerState.model_validate(final_state)
 
     def _message_contains_image(self, message: dict[str, Any]) -> bool:
         """Return whether a message contains image payloads."""
@@ -706,7 +883,7 @@ class BaseTaskManager:
         )
         return state.model_dump()
 
-    def build_chat_graph(self):
+    def build_chat_graph(self, checkpointer: Any = None):
         """Build the base chat graph."""
         node_factory = self.node_factory
         builder = StateGraph(ChatGraphState, context_schema=ChatRuntimeContext)
@@ -734,9 +911,9 @@ class BaseTaskManager:
             node_factory.route_after_chat_response,
         )
         builder.add_edge("execute_tools", "call_model")
-        return builder.compile()
+        return builder.compile(checkpointer=checkpointer)
 
-    def build_feedback_loop_graph(self):
+    def build_feedback_loop_graph(self, checkpointer: Any = None):
         """Build the base feedback-loop graph."""
         node_factory = self.node_factory
         builder = StateGraph(FeedbackLoopState)
@@ -780,7 +957,7 @@ class BaseTaskManager:
             "finalize_round",
             node_factory.route_after_feedback_round,
         )
-        return builder.compile()
+        return builder.compile(checkpointer=checkpointer)
 
     def run_conversation(
         self,
@@ -817,10 +994,18 @@ class BaseTaskManager:
             await_user_input=message is None,
         )
         self.state = initial_state
+        graph = self.chat_graph
+        graph_kwargs: dict[str, Any] = {
+            "context": self.memory_manager.get_runtime_context(),
+        }
+        if self.session_db_path is not None:
+            graph, checkpoint_config = self.get_checkpointed_graph("chat_graph")
+            self.chat_graph = graph
+            graph_kwargs["config"] = checkpoint_config
         try:
-            final_state = self.chat_graph.invoke(
+            final_state = graph.invoke(
                 initial_state,
-                context=self.memory_manager.get_runtime_context(),
+                **graph_kwargs,
             )
         except KeyboardInterrupt:
             interrupt_message = generate_openai_message(
@@ -843,6 +1028,41 @@ class BaseTaskManager:
                     termination_behavior=termination_behavior,
                 )
             return
+        self.state = ChatGraphState.model_validate(final_state)
+
+    def run_conversation_from_checkpoint(self) -> None:
+        """Resume the chat graph directly from a saved checkpoint.
+
+        Notes
+        -----
+        Checkpoints are loaded from `session_db_path`, which is configured via
+        the task manager constructor's `session_db_path` argument.
+        """
+        loaded_state = self.load_state_from_checkpoint("chat_graph")
+        if loaded_state is None:
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage("chat_graph")
+            raise ValueError(
+                f"No chat-graph checkpoint found in shared checkpoint DB "
+                f"{resolved_checkpoint_path}."
+            )
+        resumed_state = ChatGraphState.model_validate(loaded_state.model_dump())
+        restart_from_state = resumed_state.exit_requested or resumed_state.return_requested
+        if restart_from_state:
+            resumed_state.exit_requested = False
+            resumed_state.return_requested = False
+            resumed_state.bootstrap_message = None
+            resumed_state.await_user_input = True
+        self.state = resumed_state
+        graph, checkpoint_config = self.get_checkpointed_graph("chat_graph")
+        self.chat_graph = graph
+        graph_input: Optional[ChatGraphState] = None
+        if restart_from_state:
+            graph_input = resumed_state
+        final_state = graph.invoke(
+            graph_input,
+            config=checkpoint_config,
+            context=self.memory_manager.get_runtime_context(),
+        )
         self.state = ChatGraphState.model_validate(final_state)
 
     def run_feedback_loop(
@@ -902,6 +1122,7 @@ class BaseTaskManager:
         """
         if termination_behavior not in ["ask", "return"]:
             raise ValueError("`termination_behavior` must be either 'ask' or 'return'.")
+        self.active_feedback_hook_functions = hook_functions or {}
         initial_state = FeedbackLoopState(
             messages=list(self.context),
             full_history=list(self.full_history),
@@ -915,15 +1136,21 @@ class BaseTaskManager:
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
             allow_non_image_tool_responses=allow_non_image_tool_responses,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
-            hook_functions=hook_functions or {},
+            hook_functions={},
             expected_tool_call_sequence=expected_tool_call_sequence,
             expected_tool_call_sequence_tolerance=expected_tool_call_sequence_tolerance,
             termination_behavior=termination_behavior,
             max_arounds_reached_behavior=max_arounds_reached_behavior,
         )
         self.state = initial_state
+        graph = self.feedback_loop_graph
+        graph_kwargs: dict[str, Any] = {}
+        if self.session_db_path is not None:
+            graph, checkpoint_config = self.get_checkpointed_graph("feedback_loop_graph")
+            self.feedback_loop_graph = graph
+            graph_kwargs["config"] = checkpoint_config
         try:
-            final_state = self.feedback_loop_graph.invoke(initial_state)
+            final_state = graph.invoke(initial_state, **graph_kwargs)
         except KeyboardInterrupt:
             interrupt_message = generate_openai_message(
                 content=(
@@ -940,6 +1167,46 @@ class BaseTaskManager:
                 update_full_history=True,
             )
             if termination_behavior == "ask":
-                self.run_conversation(store_all_images_in_context=True, termination_behavior="user")
+                self.run_conversation(
+                    store_all_images_in_context=True,
+                    termination_behavior="user",
+                )
             return
+        self.state = FeedbackLoopState.model_validate(final_state)
+
+    def run_feedback_loop_from_checkpoint(
+        self,
+        hook_functions: Optional[dict[str, Callable]] = None,
+    ) -> None:
+        """Resume the feedback-loop graph directly from a saved checkpoint.
+
+        Notes
+        -----
+        Checkpoints are loaded from `session_db_path`, which is configured via
+        the task manager constructor's `session_db_path` argument.
+        """
+        loaded_state = self.load_state_from_checkpoint("feedback_loop_graph")
+        if loaded_state is None:
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage("feedback_loop_graph")
+            raise ValueError(
+                f"No feedback-loop checkpoint found in shared checkpoint DB "
+                f"{resolved_checkpoint_path}."
+            )
+        self.active_feedback_hook_functions = hook_functions or {}
+        resumed_state = FeedbackLoopState.model_validate(loaded_state.model_dump())
+        restart_from_human_gate = resumed_state.exit_requested or resumed_state.return_requested
+        if restart_from_human_gate:
+            resumed_state.exit_requested = False
+            resumed_state.return_requested = False
+            resumed_state.await_user_input = True
+        self.state = resumed_state
+        graph, checkpoint_config = self.get_checkpointed_graph("feedback_loop_graph")
+        self.feedback_loop_graph = graph
+        if restart_from_human_gate:
+            checkpoint_config = graph.update_state(
+                checkpoint_config,
+                resumed_state.model_dump(),
+                as_node="handle_human_gate",
+            )
+        final_state = graph.invoke(None, config=checkpoint_config)
         self.state = FeedbackLoopState.model_validate(final_state)

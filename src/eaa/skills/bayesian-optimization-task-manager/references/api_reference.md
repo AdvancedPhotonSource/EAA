@@ -11,7 +11,7 @@ def __init__(
     initial_points: Optional[torch.Tensor] = None,
     n_initial_points: int = 20,
     objective_function: Callable = None,
-    message_db_path: Optional[str] = "messages.db",
+    session_db_path: Optional[str] = "messages.db",
     build: bool = True,
     *args,
     **kwargs,
@@ -27,7 +27,7 @@ Initializes a Bayesian optimization task manager with a BO tool and objective fu
 - `initial_points`: Optional tensor of initial points.
 - `n_initial_points`: Number of random initial points if none are supplied.
 - `objective_function`: Callable objective function to evaluate (required).
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 
 ## `BayesianOptimizationTaskManager.run`

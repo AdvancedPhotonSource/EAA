@@ -10,7 +10,7 @@ def __init__(
     acquisition_tool: AcquireImage = None,
     initial_parameters: dict[str, float] = None,
     parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
-    message_db_path: Optional[str] = "messages.db",
+    session_db_path: Optional[str] = "messages.db",
     build: bool = True,
     *args,
     **kwargs,
@@ -25,7 +25,7 @@ Creates a parameter tuning task manager that updates optics parameters and evalu
 - `acquisition_tool`: Tool for image acquisition between parameter updates.
 - `initial_parameters`: Initial parameter values.
 - `parameter_ranges`: Parameter bounds for tuning.
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 
 ## `ParameterTuningTaskManager.run`

@@ -7,7 +7,7 @@ def __init__(
     llm_config: LLMConfig = None,
     memory_config: Optional[MemoryManagerConfig] = None,
     image_acquisition_tool: AcquireImage = None,
-    message_db_path: Optional[str] = "messages.db",
+    session_db_path: Optional[str] = "messages.db",
     build: bool = True,
     image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
     image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
@@ -21,7 +21,7 @@ Builds an analytical feature tracking manager that searches in a spiral pattern.
 - `llm_config`: Configuration for the LLM (required for feature presence detection).
 - `memory_config`: Optional memory configuration forwarded to the agent.
 - `image_acquisition_tool`: Acquisition tool used to collect images (required).
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 - `image_acquisition_tool_x_coordinate_args`: Argument names used for x-coordinate updates.
 - `image_acquisition_tool_y_coordinate_args`: Argument names used for y-coordinate updates.

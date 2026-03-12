@@ -78,7 +78,6 @@ class NodeFactory:
                     message,
                     update_context=True,
                     update_full_history=True,
-                    update_db=not self.task_manager.use_webui,
                 )
             elif isinstance(bootstrap, dict):
                 if not self.task_manager.use_webui:
@@ -87,7 +86,6 @@ class NodeFactory:
                     bootstrap,
                     update_context=True,
                     update_full_history=True,
-                    update_db=not self.task_manager.use_webui,
                 )
             elif isinstance(bootstrap, list):
                 for message in bootstrap:
@@ -97,7 +95,6 @@ class NodeFactory:
                         message,
                         update_context=True,
                         update_full_history=True,
-                        update_db=not self.task_manager.use_webui,
                     )
             else:
                 raise ValueError("`message` must be one of: str, dict, list[dict], or None.")
@@ -143,7 +140,6 @@ class NodeFactory:
                 message,
                 update_context=True,
                 update_full_history=True,
-                update_db=not self.task_manager.use_webui,
             )
             state.await_user_input = False
             return state.model_dump()
@@ -256,7 +252,7 @@ class NodeFactory:
                 state,
                 message_with_yielded_image=state.message_with_yielded_image,
                 allow_non_image_tool_responses=state.allow_non_image_tool_responses,
-                hook_functions=state.hook_functions,
+                hook_functions=self.task_manager.active_feedback_hook_functions,
             )
         return self.task_manager.execute_tools_for_state(
             state,

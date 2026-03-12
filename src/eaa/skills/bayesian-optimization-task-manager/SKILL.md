@@ -30,7 +30,7 @@ task_manager = BayesianOptimizationTaskManager(
     bayesian_optimization_tool=bo_tool,
     objective_function=objective_function,
     n_initial_points=5,
-    message_db_path="messages.db",
+    session_db_path="messages.db",
 )
 
 task_manager.run(n_iterations=10)

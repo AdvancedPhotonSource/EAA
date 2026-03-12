@@ -10,7 +10,7 @@ def __init__(
     acquisition_tool: AcquireImage = None,
     initial_parameters: dict[str, float] = None,
     parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
-    message_db_path: Optional[str] = "messages.db",
+    session_db_path: Optional[str] = "messages.db",
     build: bool = True,
     line_scan_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
     line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
@@ -29,7 +29,7 @@ Builds an analytical focusing manager that uses registration and Bayesian optimi
 - `acquisition_tool`: Tool for 2D image acquisition and line scans.
 - `initial_parameters`: Initial parameter values.
 - `parameter_ranges`: Parameter bounds for tuning.
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 - `line_scan_tool_x_coordinate_args`: Line scan args for x-coordinate updates.
 - `line_scan_tool_y_coordinate_args`: Line scan args for y-coordinate updates.

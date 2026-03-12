@@ -33,7 +33,7 @@ task_manager = FeatureTrackingTaskManager(
     llm_config=OpenAIConfig(api_key="YOUR_API_KEY", model="gpt-4o-mini"),
     image_acquisition_tool=acquisition_tool,
     image_registration_tool=registration_tool,
-    message_db_path="messages.db",
+    session_db_path="messages.db",
 )
 
 task_manager.run(

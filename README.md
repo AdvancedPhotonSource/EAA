@@ -124,17 +124,21 @@ as `<img path/to/img.png>`.
 ## WebUI
 
 EAA provides a lightweight standalone WebUI that runs as a separate process
-and communicates with the agent process through a SQLite database. Agent messages
-are written into the database, which is polled by the WebUI and displayed; user inputs
-in the WebUI are written into the database and read by the agent process.
+and communicates with the agent process through a SQLite database. When you run
+the task manager with LangGraph checkpointing, the WebUI now reads the transcript
+directly from the checkpoint database. User inputs submitted from the WebUI are
+queued in a separate table in that same SQLite file and read by the agent process.
 
 ### Configure the task manager
 
-When creating the task manager, set the path of the SQLite database using `message_db_path`:
+When creating the task manager, set the path of the shared SQLite database using
+`session_db_path`. If you also checkpoint the graph, pass the same path as the
+checkpoint path to keep WebUI relay state and LangGraph checkpoints in one file.
 ```
 TaskManager(
     ...
-    message_db_path="/absolute/path/to/messages.db"
+    session_db_path="/absolute/path/to/session.sqlite",
+    prune_checkpoints=True,  # optional: keep only the latest checkpoint
 )
 ```
 
@@ -144,7 +148,7 @@ Create a `start_webui.py` (you can copy the example under `examples/webui/start_
 ```
 from eaa.gui.chat import set_message_db_path, run_webui
 
-set_message_db_path("/absolute/path/to/messages.db")
+set_message_db_path("/absolute/path/to/session.sqlite")
 
 if __name__ == "__main__":
     run_webui(host="127.0.0.1", port=8008)

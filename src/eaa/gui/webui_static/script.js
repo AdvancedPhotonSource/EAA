@@ -17,6 +17,8 @@
   let polling = true;
   let userPinnedScroll = false;
   let dragCounter = 0;
+  let pendingUserMessages = [];
+  let pendingMessageCounter = 0;
 
   function escapeHtml(text) {
     return String(text)
@@ -248,6 +250,10 @@
   function createMessageElement(msg) {
     const container = document.createElement("div");
     container.className = "message";
+    container.dataset.messageId = String(msg.id);
+    if (msg.pending) {
+      container.dataset.pending = "true";
+    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -427,10 +433,61 @@
     const shouldAutoScroll = !userPinnedScroll || isNearBottom();
 
     for (const msg of newMessages) {
+      consumeMatchingPendingMessage(msg);
       const el = createMessageElement(msg);
       messagesEl.appendChild(el);
       lastMessageId = msg.id;
     }
+
+    if (shouldAutoScroll) {
+      setTimeout(() => {
+        scrollToBottom(messagesEl);
+      }, 150);
+    }
+  }
+
+  function normaliseMessageContent(content) {
+    return String(content || "").trim();
+  }
+
+  function removePendingMessage(pendingId) {
+    pendingUserMessages = pendingUserMessages.filter((item) => item.id !== pendingId);
+    const pendingEl = messagesEl.querySelector(`[data-message-id="${pendingId}"]`);
+    if (pendingEl) {
+      pendingEl.remove();
+    }
+  }
+
+  function consumeMatchingPendingMessage(message) {
+    if (!message) return;
+    if (message.role !== "user" && message.role !== "user_webui") return;
+    const normalisedContent = normaliseMessageContent(message.content);
+    if (!normalisedContent) return;
+    const match = pendingUserMessages.find(
+      (item) => item.content === normalisedContent
+    );
+    if (!match) return;
+    removePendingMessage(match.id);
+  }
+
+  function appendPendingUserMessage(content) {
+    const normalisedContent = normaliseMessageContent(content);
+    if (!normalisedContent) return;
+
+    const shouldAutoScroll = !userPinnedScroll || isNearBottom();
+    const pendingId = `pending-${pendingMessageCounter++}`;
+    pendingUserMessages.push({ id: pendingId, content: normalisedContent });
+
+    const el = createMessageElement({
+      id: pendingId,
+      timestamp: new Date().toISOString(),
+      role: "user",
+      content: content,
+      tool_calls: null,
+      images: [],
+      pending: true
+    });
+    messagesEl.appendChild(el);
 
     if (shouldAutoScroll) {
       setTimeout(() => {
@@ -660,6 +717,7 @@
       const message = error.error || `HTTP ${res.status}`;
       throw new Error(message);
     }
+    appendPendingUserMessage(content);
     return res.json().catch(() => ({}));
   }
 

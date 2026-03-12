@@ -1,15 +1,16 @@
 import httpx
+import sqlite3
 from openai import UnprocessableEntityError
 from types import SimpleNamespace
 
 from eaa.api.llm_config import OpenAIConfig
 from eaa.api.memory import MemoryManagerConfig
 from eaa.core.task_manager.base import BaseTaskManager
-from eaa.core.task_manager.state import FeedbackLoopState, TaskManagerState
+from eaa.core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
 
 
 def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
     task_manager.chat_graph = task_manager.build_chat_graph()
 
@@ -35,7 +36,7 @@ def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch)
 
 
 def test_feedback_initial_response_sets_await_user_input(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
 
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
@@ -53,7 +54,7 @@ def test_feedback_initial_response_sets_await_user_input(monkeypatch):
 
 
 def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
     task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
 
@@ -82,7 +83,7 @@ def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch)
 
 
 def test_run_conversation_keyboard_interrupt_reenters_chat(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
 
     invoke_calls = {"count": 0}
@@ -113,7 +114,7 @@ def test_run_conversation_keyboard_interrupt_reenters_chat(monkeypatch):
 
 
 def test_run_feedback_loop_keyboard_interrupt_enters_chat_mode(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
 
     class DummyGraph:
@@ -148,6 +149,234 @@ def test_run_feedback_loop_keyboard_interrupt_enters_chat_mode(monkeypatch):
     assert printed_roles == ["system"]
 
 
+def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "session.sqlite"
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "Hello! How can I help you today?"}
+
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    first_manager.model = object()
+
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+    first_manager.run_conversation(message="hello", termination_behavior="user")
+
+    resumed_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    resumed_manager.model = object()
+
+    input_calls = {"count": 0}
+
+    def fake_get_user_input(*args, **kwargs):
+        input_calls["count"] += 1
+        return "/exit"
+
+    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
+
+    resumed_manager.run_conversation_from_checkpoint()
+
+    assert input_calls["count"] == 1
+    assert resumed_manager.full_history == first_manager.full_history
+    assert checkpoint_base.exists()
+
+
+def test_feedback_loop_checkpoint_supports_runtime_hook_functions(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "feedback.sqlite"
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "TERMINATE"}
+
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    task_manager.model = object()
+    checkpointed_graph, checkpoint_config = task_manager.get_checkpointed_graph(
+        "feedback_loop_graph"
+    )
+
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    initial_state = FeedbackLoopState(
+        initial_prompt="test prompt",
+        termination_behavior="return",
+    )
+    task_manager.state = initial_state
+    final_state = checkpointed_graph.invoke(initial_state, config=checkpoint_config)
+    task_manager.state = FeedbackLoopState.model_validate(final_state)
+
+    hook_functions = {
+        "image_path_tool_response": test_feedback_loop_checkpoint_supports_runtime_hook_functions
+    }
+    task_manager.run_feedback_loop_from_checkpoint(hook_functions=hook_functions)
+
+    assert task_manager.active_feedback_hook_functions == hook_functions
+
+    assert checkpoint_base.exists()
+
+
+def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "feedback_resume.sqlite"
+    model_calls = {"count": 0}
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        model_calls["count"] += 1
+        return {"role": "assistant", "content": "NEED HUMAN"}
+
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    first_manager.model = object()
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+
+    first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
+
+    saved_state = first_manager.load_state_from_checkpoint("feedback_loop_graph")
+    assert saved_state is not None
+    assert saved_state.exit_requested is True
+
+    resumed_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    resumed_manager.model = object()
+
+    input_calls = {"count": 0}
+
+    def fake_get_user_input(*args, **kwargs):
+        input_calls["count"] += 1
+        return "/exit"
+
+    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
+
+    resumed_manager.run_feedback_loop_from_checkpoint()
+
+    assert input_calls["count"] == 1
+    assert model_calls["count"] == 1
+
+
+def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
+    shared_db = tmp_path / "shared.sqlite"
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "Hello! How can I help you today?"}
+
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(shared_db),
+        prune_checkpoints=True,
+    )
+    task_manager.model = object()
+    checkpointed_graph, checkpoint_config = task_manager.get_checkpointed_graph("chat_graph")
+
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+
+    initial_state = ChatGraphState(
+        messages=[],
+        full_history=[],
+        round_index=0,
+        termination_behavior="user",
+        store_all_images_in_context=True,
+        bootstrap_message="hello",
+        await_user_input=False,
+    )
+    task_manager.state = initial_state
+    final_state = checkpointed_graph.invoke(
+        initial_state,
+        config=checkpoint_config,
+        context=task_manager.memory_manager.get_runtime_context(),
+    )
+    task_manager.state = ChatGraphState.model_validate(final_state)
+
+    assert checkpoint_config["configurable"]["thread_id"] == "chat_graph"
+    assert shared_db.exists()
+    assert not (tmp_path / "shared.chat_graph.sqlite").exists()
+
+    connection = sqlite3.connect(shared_db)
+    checkpoint_rows = connection.execute(
+        "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?",
+        (checkpoint_config["configurable"]["thread_id"],),
+    ).fetchone()
+    assert checkpoint_rows is not None
+    assert checkpoint_rows[0] == 1
+
+    write_rows = connection.execute(
+        "SELECT COUNT(*) FROM writes WHERE thread_id != ?",
+        (checkpoint_config["configurable"]["thread_id"],),
+    ).fetchone()
+    connection.close()
+    assert write_rows is not None
+    assert write_rows[0] == 0
+
+    resumed_state = task_manager.load_state_from_checkpoint("chat_graph")
+    assert resumed_state is not None
+    assert resumed_state.full_history == task_manager.full_history
+
+
+def test_get_user_input_reads_from_webui_inputs_table(tmp_path):
+    shared_db = tmp_path / "webui.sqlite"
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        session_db_path=str(shared_db),
+    )
+    task_manager.build_db()
+    task_manager.persistence.enqueue_webui_input("queued response")
+
+    message = task_manager.get_user_input("Prompt: ", display_prompt_in_webui=True)
+
+    assert message == "queued response"
+    status_row = task_manager.persistence.connection.execute(
+        "SELECT user_input_requested FROM status WHERE id = 1"
+    ).fetchone()
+    assert status_row == (0,)
+
+
+def test_get_user_input_consumes_pending_webui_input_from_before_build(tmp_path):
+    shared_db = tmp_path / "webui.sqlite"
+    bootstrap_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        session_db_path=str(shared_db),
+    )
+    bootstrap_manager.build_db()
+    bootstrap_manager.persistence.enqueue_webui_input("queued before wait")
+    bootstrap_manager.persistence.connection.close()
+
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        session_db_path=str(shared_db),
+    )
+    task_manager.build_db()
+
+    message = task_manager.get_user_input("Prompt: ", display_prompt_in_webui=True)
+
+    assert message == "queued before wait"
+    remaining_rows = task_manager.persistence.connection.execute(
+        "SELECT COUNT(*) FROM webui_inputs"
+    ).fetchone()
+    assert remaining_rows == (0,)
+
+
 def test_task_manager_state_derives_latest_messages():
     state = TaskManagerState(
         messages=[
@@ -165,7 +394,7 @@ def test_task_manager_state_derives_latest_messages():
 
 
 def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     captured = {}
 
     def fake_execute_tools_for_state(
@@ -210,6 +439,7 @@ def test_memory_llm_config_overrides_embedding_client_connection(monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
+        session_db_path=None,
         llm_config=OpenAIConfig(model="chat-model", base_url="https://chat.example", api_key="chat-key"),
         memory_config=MemoryManagerConfig(
             enabled=True,
@@ -255,6 +485,7 @@ def test_memory_retrieval_falls_back_to_string_input_on_422():
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
+        session_db_path=None,
         llm_config=OpenAIConfig(model="chat-model", api_key="chat-key"),
         memory_config=MemoryManagerConfig(enabled=True),
     )
@@ -300,6 +531,7 @@ def test_chat_graph_saves_keyword_triggered_long_term_memory(monkeypatch, tmp_pa
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
+        session_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(
             enabled=True,
@@ -343,6 +575,7 @@ def test_chat_graph_retrieves_long_term_memory_into_model_context(monkeypatch, t
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
+        session_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(
             enabled=True,

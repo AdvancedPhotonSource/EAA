@@ -14,7 +14,7 @@ def __init__(
     parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
     use_feature_tracking_subtask: bool = False,
     feature_tracking_kwargs: Optional[dict] = None,
-    message_db_path: Optional[str] = "messages.db",
+    session_db_path: Optional[str] = "messages.db",
     build: bool = True,
     *args,
     **kwargs,
@@ -33,7 +33,7 @@ Initializes a focusing task manager that alternates line scans, parameter update
 - `parameter_ranges`: Parameter bounds for tuning.
 - `use_feature_tracking_subtask`: Whether to enable feature tracking when drift occurs.
 - `feature_tracking_kwargs`: Keyword args for feature tracking (required if enabled).
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 
 ## `ScanningMicroscopeFocusingTaskManager.run`

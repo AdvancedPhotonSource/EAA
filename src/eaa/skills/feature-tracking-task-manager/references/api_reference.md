@@ -9,7 +9,7 @@ def __init__(
     image_acquisition_tool: AcquireImage = None,
     image_registration_tool: ImageRegistration = None,
     additional_tools: list[BaseTool] = (),
-    message_db_path: Optional[str] = None,
+    session_db_path: Optional[str] = None,
     build: bool = True,
     *args,
     **kwargs,
@@ -23,7 +23,7 @@ Creates an ROI-search task manager that acquires images while searching for a ta
 - `image_acquisition_tool`: Acquisition tool used to collect images.
 - `image_registration_tool`: Optional registration tool available during the workflow.
 - `additional_tools`: Extra tools available to the task manager.
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 
 ## `ROISearchTaskManager.run`
@@ -66,7 +66,7 @@ def __init__(
     image_acquisition_tool: AcquireImage = None,
     image_registration_tool: ImageRegistration = None,
     additional_tools: list[BaseTool] = (),
-    message_db_path: Optional[str] = None,
+    session_db_path: Optional[str] = None,
     build: bool = True,
     *args,
     **kwargs,
@@ -80,7 +80,7 @@ Creates a feature-tracking task manager that acquires and registers images to re
 - `image_acquisition_tool`: Acquisition tool used to collect images.
 - `image_registration_tool`: Registration tool for aligning images.
 - `additional_tools`: Extra tools available to the task manager.
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 - `build`: Whether to build internal state immediately.
 
 ## `FeatureTrackingTaskManager.run`

@@ -46,6 +46,7 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
             image_acquisition_tool=acquisition_tool,
             image_acquisition_tool_x_coordinate_args=("x_center",),
             image_acquisition_tool_y_coordinate_args=("y_center",),
+            session_db_path=None,
         )
         return task_manager, acquisition_tool, image
 

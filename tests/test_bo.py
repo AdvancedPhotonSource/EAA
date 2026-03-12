@@ -116,6 +116,7 @@ class TestBayesianOptimization(tutils.BaseTester):
             bayesian_optimization_tool=bo_tool,
             n_initial_points=20,
             objective_function=objective_function,
+            session_db_path=None,
         )
         task_manager.run(n_iterations=20)
         

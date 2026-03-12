@@ -14,7 +14,7 @@ def __init__(
     n_initial_points: int = 20,
     image_acquisition_kwargs: dict = {},
     feature_tracking_kwargs: dict = {},
-    message_db_path: Optional[str] = "messages.db",
+    session_db_path: Optional[str] = "messages.db",
     *args,
     **kwargs,
 ):
@@ -32,7 +32,7 @@ Creates a task manager that combines Bayesian optimization with feature tracking
 - `n_initial_points`: Number of random initial points if none are supplied.
 - `image_acquisition_kwargs`: Arguments for acquiring images during evaluation.
 - `feature_tracking_kwargs`: Args for the feature tracking subtask.
-- `message_db_path`: Optional SQLite path for storing chat history.
+- `session_db_path`: Optional SQLite path for storing chat history.
 
 ## `MicroscopyOpticsTuningBOTaskManager.run`
 ```python

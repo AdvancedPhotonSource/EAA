@@ -41,7 +41,7 @@ task_manager = ScanningMicroscopeFocusingTaskManager(
     acquisition_tool=acquisition_tool,
     initial_parameters={"focus": 0.0, "astigmatism": 0.0},
     parameter_ranges=parameter_ranges,
-    message_db_path="messages.db",
+    session_db_path="messages.db",
 )
 
 task_manager.run(

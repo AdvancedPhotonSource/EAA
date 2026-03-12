@@ -22,8 +22,6 @@ import re
 import sqlite3
 from typing import Any
 import base64
-import json
-import ast
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query
@@ -31,7 +29,11 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from eaa.core.util import get_timestamp
+from eaa.core.task_manager.persistence import (
+    PrunableSqliteSaver,
+    SQLiteMessageStore,
+    parse_persisted_images,
+)
 
 
 _message_db_path = None
@@ -56,24 +58,21 @@ def _ensure_db():
 def _open_db_connection() -> sqlite3.Connection:
     _ensure_db()
     conn = sqlite3.connect(_message_db_path)
+    PrunableSqliteSaver(conn).setup()
     return conn
 
 
-def _query_messages(since_id: int | None = None) -> list[tuple[Any, ...]]:
+def _query_messages(since_id: int | None = None) -> list[dict[str, Any]]:
+    """Return checkpoint-backed transcript messages for the WebUI."""
     conn = _open_db_connection()
     try:
-        cursor = conn.cursor()
-        if since_id is None:
-            cursor.execute(
-                "SELECT rowid, timestamp, role, content, tool_calls, image FROM messages ORDER BY rowid"
-            )
-        else:
-            cursor.execute(
-                "SELECT rowid, timestamp, role, content, tool_calls, image FROM messages WHERE rowid > ? ORDER BY rowid",
-                (since_id,),
-            )
-        rows = cursor.fetchall()
-        return rows
+        store = SQLiteMessageStore(_message_db_path)
+        store.connection = conn
+        webui_messages = store.load_webui_messages(since_id=since_id)
+        if len(webui_messages) > 0:
+            return webui_messages
+        saver = PrunableSqliteSaver(conn)
+        return saver.load_latest_checkpoint_messages(since_id=since_id)
     finally:
         conn.close()
 
@@ -97,49 +96,14 @@ def _query_user_input_requested() -> int | None:
 
 def _parse_images_field(image_value: Any) -> list[str]:
     """Parse one or multiple images from DB `image` value."""
-    if not image_value:
-        return []
-    if isinstance(image_value, bytes):
-        image_value = image_value.decode("utf-8", errors="ignore")
-    if not isinstance(image_value, str):
-        return []
-
-    def _maybe_parse_nested(value: Any) -> Any:
-        if not isinstance(value, str):
-            return value
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            try:
-                return ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                return value
-
-    parsed = _maybe_parse_nested(image_value)
-    # Some rows may be double-encoded (string containing a serialized list).
-    parsed = _maybe_parse_nested(parsed)
-
-    if isinstance(parsed, list):
-        raw_images = [item for item in parsed if isinstance(item, str)]
-    elif isinstance(parsed, str):
-        raw_images = [parsed]
-    else:
-        raw_images = [str(image_value)]
-
-    image_urls: list[str] = []
-    for raw_image in raw_images:
-        if raw_image.startswith("data:image"):
-            image_urls.append(raw_image)
-        else:
-            image_urls.append(f"data:image/png;base64,{raw_image}")
-    return image_urls
+    return parse_persisted_images(image_value)
 
 def _insert_user_message(content: str):
     conn = _open_db_connection()
     try:
         conn.execute(
-            "INSERT INTO messages (timestamp, role, content, tool_calls, image) VALUES (?, ?, ?, ?, ?)",
-            (str(get_timestamp(as_int=True)), "user_webui", content, None, None),
+            "INSERT INTO webui_inputs (timestamp, content) VALUES (strftime('%Y%m%d%H%M%f', 'now'), ?)",
+            (content,),
         )
         conn.commit()
     finally:
@@ -181,23 +145,7 @@ def get_app(static_dir: str | None = None) -> FastAPI:
     @app.get("/api/messages")
     def api_get_messages(since_id: int | None = Query(default=None)):
         try:
-            rows = _query_messages(since_id=since_id)
-            data = []
-            for row in rows:
-                rowid, timestamp, role, content, tool_calls, image_b64 = row
-                image_urls = _parse_images_field(image_b64)
-                data.append(
-                    {
-                        "id": rowid,
-                        "timestamp": timestamp,
-                        "role": role,
-                        "content": content or "",
-                        "tool_calls": tool_calls,
-                        "image": image_urls[0] if len(image_urls) > 0 else None,
-                        "images": image_urls,
-                    }
-                )
-            return JSONResponse({"messages": data})
+            return JSONResponse({"messages": _query_messages(since_id=since_id)})
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
