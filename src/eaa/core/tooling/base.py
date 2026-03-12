@@ -2,6 +2,7 @@ import base64
 import inspect
 import io
 import os
+import re
 import typing
 from dataclasses import dataclass
 from enum import StrEnum, auto
@@ -61,9 +62,25 @@ class BaseTool:
         build: bool = True,
         *args,
         require_approval: bool = False,
+        name: Optional[str] = None,
         **kwargs,
     ):
-        """Initialize the tool."""
+        """Initialize the tool.
+
+        Parameters
+        ----------
+        build : bool, optional
+            Whether to call :meth:`build` during initialization.
+        *args
+            Positional arguments forwarded to :meth:`build`.
+        require_approval : bool, optional
+            Whether execution of the tool requires approval.
+        name : str, optional
+            Instance-level tool name override.
+        **kwargs
+            Keyword arguments forwarded to :meth:`build`.
+        """
+        self.name = name if name is not None else self.get_default_name()
         self.require_approval = require_approval
         if build:
             self.build(*args, **kwargs)
@@ -71,6 +88,20 @@ class BaseTool:
 
     def build(self, *args, **kwargs):
         """Build internal tool state."""
+
+    @classmethod
+    def get_default_name(cls) -> str:
+        """Return the default instance name for the tool class."""
+        declared_name = cls.__dict__.get("name")
+        if isinstance(declared_name, str) and declared_name != BaseTool.name:
+            return declared_name
+        return cls.camel_to_snake(cls.__name__)
+
+    @staticmethod
+    def camel_to_snake(name: str) -> str:
+        """Convert a CamelCase class name into snake_case."""
+        step_one = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+        return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", step_one).lower()
 
     def convert_image_to_base64(self, image: np.ndarray) -> str:
         """Convert an image array to a base64-encoded PNG string."""
