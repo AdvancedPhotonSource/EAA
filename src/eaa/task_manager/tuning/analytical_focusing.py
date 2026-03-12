@@ -489,26 +489,28 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
     def update_linear_drift_models(
         self,
         parameters: np.ndarray,
-        current_position_yx: np.ndarray | None = None,
-    ):
+        drift_wrt_initial_yx: np.ndarray,
+    ) -> None:
+        """Update the linear drift models with cumulative drift samples.
+
+        Parameters
+        ----------
+        parameters : np.ndarray
+            Optics parameter vector associated with the drift sample.
+        drift_wrt_initial_yx : np.ndarray
+            Cumulative line-scan drift ``[dy, dx]`` relative to the initial
+            line-scan position.
+        """
         if len(self.registration_tools) <= 1:
             return
-        if self.initial_line_scan_position is None:
-            return
-
-        if current_position_yx is None:
-            current_position_yx = self.extract_line_scan_position(
-                self.line_scan_kwargs
-            )
-
-        delta_yx = current_position_yx - self.initial_line_scan_position
         x_train = np.array(parameters, dtype=float).reshape(1, -1).tolist()
-        self.drift_model_y.update(x=x_train, y=[[float(delta_yx[0])]])
-        self.drift_model_x.update(x=x_train, y=[[float(delta_yx[1])]])
+        drift_wrt_initial_yx = np.array(drift_wrt_initial_yx, dtype=float)
+        self.drift_model_y.update(x=x_train, y=[[float(drift_wrt_initial_yx[0])]])
+        self.drift_model_x.update(x=x_train, y=[[float(drift_wrt_initial_yx[1])]])
         self.record_system_message(
             "Updated linear drift model with parameter-drift sample:```"
             f"parameters={np.array(parameters, dtype=float).tolist()}, "
-            f"delta_yx={delta_yx.tolist()}, "
+            f"delta_yx={drift_wrt_initial_yx.tolist()}, "
             f"n_samples={self.drift_model_y.get_n_parameter_drift_points_collected()}.```"
         )
 
@@ -997,7 +999,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             ):
                 self.update_linear_drift_models(
                     x_current,
-                    current_position_yx=chosen_line_scan_correction_wrt_initial,
+                    drift_wrt_initial_yx=chosen_line_scan_correction_wrt_initial,
                 )
                 self.record_linear_drift_model_visualizations()
             self.update_optimization_model(fwhm)
@@ -1034,14 +1036,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 f"candidate_drifts:\n{candidate_drift_lines}```"
             )
         else:
-            x_in = np.array(x_current, dtype=float).reshape(1, -1).tolist()
-            model_drift = np.array(
-                [
-                    float(self.drift_model_y.predict(x_in)[0][0]),
-                    float(self.drift_model_x.predict(x_in)[0][0]),
-                ],
-                dtype=float,
-            )
+            model_drift = self.predict_linear_drift_model(x_current)
             candidate_distances = {
                 name: float(np.linalg.norm(drift - model_drift))
                 for name, drift in candidate_drifts.items()
@@ -1060,6 +1055,34 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             )
 
         return chosen_drift, chosen_source
+
+    def predict_linear_drift_model(self, x_current: np.ndarray) -> np.ndarray:
+        """Predict cumulative drift from the linear drift models.
+
+        Parameters
+        ----------
+        x_current : np.ndarray
+            Current optics parameter vector.
+
+        Returns
+        -------
+        np.ndarray
+            Predicted cumulative drift ``[dy, dx]`` with respect to the
+            initial reference position. Returns zeros when the models have not
+            collected any drift samples yet.
+        """
+        n_collected = self.drift_model_y.get_n_parameter_drift_points_collected()
+        if n_collected == 0:
+            return np.zeros(2, dtype=float)
+
+        x_in = np.array(x_current, dtype=float).reshape(1, -1).tolist()
+        return np.array(
+            [
+                float(self.drift_model_y.predict(x_in)[0][0]),
+                float(self.drift_model_x.predict(x_in)[0][0]),
+            ],
+            dtype=float,
+        )
 
     def apply_drift_correction(self, x_current: np.ndarray) -> np.ndarray:
         """Run the configured registration tools, select a drift estimate, and apply it.
@@ -1155,9 +1178,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.apply_offset_to_line_scan_kwargs(chosen_line_scan_correction_wrt_prev)
         self.apply_offset_to_image_acquisition_kwargs(chosen_image_acq_correction_wrt_prev)
         
+        linear_model_prediction_wrt_initial = self.predict_linear_drift_model(x_current)
         self.record_system_message(
             f"Applied drift correction:\n"
             f"```source = {chosen_source}\n"
+            f"linear_model_prediction_wrt_initial = {linear_model_prediction_wrt_initial.tolist()}\n"
             f"chosen_line_scan_correction_wrt_prev = {chosen_line_scan_correction_wrt_prev.tolist()}\n"
             f"chosen_line_scan_correction_wrt_initial = {chosen_line_scan_correction_wrt_initial.tolist()}\n"
             f"chosen_image_acq_correction_wrt_prev = {chosen_image_acq_correction_wrt_prev.tolist()}\n"

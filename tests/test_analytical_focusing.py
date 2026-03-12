@@ -127,14 +127,12 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             registration_tools=registration_tools
         )
         task_manager.registration_selection_priming_iterations = 3
-        task_manager.initial_line_scan_position = np.array([10.0, 20.0], dtype=float)
 
         for z in [0.0, 1.0, 2.0]:
             drift = np.array([2.0 * z + 1.0, -z + 3.0], dtype=float)
-            current_position = task_manager.initial_line_scan_position + drift
             task_manager.update_linear_drift_models(
                 parameters=np.array([z], dtype=float),
-                current_position_yx=current_position,
+                drift_wrt_initial_yx=drift,
             )
 
         chosen_drift, chosen_source = task_manager._select_drift(
@@ -147,6 +145,37 @@ class TestAnalyticalFocusing(tutils.BaseTester):
 
         assert chosen_source == "secondary"
         assert np.allclose(chosen_drift, np.array([9.0, -1.0], dtype=float))
+
+    def test_predict_linear_drift_model_returns_zero_without_samples(self):
+        task_manager, _ = self._build_task_manager()
+
+        predicted_drift = task_manager.predict_linear_drift_model(
+            np.array([4.0], dtype=float)
+        )
+
+        assert np.allclose(predicted_drift, np.array([0.0, 0.0], dtype=float))
+
+    def test_predict_linear_drift_model_uses_fitted_models(self):
+        registration_tools = [
+            DummyRegistrationTool("primary"),
+            DummyRegistrationTool("secondary"),
+        ]
+        task_manager, _ = self._build_task_manager(
+            registration_tools=registration_tools
+        )
+
+        for z in [0.0, 1.0, 2.0]:
+            drift = np.array([2.0 * z + 1.0, -z + 3.0], dtype=float)
+            task_manager.update_linear_drift_models(
+                parameters=np.array([z], dtype=float),
+                drift_wrt_initial_yx=drift,
+            )
+
+        predicted_drift = task_manager.predict_linear_drift_model(
+            np.array([4.0], dtype=float)
+        )
+
+        assert np.allclose(predicted_drift, np.array([9.0, -1.0], dtype=float))
 
     def test_run_iteration_applies_registration_offset_and_updates_model(self, monkeypatch):
         task_manager, acquisition_tool = self._build_task_manager()
@@ -221,7 +250,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         monkeypatch.setattr(
             task_manager,
             "update_linear_drift_models",
-            lambda parameters, current_position_yx=None: call_order.append("update"),
+            lambda parameters, drift_wrt_initial_yx: call_order.append("update"),
         )
         monkeypatch.setattr(
             task_manager,
