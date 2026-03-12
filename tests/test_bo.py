@@ -1,6 +1,7 @@
 
 import argparse
 import logging
+from unittest.mock import Mock
 
 import gpytorch.constraints
 import botorch
@@ -14,6 +15,23 @@ import test_utils as tutils
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+class CapturingModel:
+    def __init__(self, train_X, train_Y, **kwargs):
+        self.train_X = train_X
+        self.train_Y = train_Y
+        self.init_kwargs = kwargs
+        self.condition_kwargs = None
+        self.likelihood = Mock()
+        self.covar_module = Mock()
+
+    def condition_on_observations(self, X, Y, **kwargs):
+        conditioned = CapturingModel(X, Y, **self.init_kwargs)
+        conditioned.condition_kwargs = kwargs
+        conditioned.likelihood = self.likelihood
+        conditioned.covar_module = self.covar_module
+        return conditioned
 
 
 class TestBayesianOptimization(tutils.BaseTester):
@@ -122,6 +140,46 @@ class TestBayesianOptimization(tutils.BaseTester):
         
         final_suggestion = task_manager.bayesian_optimization_tool.xs_untransformed[-1]
         assert torch.allclose(final_suggestion.float(), torch.tensor([1.0, 2.0]), rtol=0.1)
+
+    def test_build_passes_transformed_noise_variance_to_model(self):
+        tool = BayesianOptimizationTool(
+            bounds=([0.0], [1.0]),
+            model_class=CapturingModel,
+            noise_std=0.5,
+        )
+        tool.update(torch.tensor([[0.0], [1.0]]), torch.tensor([[1.0], [3.0]]))
+        tool.fit_kernel_hyperparameters = lambda *args, **kwargs: None
+        tool.build_acquisition_function = lambda acquisition_function_kwargs=None: None
+
+        tool.build()
+
+        expected_noise_var = tool.get_transformed_train_yvar(
+            n_samples=2,
+            dtype=tool.ys_transformed.dtype,
+            device=tool.ys_transformed.device,
+        )
+        assert torch.allclose(tool.model.init_kwargs["train_Yvar"], expected_noise_var)
+
+    def test_update_passes_transformed_noise_variance_to_conditioning(self):
+        tool = BayesianOptimizationTool(
+            bounds=([0.0], [1.0]),
+            model_class=CapturingModel,
+            noise_std=0.5,
+        )
+        tool.update(torch.tensor([[0.0], [1.0]]), torch.tensor([[1.0], [3.0]]))
+        tool.fit_kernel_hyperparameters = lambda *args, **kwargs: None
+        tool.build_acquisition_function = lambda acquisition_function_kwargs=None: None
+        tool.build()
+
+        tool.update(torch.tensor([[0.5]]), torch.tensor([[2.0]]))
+
+        expected_noise_var = tool.get_transformed_train_yvar(
+            n_samples=1,
+            dtype=tool.ys_transformed.dtype,
+            device=tool.ys_transformed.device,
+        )
+        assert tool.model.condition_kwargs is not None
+        assert torch.allclose(tool.model.condition_kwargs["noise"], expected_noise_var)
 
 
 if __name__ == '__main__':

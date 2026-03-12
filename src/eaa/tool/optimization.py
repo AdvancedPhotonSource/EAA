@@ -1,4 +1,5 @@
 from typing import Annotated, Callable, Tuple, List, Type
+import inspect
 import logging
 
 import botorch.generation
@@ -127,6 +128,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         optimization_function_kwargs: dict = None,
         n_observations: int = 1,
         kernel_lengthscales: torch.Tensor = None,
+        noise_std: torch.Tensor | np.ndarray | float | None = None,
         require_approval: bool = False,
         *args,
         **kwargs,
@@ -174,6 +176,11 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
             Kernel lengthscale in the un-transformed space. If given,
             the lengthscales of the kernel will be overriden with thse
             values.
+        noise_std : torch.Tensor | np.ndarray | float, optional
+            Observation noise standard deviation in the un-transformed
+            observation space. When provided, the corresponding variance is
+            passed to BoTorch during model construction and incremental
+            conditioning to regularize GP fitting.
         """
         self.bounds = to_tensor(bounds).float()
         self.acquisition_function = None
@@ -196,6 +203,11 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         self.n_dims_out = n_observations
         self.kernel_lengthscales = (
             to_tensor(kernel_lengthscales) if kernel_lengthscales is not None else None
+        )
+        self.noise_std = (
+            torch.as_tensor(noise_std, dtype=torch.double)
+            if noise_std is not None
+            else None
         )
 
         self.input_transform = None
@@ -269,7 +281,73 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
             A (n_samples, n_observations) tensor giving the *transformed* observations
             of the objective function.
         """
-        self.model = self.model_class(x_train, y_train)
+        model_kwargs = dict(self.model_kwargs)
+        train_yvar = self.get_transformed_train_yvar(
+            n_samples=y_train.shape[0],
+            dtype=y_train.dtype,
+            device=y_train.device,
+        )
+        if train_yvar is not None:
+            if "train_Yvar" in model_kwargs:
+                raise ValueError(
+                    "`noise_std` and `model_kwargs['train_Yvar']` cannot both be set."
+                )
+            if not self.model_class_accepts_kwarg("train_Yvar"):
+                raise TypeError(
+                    f"Model class {self.model_class} does not accept `train_Yvar`."
+                )
+            model_kwargs["train_Yvar"] = train_yvar
+        self.model = self.model_class(x_train, y_train, **model_kwargs)
+
+    def model_class_accepts_kwarg(self, kwarg_name: str) -> bool:
+        """Return whether the configured model class accepts a keyword argument."""
+        signature = inspect.signature(self.model_class.__init__)
+        if kwarg_name in signature.parameters:
+            return True
+        return any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+
+    def get_transformed_noise_std(self) -> torch.Tensor | None:
+        """Return observation-noise standard deviations in transformed y-space."""
+        if self.noise_std is None:
+            return None
+
+        noise_std = self.noise_std.reshape(-1).double()
+        if noise_std.numel() == 1:
+            noise_std = noise_std.repeat(self.n_dims_out)
+        elif noise_std.numel() != self.n_dims_out:
+            raise ValueError(
+                f"`noise_std` must have 1 or {self.n_dims_out} values, "
+                f"but got {noise_std.numel()}."
+            )
+
+        if self.outcome_transform is None or not hasattr(self.outcome_transform, "stdvs"):
+            return noise_std
+
+        stdvs = self.outcome_transform.stdvs.detach().reshape(-1).to(dtype=noise_std.dtype)
+        if stdvs.numel() == 1 and noise_std.numel() > 1:
+            stdvs = stdvs.repeat(noise_std.numel())
+        if stdvs.numel() != noise_std.numel():
+            raise ValueError(
+                "Outcome transform scale is incompatible with the configured `noise_std`."
+            )
+        eps = torch.finfo(stdvs.dtype).eps
+        return noise_std / stdvs.clamp_min(eps)
+
+    def get_transformed_train_yvar(
+        self,
+        n_samples: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        """Return transformed observation variances for GP fitting."""
+        noise_std = self.get_transformed_noise_std()
+        if noise_std is None:
+            return None
+        train_yvar = noise_std.to(dtype=dtype, device=device).pow(2).reshape(1, -1)
+        return train_yvar.expand(n_samples, -1).contiguous()
 
     def fit_kernel_hyperparameters(self, *args, **kwargs):
         """Fit the kernel hyperparameters of the Gaussian process model."""
@@ -529,7 +607,17 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
             self.xs_transformed = torch.cat([self.xs_transformed, x])
             self.ys_transformed = torch.cat([self.ys_transformed, y])
             if self.model is not None:
-                self.model.condition_on_observations(x, y)
+                condition_kwargs = {}
+                train_yvar = self.get_transformed_train_yvar(
+                    n_samples=y.shape[0],
+                    dtype=y.dtype,
+                    device=y.device,
+                )
+                if train_yvar is not None:
+                    condition_kwargs["noise"] = train_yvar
+                self.model = self.model.condition_on_observations(x, y, **condition_kwargs)
+                if self.acquisition_function is not None:
+                    self.build_acquisition_function()
             else:
                 logger.info(
                     "GP model is not updated because it is not built yet by calling "
