@@ -18,6 +18,7 @@ notes/
 skill_factory/
 AGENTS.md
 CLAUDE.md
+docs/_build/
 
 # Images
 **/*.png

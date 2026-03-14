@@ -42,8 +42,8 @@ postgresql_vector_store = [
     "psycopg[binary]>=3.2.10"
 ]
 docs = [
-    "sphinx", 
-    "sphinx-rtd-theme"
+    "sphinx",
+    "pydata-sphinx-theme"
 ]
 dev = [
     "pytest"
