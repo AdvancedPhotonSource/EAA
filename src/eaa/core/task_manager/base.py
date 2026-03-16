@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Literal, Optional, Sequence
+from typing import Any, Callable, Dict, Literal, Optional, Sequence
 import json
 import logging
 import sqlite3
@@ -15,7 +15,6 @@ from eaa.core.llm.model import build_chat_model, invoke_chat_model
 from eaa.core.message_proc import (
     generate_openai_message,
     get_message_elements_as_text,
-    get_tool_call_info,
     print_message,
 )
 from eaa.core.skill import SkillMetadata, SkillTool, load_skills
@@ -924,90 +923,6 @@ class BaseTaskManager:
         """Return whether a message contains image payloads."""
         return get_message_elements_as_text(message)["image"] is not None
 
-    def _apply_followup_messages(
-        self,
-        messages: Iterable[dict[str, Any]],
-        *,
-        store_all_images_in_context: bool = True,
-    ) -> None:
-        """Append post-tool follow-up messages while optionally pruning image context."""
-        for message in messages:
-            update_context = True
-            if self._message_contains_image(message) and not store_all_images_in_context:
-                update_context = False
-            if not self.use_webui:
-                print_message(message)
-            self.update_message_history(
-                message,
-                update_context=update_context,
-                update_full_history=True,
-            )
-
-    def invoke_model_for_state(
-        self,
-        state: TaskManagerState,
-        *,
-        message: Optional[str | dict[str, Any] | list[dict[str, Any]]] = None,
-        image_path: Optional[str | list[str]] = None,
-        context: Optional[list[dict[str, Any]]] = None,
-        update_context: bool = True,
-        update_full_history: bool = True,
-        await_user_input_resolver: Optional[Callable[[TaskManagerState], bool]] = None,
-    ) -> dict[str, Any]:
-        """Invoke the model for a graph state and persist the exchange.
-
-        Parameters
-        ----------
-        state : TaskManagerState
-            Active graph state to mutate in place.
-        message : str or dict or list of dict, optional
-            Message payload to append before invoking the model.
-        image_path : str or list of str, optional
-            Image path payload to append before invoking the model.
-        context : list of dict, optional
-            Explicit conversation context to send to the model. If omitted,
-            the active task-manager context is used.
-        update_context : bool, default=True
-            Whether the outgoing and assistant messages update the active
-            context.
-        update_full_history : bool, default=True
-            Whether the outgoing and assistant messages update the full
-            transcript.
-        await_user_input_resolver : callable, optional
-            Callback used to derive `state.await_user_input` after the model
-            response is recorded.
-
-        Returns
-        -------
-        dict
-            Updated graph state payload for LangGraph.
-        """
-        self.state = state
-        response, outgoing = self.invoke_model_raw(
-            message=message,
-            image_path=image_path,
-            context=context,
-            return_outgoing_message=True,
-        )
-        if outgoing is not None:
-            if not self.use_webui:
-                print_message(outgoing)
-            self.update_message_history(
-                outgoing,
-                update_context=update_context,
-                update_full_history=update_full_history,
-            )
-        if not self.use_webui:
-            print_message(response)
-        self.update_message_history(
-            response,
-            update_context=update_context,
-            update_full_history=update_full_history,
-        )
-        if await_user_input_resolver is not None:
-            state.await_user_input = await_user_input_resolver(state)
-        return state.model_dump()
-
     def execute_tools_for_state(
         self,
         state: TaskManagerState,
@@ -1017,49 +932,32 @@ class BaseTaskManager:
         hook_functions: Optional[dict[str, Callable]] = None,
         store_all_images_in_context: bool = True,
     ) -> dict[str, Any]:
-        """Execute tool calls from the latest response and persist follow-up messages.
+        """Execute tool calls for a graph state.
 
-        Args:
-            state: The active graph state whose latest assistant response will be executed.
-            message_with_yielded_image: Text used for image follow-up user messages.
-            allow_non_image_tool_responses: Whether non-image tool results are acceptable.
-            hook_functions: Optional post-tool hook mapping.
-            store_all_images_in_context: Whether follow-up images remain in active context.
+        Parameters
+        ----------
+        state : TaskManagerState
+            Active graph state whose latest assistant response will be
+            executed.
+        message_with_yielded_image : str
+            Compatibility argument retained for callers that still route tool
+            execution through the task manager boundary.
+        allow_non_image_tool_responses : bool
+            Compatibility argument retained for callers that still route tool
+            execution through the task manager boundary.
+        hook_functions : dict[str, Callable], optional
+            Compatibility argument retained for callers that still route tool
+            execution through the task manager boundary.
+        store_all_images_in_context : bool, default=True
+            Compatibility argument retained for callers that still route tool
+            execution through the task manager boundary.
 
-        Returns:
-            The updated graph state payload for LangGraph.
+        Returns
+        -------
+        dict[str, Any]
+            Updated graph state payload.
         """
-        self.state = state
-        response = state.latest_response
-        tool_messages, tool_return_types = self.tool_executor.execute_tool_calls_from_message(
-            response,
-            return_tool_return_types=True,
-        )
-        tool_call_info_list = get_tool_call_info(response, index=None) or []
-        for tool_message in tool_messages:
-            if not self.use_webui:
-                print_message(tool_message)
-            self.update_message_history(tool_message, update_context=True, update_full_history=True)
-
-        followup_messages: list[dict[str, Any]] = []
-        for index, (tool_message, tool_return_type) in enumerate(zip(tool_messages, tool_return_types)):
-            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
-            followup_messages.extend(
-                self.tool_executor.build_tool_followup_messages(
-                    tool_message,
-                    tool_return_type,
-                    skill_catalog=self.skill_catalog,
-                    message_with_yielded_image=message_with_yielded_image,
-                    allow_non_image_tool_responses=allow_non_image_tool_responses,
-                    hook_functions=hook_functions,
-                    tool_call_info=tool_call_info,
-                )
-            )
-        self._apply_followup_messages(
-            followup_messages,
-            store_all_images_in_context=store_all_images_in_context,
-        )
-        return state.model_dump()
+        return self.node_factory.execute_tools_for_state(state)
 
     def build_chat_graph(self, checkpointer: Any = None):
         """Build the base chat graph."""
@@ -1079,6 +977,11 @@ class BaseTaskManager:
             node_factory.execute_tools,
             input_schema=ChatGraphState,
         )
+        builder.add_node(
+            "image_followup",
+            node_factory.image_followup,
+            input_schema=ChatGraphState,
+        )
         builder.add_edge(START, "await_or_ingest_user_input")
         builder.add_conditional_edges(
             "await_or_ingest_user_input",
@@ -1088,7 +991,11 @@ class BaseTaskManager:
             "call_model",
             node_factory.route_after_chat_response,
         )
-        builder.add_edge("execute_tools", "call_model")
+        builder.add_conditional_edges(
+            "execute_tools",
+            node_factory.route_after_tool_execution,
+        )
+        builder.add_edge("image_followup", "call_model")
         return builder.compile(checkpointer=checkpointer)
 
     def build_feedback_loop_graph(self, checkpointer: Any = None):
@@ -1106,6 +1013,11 @@ class BaseTaskManager:
         builder.add_node(
             "execute_tools",
             node_factory.execute_tools,
+            input_schema=FeedbackLoopState,
+        )
+        builder.add_node(
+            "image_followup",
+            node_factory.image_followup,
             input_schema=FeedbackLoopState,
         )
         builder.add_node(
@@ -1130,7 +1042,11 @@ class BaseTaskManager:
             "reprompt_model",
             node_factory.route_after_feedback_response,
         )
-        builder.add_edge("execute_tools", "finalize_round")
+        builder.add_conditional_edges(
+            "execute_tools",
+            node_factory.route_after_tool_execution,
+        )
+        builder.add_edge("image_followup", "finalize_round")
         builder.add_conditional_edges(
             "finalize_round",
             node_factory.route_after_feedback_round,

@@ -8,6 +8,7 @@ from langgraph.runtime import Runtime
 from eaa.core.exceptions import MaxRoundsReached
 from eaa.core.message_proc import (
     generate_openai_message,
+    get_tool_call_info,
     has_tool_call,
     print_message,
     purge_context_images,
@@ -18,6 +19,7 @@ from eaa.core.task_manager.state import (
     FeedbackLoopState,
     TaskManagerState,
 )
+from eaa.core.tooling.base import ToolReturnType
 
 if TYPE_CHECKING:
     from eaa.core.task_manager.base import BaseTaskManager
@@ -445,6 +447,7 @@ class NodeFactory:
                 message_with_yielded_image=state.message_with_yielded_image,
                 allow_non_image_tool_responses=state.allow_non_image_tool_responses,
                 hook_functions=self.task_manager.active_feedback_hook_functions,
+                store_all_images_in_context=state.store_all_images_in_context,
             )
         return self.task_manager.execute_tools_for_state(
             state,
@@ -452,6 +455,152 @@ class NodeFactory:
             allow_non_image_tool_responses=True,
             store_all_images_in_context=state.store_all_images_in_context,
         )
+
+    def tool_followup_required(
+        self,
+        state: TaskManagerState,
+        *,
+        allow_non_image_tool_responses: bool,
+    ) -> bool:
+        """Return whether the latest tool batch requires follow-up handling.
+
+        Args:
+            state: Active graph state.
+            allow_non_image_tool_responses: Whether non-image tool results are acceptable.
+
+        Returns:
+            Whether the follow-up node should run.
+        """
+        response = state.latest_response or {}
+        tool_call_info_list = get_tool_call_info(response, index=None) or []
+        tool_messages = state.latest_tool_messages
+        tool_return_types = state.latest_tool_return_types
+        for index, tool_message in enumerate(tool_messages):
+            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+            if len(
+                self.task_manager.tool_executor.build_skill_doc_messages(
+                    tool_message,
+                    tool_call_info,
+                    self.task_manager.skill_catalog,
+                )
+            ) > 0:
+                return True
+            tool_return_type = (
+                tool_return_types[index]
+                if index < len(tool_return_types)
+                else ToolReturnType.TEXT
+            )
+            if tool_return_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
+                image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
+                    tool_message.get("content")
+                )
+                if len(image_paths) > 0:
+                    return True
+                if (
+                    tool_return_type == ToolReturnType.DICT
+                    and not allow_non_image_tool_responses
+                ):
+                    return True
+            elif not allow_non_image_tool_responses:
+                return True
+        return False
+
+    def build_tool_followup_messages(
+        self,
+        state: TaskManagerState,
+        *,
+        message_with_yielded_image: str,
+        allow_non_image_tool_responses: bool,
+        hook_functions: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        """Build follow-up messages for the latest tool batch.
+
+        Args:
+            state: Active graph state.
+            message_with_yielded_image: Text used when a tool returns images.
+            allow_non_image_tool_responses: Whether non-image tool results are acceptable.
+            hook_functions: Optional post-tool hook mapping.
+
+        Returns:
+            Follow-up messages to append after tool execution.
+        """
+        response = state.latest_response or {}
+        tool_call_info_list = get_tool_call_info(response, index=None) or []
+        tool_messages = state.latest_tool_messages
+        tool_return_types = state.latest_tool_return_types
+        followup_messages: list[dict[str, object]] = []
+        for index, tool_message in enumerate(tool_messages):
+            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+            tool_return_type = (
+                tool_return_types[index]
+                if index < len(tool_return_types)
+                else ToolReturnType.TEXT
+            )
+            followup_messages.extend(
+                self.task_manager.tool_executor.build_tool_followup_messages(
+                    tool_message,
+                    tool_return_type,
+                    skill_catalog=self.task_manager.skill_catalog,
+                    message_with_yielded_image=message_with_yielded_image,
+                    allow_non_image_tool_responses=allow_non_image_tool_responses,
+                    hook_functions=hook_functions,
+                    tool_call_info=tool_call_info,
+                )
+            )
+        return followup_messages
+
+    def image_followup(self, state: TaskManagerState) -> dict[str, object]:
+        """Append follow-up messages after a tool batch completes.
+
+        Args:
+            state: Active graph state.
+
+        Returns:
+            Updated graph state payload.
+        """
+        if isinstance(state, FeedbackLoopState):
+            followup_messages = self.build_tool_followup_messages(
+                state,
+                message_with_yielded_image=state.message_with_yielded_image,
+                allow_non_image_tool_responses=state.allow_non_image_tool_responses,
+                hook_functions=self.task_manager.active_feedback_hook_functions,
+            )
+            self.apply_followup_messages_for_state(state, followup_messages)
+            return state.model_dump()
+        followup_messages = self.build_tool_followup_messages(
+            state,
+            message_with_yielded_image="Here is the image the tool returned.",
+            allow_non_image_tool_responses=True,
+        )
+        self.apply_followup_messages_for_state(
+            state,
+            followup_messages,
+            store_all_images_in_context=state.store_all_images_in_context,
+        )
+        return state.model_dump()
+
+    def route_after_tool_execution(self, state: TaskManagerState) -> str:
+        """Route execution after tools have completed.
+
+        Args:
+            state: Active graph state.
+
+        Returns:
+            Next node name.
+        """
+        allow_non_image_tool_responses = (
+            state.allow_non_image_tool_responses
+            if isinstance(state, FeedbackLoopState)
+            else True
+        )
+        if self.tool_followup_required(
+            state,
+            allow_non_image_tool_responses=allow_non_image_tool_responses,
+        ):
+            return "image_followup"
+        if isinstance(state, FeedbackLoopState):
+            return "finalize_round"
+        return "call_model"
 
     def route_after_feedback_response(self, state: FeedbackLoopState) -> str:
         """Route feedback-loop execution after each assistant response.
