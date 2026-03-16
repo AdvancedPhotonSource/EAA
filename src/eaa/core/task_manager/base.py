@@ -57,6 +57,95 @@ def get_checkpoint_state_model(
     raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
 
 
+def load_latest_checkpoint_state_from_connection(
+    connection: sqlite3.Connection,
+    prune_checkpoints: bool,
+) -> Optional[dict[str, Any]]:
+    """Load the newest transcript-bearing checkpoint state from a connection."""
+    saver = PrunableSqliteSaver(
+        connection,
+        prune_checkpoints=prune_checkpoints,
+    )
+    saver.setup()
+    latest_state, _ = saver.load_latest_checkpoint_state()
+    return latest_state
+
+
+def build_compatible_checkpoint_state(
+    graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+    incoming_state: TaskManagerState | dict[str, Any],
+) -> Optional[TaskManagerState]:
+    """Translate a checkpoint state into the target graph's compatible state.
+
+    Parameters
+    ----------
+    graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+        Target graph identifier whose state model should be produced.
+    incoming_state : TaskManagerState or dict[str, Any]
+        Source checkpoint state from any graph.
+
+    Returns
+    -------
+    Optional[TaskManagerState]
+        Compatible state for the target graph, or ``None`` when no transcript
+        data is available to seed the new graph.
+    """
+    state_data = (
+        incoming_state.model_dump()
+        if isinstance(incoming_state, TaskManagerState)
+        else dict(incoming_state)
+    )
+    messages = state_data.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+    full_history = state_data.get("full_history")
+    if not isinstance(full_history, list):
+        full_history = list(messages)
+    if len(messages) == 0 and len(full_history) == 0:
+        return None
+
+    shared_fields = {
+        "messages": list(messages),
+        "full_history": list(full_history),
+        "await_user_input": True,
+        "round_index": int(state_data.get("round_index", 0) or 0),
+        "store_all_images_in_context": bool(
+            state_data.get("store_all_images_in_context", True)
+        ),
+    }
+    if graph_name == "chat_graph":
+        return ChatGraphState(
+            **shared_fields,
+            bootstrap_message=None,
+            termination_behavior="user",
+            exit_requested=False,
+            return_requested=False,
+        )
+    if graph_name == "feedback_loop_graph":
+        return FeedbackLoopState(
+            **shared_fields,
+            initial_prompt="",
+            initial_image_path=None,
+            initial_prompt_pending=False,
+            message_with_yielded_image="Here is the image the tool returned.",
+            max_rounds=99,
+            n_first_images_to_keep_in_context=None,
+            n_last_images_to_keep_in_context=None,
+            allow_non_image_tool_responses=True,
+            allow_multiple_tool_calls=False,
+            hook_functions={},
+            expected_tool_call_sequence=None,
+            expected_tool_call_sequence_tolerance=0,
+            termination_behavior="ask",
+            max_arounds_reached_behavior="return",
+            exit_requested=False,
+            return_requested=False,
+        )
+    if graph_name == "task_graph":
+        return TaskManagerState(**shared_fields)
+    raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
+
+
 class TaskManagerAgentAdapter:
     """Compatibility adapter for code paths that still expect `task_manager.agent`."""
 
@@ -314,6 +403,13 @@ class BaseTaskManager:
             ):
                 state_model = get_checkpoint_state_model(graph_name)
                 loaded_state = state_model.model_validate(snapshot.values)
+            else:
+                latest_state = load_latest_checkpoint_state_from_connection(
+                    connection=self.checkpoint_connections[cache_key],
+                    prune_checkpoints=self.prune_checkpoints,
+                )
+                if latest_state is not None:
+                    loaded_state = build_compatible_checkpoint_state(graph_name, latest_state)
         return graph, config, loaded_state
 
     def _collect_base_tools(self) -> list[BaseTool]:
@@ -763,6 +859,12 @@ class BaseTaskManager:
             "task_graph",
             checkpoint_db_path=checkpoint_db_path,
         )
+        snapshot = graph.get_state(checkpoint_config)
+        fallback_loaded = (
+            snapshot.created_at is None
+            or snapshot.values is None
+            or len(snapshot.values) == 0
+        )
         if loaded_state is None:
             resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
                 "task_graph",
@@ -776,7 +878,8 @@ class BaseTaskManager:
         self.task_graph = graph
         if graph is None or checkpoint_config is None:
             raise ValueError("The task manager does not define a checkpointable task graph.")
-        final_state = graph.invoke(None, config=checkpoint_config)
+        graph_input = loaded_state if fallback_loaded else None
+        final_state = graph.invoke(graph_input, config=checkpoint_config)
         self.state = TaskManagerState.model_validate(final_state)
 
     def _message_contains_image(self, message: dict[str, Any]) -> bool:
@@ -1091,6 +1194,12 @@ class BaseTaskManager:
             "chat_graph",
             checkpoint_db_path=checkpoint_db_path,
         )
+        snapshot = graph.get_state(checkpoint_config)
+        fallback_loaded = (
+            snapshot.created_at is None
+            or snapshot.values is None
+            or len(snapshot.values) == 0
+        )
         if loaded_state is None:
             resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
                 "chat_graph",
@@ -1101,7 +1210,11 @@ class BaseTaskManager:
                 f"{resolved_checkpoint_path}."
             )
         resumed_state = ChatGraphState.model_validate(loaded_state.model_dump())
-        restart_from_state = resumed_state.exit_requested or resumed_state.return_requested
+        restart_from_state = (
+            fallback_loaded
+            or resumed_state.exit_requested
+            or resumed_state.return_requested
+        )
         if restart_from_state:
             resumed_state.exit_requested = False
             resumed_state.return_requested = False
@@ -1255,6 +1368,12 @@ class BaseTaskManager:
             "feedback_loop_graph",
             checkpoint_db_path=checkpoint_db_path,
         )
+        snapshot = graph.get_state(checkpoint_config)
+        fallback_loaded = (
+            snapshot.created_at is None
+            or snapshot.values is None
+            or len(snapshot.values) == 0
+        )
         if loaded_state is None:
             resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
                 "feedback_loop_graph",
@@ -1266,7 +1385,11 @@ class BaseTaskManager:
             )
         self.active_feedback_hook_functions = hook_functions or {}
         resumed_state = FeedbackLoopState.model_validate(loaded_state.model_dump())
-        restart_from_human_gate = resumed_state.exit_requested or resumed_state.return_requested
+        restart_from_human_gate = (
+            fallback_loaded
+            or resumed_state.exit_requested
+            or resumed_state.return_requested
+        )
         if restart_from_human_gate:
             resumed_state.exit_requested = False
             resumed_state.return_requested = False

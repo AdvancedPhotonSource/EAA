@@ -247,6 +247,47 @@ def test_run_conversation_can_resume_from_override_checkpoint_path(tmp_path, mon
     assert checkpoint_base.exists()
 
 
+def test_run_conversation_can_seed_from_feedback_checkpoint(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "cross_graph_chat.sqlite"
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "NEED HUMAN"}
+
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    first_manager.model = object()
+
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+    first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
+
+    resumed_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    resumed_manager.model = object()
+
+    input_calls = {"count": 0}
+
+    def fake_get_user_input(*args, **kwargs):
+        input_calls["count"] += 1
+        return "/exit"
+
+    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
+
+    resumed_manager.run_conversation_from_checkpoint(
+        checkpoint_db_path=str(checkpoint_base),
+    )
+
+    assert input_calls["count"] == 1
+    assert resumed_manager.full_history == first_manager.full_history
+    assert resumed_manager.context == first_manager.context
+
+
 def test_feedback_loop_checkpoint_supports_runtime_hook_functions(tmp_path, monkeypatch):
     checkpoint_base = tmp_path / "feedback.sqlite"
 
@@ -367,6 +408,47 @@ def test_run_feedback_loop_can_resume_from_override_checkpoint_path(tmp_path, mo
 
     assert input_calls["count"] == 1
     assert model_calls["count"] == 1
+
+
+def test_run_feedback_loop_can_seed_from_chat_checkpoint(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "cross_graph_feedback.sqlite"
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "Hello! How can I help you today?"}
+
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    first_manager.model = object()
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+
+    first_manager.run_conversation(message="hello", termination_behavior="user")
+
+    resumed_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    resumed_manager.model = object()
+
+    input_calls = {"count": 0}
+
+    def fake_get_user_input(*args, **kwargs):
+        input_calls["count"] += 1
+        return "/exit"
+
+    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
+
+    resumed_manager.run_feedback_loop_from_checkpoint(
+        checkpoint_db_path=str(checkpoint_base),
+    )
+
+    assert input_calls["count"] == 1
+    assert resumed_manager.full_history == first_manager.full_history
+    assert resumed_manager.context == first_manager.context
 
 
 def test_run_task_graph_can_resume_from_override_checkpoint_path(tmp_path):
