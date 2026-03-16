@@ -47,7 +47,9 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
         session_db_path=str(shared_db),
     )
     task_manager.model = object()
-    checkpointed_graph, checkpoint_config = task_manager.get_checkpointed_graph("chat_graph")
+    checkpointed_graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
+        "chat_graph"
+    )
 
     monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/exit")

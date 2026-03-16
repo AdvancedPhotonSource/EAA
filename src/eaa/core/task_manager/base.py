@@ -35,6 +35,28 @@ from eaa.tool.coding import BashCodingTool, PythonCodingTool
 logger = logging.getLogger(__name__)
 
 
+def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
+    """Return the LangGraph config used for a checkpoint file."""
+    return {
+        "configurable": {
+            "thread_id": checkpoint_thread_id,
+        }
+    }
+
+
+def get_checkpoint_state_model(
+    graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+) -> type[TaskManagerState]:
+    """Return the state model for a checkpointed graph."""
+    if graph_name == "chat_graph":
+        return ChatGraphState
+    if graph_name == "feedback_loop_graph":
+        return FeedbackLoopState
+    if graph_name == "task_graph":
+        return TaskManagerState
+    raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
+
+
 class TaskManagerAgentAdapter:
     """Compatibility adapter for code paths that still expect `task_manager.agent`."""
 
@@ -202,45 +224,63 @@ class BaseTaskManager:
         """Build the task-manager-specific graph if needed."""
         return None
 
-    def resolve_checkpoint_storage(self, graph_name: str) -> tuple[str, str]:
+    def resolve_checkpoint_storage(
+        self,
+        graph_name: str,
+        checkpoint_db_path: Optional[str] = None,
+    ) -> tuple[str, str]:
         """Resolve the shared checkpoint database path and graph thread id.
 
         Parameters
         ----------
         graph_name : str
             Graph identifier being checkpointed.
+        checkpoint_db_path : Optional[str], optional
+            SQLite path to use for checkpoint loading and persistence instead
+            of ``self.session_db_path``.
 
         Returns
         -------
         tuple[str, str]
             Resolved SQLite database path and checkpoint thread id.
         """
-        if self.session_db_path is None:
+        checkpoint_path = checkpoint_db_path or self.session_db_path
+        if checkpoint_path is None:
             raise ValueError(
-                "Checkpointing requires `session_db_path` because the WebUI relay "
-                "and LangGraph checkpoints share one SQLite file."
+                "Checkpointing requires `session_db_path` or `checkpoint_db_path` "
+                "because the WebUI relay and LangGraph checkpoints can share one "
+                "SQLite file."
             )
-        shared_path = str(Path(self.session_db_path).expanduser().resolve())
+        shared_path = str(Path(checkpoint_path).expanduser().resolve())
         return shared_path, graph_name
-
-    def get_state_checkpoint_config(
-        self,
-        checkpoint_thread_id: str,
-    ) -> dict[str, Any]:
-        """Return the LangGraph config used for a checkpoint file."""
-        return {
-            "configurable": {
-                "thread_id": checkpoint_thread_id,
-            }
-        }
 
     def get_checkpointed_graph(
         self,
         graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
-    ) -> tuple[Any, Optional[dict[str, Any]]]:
-        """Return a graph compiled with the shared persistent checkpointer."""
+        checkpoint_db_path: Optional[str] = None,
+        load_state: bool = True,
+    ) -> tuple[Any, Optional[dict[str, Any]], Optional[TaskManagerState]]:
+        """Return a checkpointed graph together with config and optional state.
+
+        Parameters
+        ----------
+        graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+            Graph identifier whose persistent graph should be returned.
+        checkpoint_db_path : Optional[str], optional
+            SQLite path to use for checkpoint loading and persistence instead
+            of ``self.session_db_path``.
+        load_state : bool, default=True
+            Whether to also load and validate the latest checkpointed state.
+
+        Returns
+        -------
+        tuple[Any, Optional[dict[str, Any]], Optional[TaskManagerState]]
+            Compiled graph, checkpoint config, and the latest checkpointed
+            state if ``load_state`` is True and a checkpoint exists.
+        """
         resolved_checkpoint_path, checkpoint_thread_id = self.resolve_checkpoint_storage(
             graph_name,
+            checkpoint_db_path=checkpoint_db_path,
         )
         cache_key = (graph_name, resolved_checkpoint_path)
         if cache_key not in self.checkpoint_graphs:
@@ -260,36 +300,21 @@ class BaseTaskManager:
                 raise ValueError(f"Unsupported graph name for checkpointing: {graph_name}.")
             self.checkpoint_connections[cache_key] = connection
             self.checkpoint_graphs[cache_key] = graph
-        return self.checkpoint_graphs[cache_key], self.get_state_checkpoint_config(
+        graph = self.checkpoint_graphs[cache_key]
+        config = get_state_checkpoint_config(
             checkpoint_thread_id=checkpoint_thread_id,
         )
-
-    def get_checkpoint_state_model(
-        self,
-        graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
-    ) -> type[TaskManagerState]:
-        """Return the state model for a checkpointed graph."""
-        if graph_name == "chat_graph":
-            return ChatGraphState
-        if graph_name == "feedback_loop_graph":
-            return FeedbackLoopState
-        if graph_name == "task_graph":
-            return TaskManagerState
-        raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
-
-    def load_state_from_checkpoint(
-        self,
-        graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
-    ) -> Optional[TaskManagerState]:
-        """Load the latest state snapshot for a graph, if it exists."""
-        graph, config = self.get_checkpointed_graph(graph_name)
-        if graph is None or config is None:
-            return None
-        snapshot = graph.get_state(config)
-        if snapshot.created_at is None or snapshot.values is None or len(snapshot.values) == 0:
-            return None
-        state_model = self.get_checkpoint_state_model(graph_name)
-        return state_model.model_validate(snapshot.values)
+        loaded_state: Optional[TaskManagerState] = None
+        if load_state:
+            snapshot = graph.get_state(config)
+            if (
+                snapshot.created_at is not None
+                and snapshot.values is not None
+                and len(snapshot.values) > 0
+            ):
+                state_model = get_checkpoint_state_model(graph_name)
+                loaded_state = state_model.model_validate(snapshot.values)
+        return graph, config, loaded_state
 
     def _collect_base_tools(self) -> list[BaseTool]:
         tools: list[BaseTool] = list(self.tools)
@@ -724,18 +749,30 @@ class BaseTaskManager:
             "Concrete task managers must implement `run()`."
         )
 
-    def run_from_checkpoint(self) -> None:
-        """Resume a task manager from a task-graph checkpoint."""
+    def run_from_checkpoint(self, checkpoint_db_path: Optional[str] = None) -> None:
+        """Resume a task manager from a task-graph checkpoint.
+
+        Parameters
+        ----------
+        checkpoint_db_path : Optional[str], optional
+            SQLite path to use for checkpoint loading and updates instead of
+            ``self.session_db_path``.
+        """
         self.prerun_check()
-        loaded_state = self.load_state_from_checkpoint("task_graph")
+        graph, checkpoint_config, loaded_state = self.get_checkpointed_graph(
+            "task_graph",
+            checkpoint_db_path=checkpoint_db_path,
+        )
         if loaded_state is None:
-            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage("task_graph")
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
+                "task_graph",
+                checkpoint_db_path=checkpoint_db_path,
+            )
             raise ValueError(
                 f"No task-graph checkpoint found in shared checkpoint DB "
                 f"{resolved_checkpoint_path}."
             )
         self.state = loaded_state
-        graph, checkpoint_config = self.get_checkpointed_graph("task_graph")
         self.task_graph = graph
         if graph is None or checkpoint_config is None:
             raise ValueError("The task manager does not define a checkpointable task graph.")
@@ -999,7 +1036,10 @@ class BaseTaskManager:
             "context": self.memory_manager.get_runtime_context(),
         }
         if self.session_db_path is not None:
-            graph, checkpoint_config = self.get_checkpointed_graph("chat_graph")
+            graph, checkpoint_config, _ = self.get_checkpointed_graph(
+                "chat_graph",
+                load_state=False,
+            )
             self.chat_graph = graph
             graph_kwargs["config"] = checkpoint_config
         try:
@@ -1030,17 +1070,32 @@ class BaseTaskManager:
             return
         self.state = ChatGraphState.model_validate(final_state)
 
-    def run_conversation_from_checkpoint(self) -> None:
+    def run_conversation_from_checkpoint(
+        self,
+        checkpoint_db_path: Optional[str] = None,
+    ) -> None:
         """Resume the chat graph directly from a saved checkpoint.
+
+        Parameters
+        ----------
+        checkpoint_db_path : Optional[str], optional
+            SQLite path to use for checkpoint loading and updates instead of
+            ``self.session_db_path``.
 
         Notes
         -----
-        Checkpoints are loaded from `session_db_path`, which is configured via
-        the task manager constructor's `session_db_path` argument.
+        By default checkpoints are loaded from ``session_db_path``. Pass
+        ``checkpoint_db_path`` to resume from a different SQLite file.
         """
-        loaded_state = self.load_state_from_checkpoint("chat_graph")
+        graph, checkpoint_config, loaded_state = self.get_checkpointed_graph(
+            "chat_graph",
+            checkpoint_db_path=checkpoint_db_path,
+        )
         if loaded_state is None:
-            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage("chat_graph")
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
+                "chat_graph",
+                checkpoint_db_path=checkpoint_db_path,
+            )
             raise ValueError(
                 f"No chat-graph checkpoint found in shared checkpoint DB "
                 f"{resolved_checkpoint_path}."
@@ -1053,7 +1108,6 @@ class BaseTaskManager:
             resumed_state.bootstrap_message = None
             resumed_state.await_user_input = True
         self.state = resumed_state
-        graph, checkpoint_config = self.get_checkpointed_graph("chat_graph")
         self.chat_graph = graph
         graph_input: Optional[ChatGraphState] = None
         if restart_from_state:
@@ -1146,7 +1200,10 @@ class BaseTaskManager:
         graph = self.feedback_loop_graph
         graph_kwargs: dict[str, Any] = {}
         if self.session_db_path is not None:
-            graph, checkpoint_config = self.get_checkpointed_graph("feedback_loop_graph")
+            graph, checkpoint_config, _ = self.get_checkpointed_graph(
+                "feedback_loop_graph",
+                load_state=False,
+            )
             self.feedback_loop_graph = graph
             graph_kwargs["config"] = checkpoint_config
         try:
@@ -1177,17 +1234,32 @@ class BaseTaskManager:
     def run_feedback_loop_from_checkpoint(
         self,
         hook_functions: Optional[dict[str, Callable]] = None,
+        checkpoint_db_path: Optional[str] = None,
     ) -> None:
         """Resume the feedback-loop graph directly from a saved checkpoint.
 
+        Parameters
+        ----------
+        hook_functions : dict[str, Callable], optional
+            Runtime hook functions to apply while resuming the workflow.
+        checkpoint_db_path : Optional[str], optional
+            SQLite path to use for checkpoint loading and updates instead of
+            ``self.session_db_path``.
+
         Notes
         -----
-        Checkpoints are loaded from `session_db_path`, which is configured via
-        the task manager constructor's `session_db_path` argument.
+        By default checkpoints are loaded from ``session_db_path``. Pass
+        ``checkpoint_db_path`` to resume from a different SQLite file.
         """
-        loaded_state = self.load_state_from_checkpoint("feedback_loop_graph")
+        graph, checkpoint_config, loaded_state = self.get_checkpointed_graph(
+            "feedback_loop_graph",
+            checkpoint_db_path=checkpoint_db_path,
+        )
         if loaded_state is None:
-            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage("feedback_loop_graph")
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
+                "feedback_loop_graph",
+                checkpoint_db_path=checkpoint_db_path,
+            )
             raise ValueError(
                 f"No feedback-loop checkpoint found in shared checkpoint DB "
                 f"{resolved_checkpoint_path}."
@@ -1200,7 +1272,6 @@ class BaseTaskManager:
             resumed_state.return_requested = False
             resumed_state.await_user_input = True
         self.state = resumed_state
-        graph, checkpoint_config = self.get_checkpointed_graph("feedback_loop_graph")
         self.feedback_loop_graph = graph
         if restart_from_human_gate:
             checkpoint_config = graph.update_state(

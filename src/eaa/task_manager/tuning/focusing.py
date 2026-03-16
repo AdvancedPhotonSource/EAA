@@ -535,9 +535,17 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             *args, **kwargs
         )
 
-    def run_from_checkpoint(self) -> None:
-        """Resume the scanning-microscope focusing workflow from a checkpoint."""
+    def run_from_checkpoint(self, checkpoint_db_path: Optional[str] = None) -> None:
+        """Resume the scanning-microscope focusing workflow from a checkpoint.
+
+        Parameters
+        ----------
+        checkpoint_db_path : Optional[str], optional
+            SQLite path to use for checkpoint loading and updates instead of
+            ``self.session_db_path``.
+        """
         self.prerun_check()
         self.run_feedback_loop_from_checkpoint(
             hook_functions=self.active_feedback_hook_functions,
+            checkpoint_db_path=checkpoint_db_path,
         )

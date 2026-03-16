@@ -133,8 +133,9 @@ set_message_db_path("session.sqlite")
 run_webui(host="127.0.0.1", port=8008)
 ```
 
-Checkpointing and the WebUI relay share the same SQLite database. The base task
-manager exposes:
+Checkpointing and the WebUI relay share the same SQLite database by default.
+Each resume entrypoint also accepts ``checkpoint_db_path`` if you need to load
+checkpoints from a different SQLite file. The base task manager exposes:
 
 - `run_conversation_from_checkpoint()`
 - `run_feedback_loop_from_checkpoint()`

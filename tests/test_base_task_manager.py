@@ -1,12 +1,30 @@
 import httpx
 import sqlite3
+from langgraph.graph import START, StateGraph
 from openai import UnprocessableEntityError
 from types import SimpleNamespace
+from typing import Any
 
 from eaa.api.llm_config import OpenAIConfig
 from eaa.api.memory import MemoryManagerConfig
 from eaa.core.task_manager.base import BaseTaskManager
 from eaa.core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
+
+
+class CheckpointableTaskManager(BaseTaskManager):
+    """Test helper with a minimal checkpointable task graph."""
+
+    def build_task_graph(self, checkpointer: Any = None) -> Any:
+        """Build a task graph that immediately marks the state as waiting."""
+        graph_builder = StateGraph(TaskManagerState)
+
+        def mark_complete(state: TaskManagerState) -> dict[str, bool]:
+            """Mark the task graph state as awaiting user input."""
+            return {"await_user_input": True}
+
+        graph_builder.add_node("mark_complete", mark_complete)
+        graph_builder.add_edge(START, "mark_complete")
+        return graph_builder.compile(checkpointer=checkpointer)
 
 
 def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch):
@@ -188,6 +206,47 @@ def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     assert checkpoint_base.exists()
 
 
+def test_run_conversation_can_resume_from_override_checkpoint_path(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "override_chat.sqlite"
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "Hello! How can I help you today?"}
+
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    first_manager.model = object()
+
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+    first_manager.run_conversation(message="hello", termination_behavior="user")
+
+    resumed_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    resumed_manager.model = object()
+
+    input_calls = {"count": 0}
+
+    def fake_get_user_input(*args, **kwargs):
+        input_calls["count"] += 1
+        return "/exit"
+
+    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
+
+    resumed_manager.run_conversation_from_checkpoint(
+        checkpoint_db_path=str(checkpoint_base),
+    )
+
+    assert input_calls["count"] == 1
+    assert resumed_manager.full_history == first_manager.full_history
+    assert checkpoint_base.exists()
+
+
 def test_feedback_loop_checkpoint_supports_runtime_hook_functions(tmp_path, monkeypatch):
     checkpoint_base = tmp_path / "feedback.sqlite"
 
@@ -200,7 +259,7 @@ def test_feedback_loop_checkpoint_supports_runtime_hook_functions(tmp_path, monk
         session_db_path=str(checkpoint_base),
     )
     task_manager.model = object()
-    checkpointed_graph, checkpoint_config = task_manager.get_checkpointed_graph(
+    checkpointed_graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
         "feedback_loop_graph"
     )
 
@@ -243,7 +302,7 @@ def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypa
 
     first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
 
-    saved_state = first_manager.load_state_from_checkpoint("feedback_loop_graph")
+    _, _, saved_state = first_manager.get_checkpointed_graph("feedback_loop_graph")
     assert saved_state is not None
     assert saved_state.exit_requested is True
 
@@ -268,6 +327,75 @@ def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypa
     assert model_calls["count"] == 1
 
 
+def test_run_feedback_loop_can_resume_from_override_checkpoint_path(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "override_feedback.sqlite"
+    model_calls = {"count": 0}
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        model_calls["count"] += 1
+        return {"role": "assistant", "content": "NEED HUMAN"}
+
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    first_manager.model = object()
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
+
+    first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
+
+    resumed_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    resumed_manager.model = object()
+
+    input_calls = {"count": 0}
+
+    def fake_get_user_input(*args, **kwargs):
+        input_calls["count"] += 1
+        return "/exit"
+
+    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
+
+    resumed_manager.run_feedback_loop_from_checkpoint(
+        checkpoint_db_path=str(checkpoint_base),
+    )
+
+    assert input_calls["count"] == 1
+    assert model_calls["count"] == 1
+
+
+def test_run_task_graph_can_resume_from_override_checkpoint_path(tmp_path):
+    checkpoint_base = tmp_path / "override_task.sqlite"
+
+    first_manager = CheckpointableTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    checkpointed_graph, checkpoint_config, _ = first_manager.get_checkpointed_graph(
+        "task_graph"
+    )
+
+    initial_state = TaskManagerState(messages=[{"role": "user", "content": "start"}])
+    final_state = checkpointed_graph.invoke(initial_state, config=checkpoint_config)
+    first_manager.state = TaskManagerState.model_validate(final_state)
+
+    resumed_manager = CheckpointableTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    resumed_manager.run_from_checkpoint(checkpoint_db_path=str(checkpoint_base))
+
+    assert resumed_manager.state.await_user_input is True
+    assert checkpoint_base.exists()
+
+
 def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
     shared_db = tmp_path / "shared.sqlite"
 
@@ -281,7 +409,9 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
         prune_checkpoints=True,
     )
     task_manager.model = object()
-    checkpointed_graph, checkpoint_config = task_manager.get_checkpointed_graph("chat_graph")
+    checkpointed_graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
+        "chat_graph"
+    )
 
     monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/exit")
@@ -323,7 +453,7 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
     assert write_rows is not None
     assert write_rows[0] == 0
 
-    resumed_state = task_manager.load_state_from_checkpoint("chat_graph")
+    _, _, resumed_state = task_manager.get_checkpointed_graph("chat_graph")
     assert resumed_state is not None
     assert resumed_state.full_history == task_manager.full_history
 

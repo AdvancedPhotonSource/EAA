@@ -93,7 +93,10 @@ it and implement ``run()`` or ``run_from_checkpoint()`` around it.
            graph = self.task_graph
            graph_kwargs = {}
            if self.session_db_path is not None:
-               graph, checkpoint_config = self.get_checkpointed_graph("task_graph")
+               graph, checkpoint_config, _ = self.get_checkpointed_graph(
+                   "task_graph",
+                   load_state=False,
+               )
                self.task_graph = graph
                graph_kwargs["config"] = checkpoint_config
            final_state = graph.invoke(initial_state, **graph_kwargs)
@@ -127,8 +130,10 @@ end.
 Checkpointing and resume
 ------------------------
 
-Checkpointing uses the same SQLite database referenced by ``session_db_path``.
-That file can hold:
+Checkpointing uses the same SQLite database referenced by ``session_db_path`` by
+default. The ``run_*_from_checkpoint()`` methods also accept a
+``checkpoint_db_path`` override when you need to resume from a different SQLite
+file. The checkpoint database can hold:
 
 - LangGraph checkpoints
 - explicit WebUI display messages
