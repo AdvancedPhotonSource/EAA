@@ -103,6 +103,9 @@ def build_compatible_checkpoint_state(
         full_history = list(messages)
     if len(messages) == 0 and len(full_history) == 0:
         return None
+    latest_tool_return_types = state_data.get("latest_tool_return_types")
+    if not isinstance(latest_tool_return_types, list):
+        latest_tool_return_types = []
 
     shared_fields = {
         "messages": list(messages),
@@ -112,12 +115,17 @@ def build_compatible_checkpoint_state(
         "store_all_images_in_context": bool(
             state_data.get("store_all_images_in_context", True)
         ),
+        "latest_tool_return_types": list(latest_tool_return_types),
     }
     if graph_name == "chat_graph":
         return ChatGraphState(
             **shared_fields,
             bootstrap_message=None,
             termination_behavior="user",
+            monitor_requested=bool(state_data.get("monitor_requested", False)),
+            monitor_task_description=str(state_data.get("monitor_task_description", "") or ""),
+            subtask_requested=bool(state_data.get("subtask_requested", False)),
+            subtask_task_description=str(state_data.get("subtask_task_description", "") or ""),
             exit_requested=False,
             return_requested=False,
         )
@@ -138,6 +146,7 @@ def build_compatible_checkpoint_state(
             expected_tool_call_sequence_tolerance=0,
             termination_behavior="ask",
             max_arounds_reached_behavior="return",
+            chat_requested=bool(state_data.get("chat_requested", False)),
             exit_requested=False,
             return_requested=False,
         )
@@ -312,6 +321,35 @@ class BaseTaskManager:
     def build_task_graph(self, checkpointer: Any = None):
         """Build the task-manager-specific graph if needed."""
         return None
+
+    def handoff_to_chat(
+        self,
+        store_all_images_in_context: bool = True,
+    ) -> None:
+        """Exit a feedback workflow into chat mode.
+
+        Parameters
+        ----------
+        store_all_images_in_context : bool, default=True
+            Whether image follow-up messages should remain in active chat
+            context after the handoff.
+        """
+        feedback_state = self.state
+        if not isinstance(feedback_state, FeedbackLoopState):
+            raise TypeError("Chat handoff requires `self.state` to be a `FeedbackLoopState`.")
+        self.state = ChatGraphState(
+            messages=list(feedback_state.messages),
+            full_history=list(feedback_state.full_history),
+            round_index=feedback_state.round_index,
+            termination_behavior="user",
+            store_all_images_in_context=store_all_images_in_context,
+            bootstrap_message=None,
+            await_user_input=True,
+        )
+        self.run_conversation(
+            store_all_images_in_context=store_all_images_in_context,
+            termination_behavior="user",
+        )
 
     def resolve_checkpoint_storage(
         self,
@@ -1172,6 +1210,10 @@ class BaseTaskManager:
                 )
             return
         self.state = ChatGraphState.model_validate(final_state)
+        if self.state.monitor_requested:
+            self.enter_monitoring_mode(self.state.monitor_task_description)
+        elif self.state.subtask_requested:
+            self.launch_task_manager(self.state.subtask_task_description)
 
     def run_conversation_from_checkpoint(
         self,
@@ -1231,6 +1273,10 @@ class BaseTaskManager:
             context=self.memory_manager.get_runtime_context(),
         )
         self.state = ChatGraphState.model_validate(final_state)
+        if self.state.monitor_requested:
+            self.enter_monitoring_mode(self.state.monitor_task_description)
+        elif self.state.subtask_requested:
+            self.launch_task_manager(self.state.subtask_task_description)
 
     def run_feedback_loop(
         self,
@@ -1343,6 +1389,8 @@ class BaseTaskManager:
                 )
             return
         self.state = FeedbackLoopState.model_validate(final_state)
+        if self.state.chat_requested:
+            self.handoff_to_chat()
 
     def run_feedback_loop_from_checkpoint(
         self,
@@ -1404,3 +1452,5 @@ class BaseTaskManager:
             )
         final_state = graph.invoke(None, config=checkpoint_config)
         self.state = FeedbackLoopState.model_validate(final_state)
+        if self.state.chat_requested:
+            self.handoff_to_chat()

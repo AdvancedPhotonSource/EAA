@@ -6,7 +6,12 @@ from langgraph.graph import END
 from langgraph.runtime import Runtime
 
 from eaa.core.exceptions import MaxRoundsReached
-from eaa.core.message_proc import generate_openai_message, has_tool_call, print_message, purge_context_images
+from eaa.core.message_proc import (
+    generate_openai_message,
+    has_tool_call,
+    print_message,
+    purge_context_images,
+)
 from eaa.core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
@@ -58,6 +63,180 @@ class NodeFactory:
             return True
         return "TERMINATE" in content and state.termination_behavior == "ask"
 
+    def update_message_history_for_state(
+        self,
+        state: TaskManagerState,
+        message: dict[str, object],
+        *,
+        update_context: bool = True,
+        update_full_history: bool = True,
+        write_to_webui: bool = True,
+    ) -> None:
+        """Append a message directly to a graph state.
+
+        Args:
+            state: Active graph state.
+            message: Message payload to append.
+            update_context: Whether to append to active context.
+            update_full_history: Whether to append to full history.
+            write_to_webui: Whether to append to explicit WebUI display storage.
+        """
+        if update_context:
+            state.messages.append(message)
+        if update_full_history:
+            state.full_history.append(message)
+        if write_to_webui and self.task_manager.session_db_path is not None:
+            self.task_manager.persistence.append_message(message)
+
+    def apply_followup_messages_for_state(
+        self,
+        state: TaskManagerState,
+        messages: list[dict[str, object]],
+        *,
+        store_all_images_in_context: bool = True,
+    ) -> None:
+        """Append follow-up messages directly to a graph state.
+
+        Args:
+            state: Active graph state.
+            messages: Follow-up messages to append.
+            store_all_images_in_context: Whether image messages remain in active context.
+        """
+        for message in messages:
+            update_context = True
+            if self.task_manager._message_contains_image(message) and not store_all_images_in_context:
+                update_context = False
+            if not self.task_manager.use_webui:
+                print_message(message)
+            self.update_message_history_for_state(
+                state,
+                message,
+                update_context=update_context,
+                update_full_history=True,
+            )
+
+    def invoke_model_for_state(
+        self,
+        state: TaskManagerState,
+        *,
+        message: str | dict[str, object] | list[dict[str, object]] | None = None,
+        image_path: str | list[str] | None = None,
+        context: list[dict[str, object]] | None = None,
+        update_context: bool = True,
+        update_full_history: bool = True,
+        await_user_input_resolver: object | None = None,
+    ) -> dict[str, object]:
+        """Invoke the model and append the exchange to the provided state.
+
+        Args:
+            state: Active graph state.
+            message: Optional outgoing message payload.
+            image_path: Optional image payload.
+            context: Explicit model context.
+            update_context: Whether outgoing and assistant messages update context.
+            update_full_history: Whether outgoing and assistant messages update transcript.
+            await_user_input_resolver: Optional callback to derive await-user-input.
+
+        Returns:
+            Updated graph state payload.
+        """
+        response, outgoing = self.task_manager.invoke_model_raw(
+            message=message,
+            image_path=image_path,
+            context=context,
+            return_outgoing_message=True,
+        )
+        if outgoing is not None:
+            if not self.task_manager.use_webui:
+                print_message(outgoing)
+            self.update_message_history_for_state(
+                state,
+                outgoing,
+                update_context=update_context,
+                update_full_history=update_full_history,
+            )
+        if not self.task_manager.use_webui:
+            print_message(response)
+        self.update_message_history_for_state(
+            state,
+            response,
+            update_context=update_context,
+            update_full_history=update_full_history,
+        )
+        if await_user_input_resolver is not None:
+            state.await_user_input = await_user_input_resolver(state)
+        return state.model_dump()
+
+    def execute_tools_for_state(self, state: TaskManagerState) -> dict[str, object]:
+        """Execute tool calls and append tool messages to the provided state.
+
+        Args:
+            state: Active graph state.
+
+        Returns:
+            Updated graph state payload.
+        """
+        response = state.latest_response
+        tool_messages, tool_return_types = self.task_manager.tool_executor.execute_tool_calls_from_message(
+            response,
+            return_tool_return_types=True,
+        )
+        for tool_message in tool_messages:
+            if not self.task_manager.use_webui:
+                print_message(tool_message)
+            self.update_message_history_for_state(
+                state,
+                tool_message,
+                update_context=True,
+                update_full_history=True,
+            )
+        state.latest_tool_return_types = list(tool_return_types)
+        return state.model_dump()
+
+    def enforce_tool_call_sequence_for_state(
+        self,
+        state: FeedbackLoopState,
+        expected_tool_call_sequence: list[str],
+        tolerance: int = 0,
+    ) -> None:
+        """Append a warning if recent tool calls violate the expected sequence.
+
+        Args:
+            state: Active feedback-loop state.
+            expected_tool_call_sequence: Expected tool-call order.
+            tolerance: Allowed mismatch tolerance.
+        """
+        if len(self.task_manager.tool_executor.tool_execution_history) <= 1:
+            return
+        n_actual = min(
+            len(self.task_manager.tool_executor.tool_execution_history),
+            len(expected_tool_call_sequence),
+        ) - tolerance
+        if n_actual <= 0:
+            return
+        actual_sequence = [
+            entry["tool_name"]
+            for entry in self.task_manager.tool_executor.tool_execution_history[-n_actual:]
+        ]
+        expanded_expected = list(expected_tool_call_sequence) * 2
+        for index in range(len(expanded_expected) - len(actual_sequence) + 1):
+            if expanded_expected[index : index + len(actual_sequence)] == actual_sequence:
+                return
+        self.update_message_history_for_state(
+            state,
+            generate_openai_message(
+                content=(
+                    f"The tool call sequence {actual_sequence} is not as expected. "
+                    "Are you making the right tool calls in the right order? "
+                    "If this is intended to address an exception, ignore this message."
+                ),
+                role="user",
+            ),
+            update_context=True,
+            update_full_history=False,
+            write_to_webui=False,
+        )
+
     def await_or_ingest_user_input(self, state: ChatGraphState) -> dict[str, object]:
         """Ingest bootstrap messages or prompt the user for a new chat turn.
 
@@ -67,14 +246,14 @@ class NodeFactory:
         Returns:
             Updated graph state payload.
         """
-        self.task_manager.state = state
         if state.bootstrap_message is not None:
             bootstrap = state.bootstrap_message
             if isinstance(bootstrap, str):
                 message = generate_openai_message(content=bootstrap, role="user")
                 if not self.task_manager.use_webui:
                     print_message(message)
-                self.task_manager.update_message_history(
+                self.update_message_history_for_state(
+                    state,
                     message,
                     update_context=True,
                     update_full_history=True,
@@ -82,7 +261,8 @@ class NodeFactory:
             elif isinstance(bootstrap, dict):
                 if not self.task_manager.use_webui:
                     print_message(bootstrap)
-                self.task_manager.update_message_history(
+                self.update_message_history_for_state(
+                    state,
                     bootstrap,
                     update_context=True,
                     update_full_history=True,
@@ -91,7 +271,8 @@ class NodeFactory:
                 for message in bootstrap:
                     if not self.task_manager.use_webui:
                         print_message(message)
-                    self.task_manager.update_message_history(
+                    self.update_message_history_for_state(
+                        state,
                         message,
                         update_context=True,
                         update_full_history=True,
@@ -122,11 +303,16 @@ class NodeFactory:
                 return state.model_dump()
             if command_lower == "/monitor":
                 if remainder.strip():
-                    self.task_manager.enter_monitoring_mode(remainder.strip())
+                    state.monitor_requested = True
+                    state.monitor_task_description = remainder.strip()
+                    state.await_user_input = False
+                    return state.model_dump()
                 continue
             if command_lower == "/subtask":
-                self.task_manager.launch_task_manager(remainder.strip())
-                continue
+                state.subtask_requested = True
+                state.subtask_task_description = remainder.strip()
+                state.await_user_input = False
+                return state.model_dump()
             if command_lower == "/skill" and remainder == "":
                 self.task_manager.display_available_skills()
                 continue
@@ -136,7 +322,8 @@ class NodeFactory:
             message = generate_openai_message(content=user_message, role="user")
             if not self.task_manager.use_webui:
                 print_message(message)
-            self.task_manager.update_message_history(
+            self.update_message_history_for_state(
+                state,
                 message,
                 update_context=True,
                 update_full_history=True,
@@ -153,7 +340,12 @@ class NodeFactory:
         Returns:
             Next node name.
         """
-        if state.exit_requested or state.return_requested:
+        if (
+            state.monitor_requested
+            or state.subtask_requested
+            or state.exit_requested
+            or state.return_requested
+        ):
             return END
         return "call_model"
 
@@ -177,7 +369,7 @@ class NodeFactory:
         )
         message = None
         image_path = None
-        context = self.task_manager.context
+        context = list(state.messages)
         if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
             message = state.initial_prompt
             image_path = state.initial_image_path
@@ -196,10 +388,10 @@ class NodeFactory:
             )
             memory_message = self.task_manager.memory_manager.build_memory_context_message(memory_results)
             context = self.task_manager.memory_manager.inject_memory_context(
-                list(self.task_manager.context),
+                list(state.messages),
                 memory_message,
             )
-        result = self.task_manager.invoke_model_for_state(
+        result = self.invoke_model_for_state(
             state,
             message=message,
             image_path=image_path,
@@ -270,7 +462,7 @@ class NodeFactory:
         Returns:
             Next node name.
         """
-        if state.exit_requested or state.return_requested:
+        if state.chat_requested or state.exit_requested or state.return_requested:
             return END
         response = state.latest_response or {}
         content = response.get("content")
@@ -297,7 +489,6 @@ class NodeFactory:
         Returns:
             Updated graph state payload.
         """
-        self.task_manager.state = state
         if not state.await_user_input:
             return state.model_dump()
         message = self.task_manager.get_user_input(
@@ -313,21 +504,16 @@ class NodeFactory:
             return state.model_dump()
         if message.lower() == "/chat":
             state.await_user_input = False
-            self.task_manager.run_conversation(store_all_images_in_context=True)
-            chat_messages = list(self.task_manager.context)
-            chat_full_history = list(self.task_manager.full_history)
-            self.task_manager.state = state
-            state.messages = chat_messages
-            state.full_history = chat_full_history
+            state.chat_requested = True
             return state.model_dump()
         if message.lower() == "/help":
             state.await_user_input = True
             self.task_manager.display_command_help()
             return state.model_dump()
-        return self.task_manager.invoke_model_for_state(
+        return self.invoke_model_for_state(
             state,
             message=message,
-            context=self.task_manager.context,
+            context=list(state.messages),
             await_user_input_resolver=self.feedback_response_requires_user_input,
         )
 
@@ -351,10 +537,10 @@ class NodeFactory:
                 "There is no tool call in the response. Make sure you call the tool correctly. "
                 'If you need human intervention, say "NEED HUMAN".'
             )
-        return self.task_manager.invoke_model_for_state(
+        return self.invoke_model_for_state(
             state,
             message=corrective_message,
-            context=self.task_manager.context,
+            context=list(state.messages),
             await_user_input_resolver=self.feedback_response_requires_user_input,
         )
 
@@ -367,9 +553,9 @@ class NodeFactory:
         Returns:
             Updated graph state payload.
         """
-        self.task_manager.state = state
         if state.expected_tool_call_sequence is not None:
-            self.task_manager.enforce_tool_call_sequence(
+            self.enforce_tool_call_sequence_for_state(
+                state,
                 state.expected_tool_call_sequence,
                 state.expected_tool_call_sequence_tolerance,
             )
@@ -379,8 +565,8 @@ class NodeFactory:
         ):
             keep_first = state.n_first_images_to_keep_in_context or 0
             keep_last = state.n_last_images_to_keep_in_context or 0
-            self.task_manager.context = purge_context_images(
-                context=self.task_manager.context,
+            state.messages = purge_context_images(
+                context=state.messages,
                 keep_first_n=keep_first,
                 keep_last_n=keep_last - 1,
                 keep_text=True,

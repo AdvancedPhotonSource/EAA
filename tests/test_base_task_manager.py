@@ -167,6 +167,88 @@ def test_run_feedback_loop_keyboard_interrupt_enters_chat_mode(monkeypatch):
     assert printed_roles == ["system"]
 
 
+def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager.model = object()
+    task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "NEED HUMAN"}
+
+    captured: dict[str, Any] = {"count": 0}
+
+    def fake_run_conversation(*args, **kwargs):
+        captured["count"] += 1
+        captured["kwargs"] = kwargs
+        captured["state"] = task_manager.state
+        captured["messages"] = list(task_manager.state.messages)
+        captured["full_history"] = list(task_manager.state.full_history)
+
+    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/chat")
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
+
+    task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
+
+    assert captured["count"] == 1
+    assert captured["kwargs"] == {
+        "store_all_images_in_context": True,
+        "termination_behavior": "user",
+    }
+    assert isinstance(captured["state"], ChatGraphState)
+    assert captured["state"].await_user_input is True
+    assert [message["role"] for message in captured["messages"]] == ["user", "assistant"]
+    assert [message["content"] for message in captured["messages"]] == [
+        "test prompt",
+        "NEED HUMAN",
+    ]
+    assert captured["full_history"] == captured["messages"]
+
+
+def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager.chat_graph = task_manager.build_chat_graph()
+
+    captured: dict[str, Any] = {}
+
+    def fake_enter_monitoring_mode(task_description: str):
+        captured["task_description"] = task_description
+        captured["state"] = task_manager.state
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/monitor check beam drift")
+    monkeypatch.setattr(task_manager, "enter_monitoring_mode", fake_enter_monitoring_mode)
+
+    task_manager.run_conversation(termination_behavior="user")
+
+    assert captured["task_description"] == "check beam drift"
+    assert isinstance(captured["state"], ChatGraphState)
+    assert captured["state"].monitor_requested is True
+    assert captured["state"].messages == []
+    assert captured["state"].full_history == []
+
+
+def test_run_conversation_subtask_command_hands_off_to_task_manager(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager.chat_graph = task_manager.build_chat_graph()
+
+    captured: dict[str, Any] = {}
+
+    def fake_launch_task_manager(task_request: str):
+        captured["task_request"] = task_request
+        captured["state"] = task_manager.state
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/subtask align the scan")
+    monkeypatch.setattr(task_manager, "launch_task_manager", fake_launch_task_manager)
+
+    task_manager.run_conversation(termination_behavior="user")
+
+    assert captured["task_request"] == "align the scan"
+    assert isinstance(captured["state"], ChatGraphState)
+    assert captured["state"].subtask_requested is True
+    assert captured["state"].messages == []
+    assert captured["state"].full_history == []
+
+
 def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     checkpoint_base = tmp_path / "session.sqlite"
 

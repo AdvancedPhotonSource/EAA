@@ -3,6 +3,8 @@ from typing import Any, Callable, Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from eaa.core.tooling.base import ToolReturnType
+
 
 class TaskManagerState(BaseModel):
     """Minimal base state shared by graph-backed task managers."""
@@ -14,6 +16,7 @@ class TaskManagerState(BaseModel):
     await_user_input: bool = False
     round_index: int = 0
     store_all_images_in_context: bool = True
+    latest_tool_return_types: list[ToolReturnType] = Field(default_factory=list)
 
     def get_latest_message(self, role: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Return the most recent message, optionally filtered by role."""
@@ -87,6 +90,10 @@ class ChatGraphState(TaskManagerState):
 
     termination_behavior: Literal["return", "user"] = "user"
     bootstrap_message: Optional[Any] = None
+    monitor_requested: bool = False
+    monitor_task_description: str = ""
+    subtask_requested: bool = False
+    subtask_task_description: str = ""
     exit_requested: bool = False
     return_requested: bool = False
 
@@ -116,5 +123,6 @@ class FeedbackLoopState(TaskManagerState):
     expected_tool_call_sequence_tolerance: int = 0
     termination_behavior: Literal["ask", "return"] = "ask"
     max_arounds_reached_behavior: Literal["return", "raise"] = "return"
+    chat_requested: bool = False
     exit_requested: bool = False
     return_requested: bool = False
