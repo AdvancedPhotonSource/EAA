@@ -81,6 +81,3 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         if self.initial_parameters is None:
             raise ValueError("initial_parameters must be provided.")
         return super().prerun_check(*args, **kwargs)
-        
-    def run(self, *args, **kwargs) -> None:
-        raise NotImplementedError

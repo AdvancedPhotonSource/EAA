@@ -1,16 +1,22 @@
-from typing import Optional, Callable
+from typing import Optional, TYPE_CHECKING, Any
 import logging
 import copy
 
 import numpy as np
+from langgraph.graph import StateGraph, START
+from langgraph.graph.state import CompiledStateGraph
 
 from eaa.core.message_proc import (
     generate_openai_message,
+    get_tool_call_info,
 )
 from eaa.api.llm_config import LLMConfig
 from eaa.api.memory import MemoryManagerConfig
 from eaa.core.exceptions import MaxRoundsReached
-from eaa.core.tooling.base import BaseTool
+from eaa.core.task_manager.nodes import NodeFactory
+from eaa.core.task_manager.state import FeedbackLoopState
+from eaa.core.tooling.base import BaseTool, ToolReturnType
+from eaa.core.task_manager.base import load_latest_checkpoint_state_from_connection
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.tool.imaging.param_tuning import SetParameters
@@ -21,6 +27,142 @@ from eaa.tool.imaging.registration import ImageRegistration
 import eaa.image_proc as ip
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from eaa.core.task_manager.base import BaseTaskManager
+
+
+class FocusingNodeFactory(NodeFactory):
+    """Node factory for the focusing workflow with registration routing."""
+
+    def __init__(self, task_manager: "BaseTaskManager"):
+        """Initialize the focusing node factory.
+
+        Args:
+            task_manager: Owning task manager.
+        """
+        super().__init__(task_manager)
+
+    def route_after_tool_execution(self, state: FeedbackLoopState) -> str:
+        """Route post-tool execution for the focusing workflow.
+
+        Args:
+            state: Active feedback-loop state.
+
+        Returns:
+            Next node name.
+        """
+        if self.task_manager.should_run_image_registration(state):
+            return "image_registration"
+        return super().route_after_tool_execution(state)
+
+    def image_registration(self, state: FeedbackLoopState) -> dict[str, object]:
+        """Handle image-acquisition follow-up with registration.
+
+        Args:
+            state: Active feedback-loop state.
+
+        Returns:
+            Updated graph state payload.
+        """
+        response = state.latest_response or {}
+        tool_call_info_list = get_tool_call_info(response, index=None) or []
+        tool_messages = state.latest_tool_messages
+        tool_return_types = state.latest_tool_return_types
+        followup_messages: list[dict[str, Any]] = []
+
+        for index, tool_message in enumerate(tool_messages):
+            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+            tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
+            tool_return_type = (
+                tool_return_types[index]
+                if index < len(tool_return_types)
+                else ToolReturnType.TEXT
+            )
+            image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
+                tool_message.get("content")
+            )
+            if (
+                tool_name == "acquire_image"
+                and tool_return_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT)
+                and len(image_paths) > 0
+            ):
+                for image_path in image_paths:
+                    followup_messages.extend(
+                        self.task_manager.build_acquisition_followup_messages(
+                            image_path,
+                            run_registration=True,
+                        )
+                    )
+                continue
+
+            followup_messages.extend(
+                self.task_manager.tool_executor.build_tool_followup_messages(
+                    tool_message,
+                    tool_return_type,
+                    skill_catalog=self.task_manager.skill_catalog,
+                    message_with_yielded_image=state.message_with_yielded_image,
+                    allow_non_image_tool_responses=state.allow_non_image_tool_responses,
+                    tool_call_info=tool_call_info,
+                )
+            )
+
+        self.apply_followup_messages_for_state(state, followup_messages)
+        return state.model_dump()
+
+    def image_followup(self, state: FeedbackLoopState) -> dict[str, object]:
+        """Append focusing-specific follow-up messages after tool execution.
+
+        Args:
+            state: Active feedback-loop state.
+
+        Returns:
+            Updated graph state payload.
+        """
+        response = state.latest_response or {}
+        tool_call_info_list = get_tool_call_info(response, index=None) or []
+        tool_messages = state.latest_tool_messages
+        tool_return_types = state.latest_tool_return_types
+        followup_messages: list[dict[str, Any]] = []
+
+        for index, tool_message in enumerate(tool_messages):
+            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+            tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
+            tool_return_type = (
+                tool_return_types[index]
+                if index < len(tool_return_types)
+                else ToolReturnType.TEXT
+            )
+            image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
+                tool_message.get("content")
+            )
+            if (
+                tool_name == "acquire_image"
+                and tool_return_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT)
+                and len(image_paths) > 0
+            ):
+                for image_path in image_paths:
+                    followup_messages.extend(
+                        self.task_manager.build_acquisition_followup_messages(
+                            image_path,
+                            run_registration=False,
+                        )
+                    )
+                continue
+
+            followup_messages.extend(
+                self.task_manager.tool_executor.build_tool_followup_messages(
+                    tool_message,
+                    tool_return_type,
+                    skill_catalog=self.task_manager.skill_catalog,
+                    message_with_yielded_image=state.message_with_yielded_image,
+                    allow_non_image_tool_responses=state.allow_non_image_tool_responses,
+                    tool_call_info=tool_call_info,
+                )
+            )
+
+        self.apply_followup_messages_for_state(state, followup_messages)
+        return state.model_dump()
 
 
 class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
@@ -117,6 +259,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         
         self.last_acquisition_count_registered = 0
         self.last_acquisition_count_stitched = 0
+        self.active_use_registration_in_workflow = False
+        self.active_add_reference_image_to_images_acquired = False
+        self.active_reference_image_path: Optional[str] = None
         
         self.use_feature_tracking_subtask = use_feature_tracking_subtask
         self.feature_tracking_task_manager: Optional[FeatureTrackingTaskManager] = None
@@ -134,120 +279,257 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             *args, **kwargs
         )
         
-    def image_path_tool_response_hook_factory(
-        self,
-        use_registration_in_workflow: bool,
-        add_reference_image_to_images_acquired: bool,
-        use_feature_tracking_subtask: bool,
-        reference_image_path: str
-    ) -> Callable:
-        """Factory function that returns a hook function for the image path tool response.
-        If none of the flags are True, it returns None.
+    def build_task_graph(self, checkpointer: Any = None) -> CompiledStateGraph:
+        """Build the focusing task graph with image-registration routing.
+
+        Parameters
+        ----------
+        checkpointer : Any, optional
+            LangGraph checkpointer.
+
+        Returns
+        -------
+        CompiledStateGraph
+            Compiled focusing feedback-loop graph.
         """
-        def hook_function(image_path: str) -> None:
-            message = ""
-            if (
-                add_reference_image_to_images_acquired
-                and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_stitched
-            ):
-                image_path = ImagingBaseTaskManager.add_reference_image_to_images_acquired(
-                    image_path, reference_image_path
+        node_factory = FocusingNodeFactory(self)
+        builder = StateGraph(FeedbackLoopState)
+        builder.add_node(
+            "handle_human_gate",
+            node_factory.handle_human_gate,
+        )
+        builder.add_node(
+            "reprompt_model",
+            node_factory.reprompt_model,
+        )
+        builder.add_node(
+            "execute_tools",
+            node_factory.execute_tools,
+            input_schema=FeedbackLoopState,
+        )
+        builder.add_node(
+            "image_registration",
+            node_factory.image_registration,
+            input_schema=FeedbackLoopState,
+        )
+        builder.add_node(
+            "image_followup",
+            node_factory.image_followup,
+            input_schema=FeedbackLoopState,
+        )
+        builder.add_node(
+            "finalize_round",
+            node_factory.finalize_round,
+        )
+        builder.add_node(
+            "call_model",
+            node_factory.call_model,
+            input_schema=FeedbackLoopState,
+        )
+        builder.add_edge(START, "call_model")
+        builder.add_conditional_edges(
+            "call_model",
+            node_factory.route_after_feedback_response,
+        )
+        builder.add_conditional_edges(
+            "handle_human_gate",
+            node_factory.route_after_feedback_response,
+        )
+        builder.add_conditional_edges(
+            "reprompt_model",
+            node_factory.route_after_feedback_response,
+        )
+        builder.add_conditional_edges(
+            "execute_tools",
+            node_factory.route_after_tool_execution,
+        )
+        builder.add_edge("image_registration", "finalize_round")
+        builder.add_edge("image_followup", "finalize_round")
+        builder.add_conditional_edges(
+            "finalize_round",
+            node_factory.route_after_feedback_round,
+        )
+        return builder.compile(checkpointer=checkpointer)
+
+    def should_run_image_registration(self, state: FeedbackLoopState) -> bool:
+        """Return whether the registration node should run for the latest tool batch.
+
+        Parameters
+        ----------
+        state : FeedbackLoopState
+            Active feedback-loop state.
+
+        Returns
+        -------
+        bool
+            Whether the registration node should run.
+        """
+        if not self.active_use_registration_in_workflow:
+            return False
+        if self.acquisition_tool.image_km1 is None or self.acquisition_tool.image_k is None:
+            return False
+        if (
+            self.acquisition_tool.counter_acquire_image
+            <= self.last_acquisition_count_registered
+        ):
+            return False
+        response = state.latest_response or {}
+        tool_call_info_list = get_tool_call_info(response, index=None) or []
+        tool_messages = state.latest_tool_messages
+        tool_return_types = state.latest_tool_return_types
+        for index, tool_message in enumerate(tool_messages):
+            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+            tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
+            tool_return_type = (
+                tool_return_types[index]
+                if index < len(tool_return_types)
+                else ToolReturnType.TEXT
+            )
+            if tool_name != "acquire_image":
+                continue
+            if tool_return_type not in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
+                continue
+            image_paths = self.tool_executor.extract_image_paths_from_tool_response(
+                tool_message.get("content")
+            )
+            if len(image_paths) > 0:
+                return True
+        return False
+
+    def build_acquisition_followup_messages(
+        self,
+        image_path: str,
+        *,
+        run_registration: bool,
+    ) -> list[dict[str, Any]]:
+        """Build focusing-specific follow-up messages after image acquisition.
+
+        Parameters
+        ----------
+        image_path : str
+            Returned image path.
+        run_registration : bool
+            Whether to include the registration follow-up path.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Follow-up messages for the acquired image.
+        """
+        message = ""
+        if (
+            self.active_add_reference_image_to_images_acquired
+            and self.active_reference_image_path is not None
+            and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_stitched
+        ):
+            image_path = ImagingBaseTaskManager.add_reference_image_to_images_acquired(
+                image_path,
+                self.active_reference_image_path,
+            )
+            self.last_acquisition_count_stitched = self.acquisition_tool.counter_acquire_image
+            message = (
+                "Here is the new image (left). "
+                "The reference image (right) is also shown for your reference. "
+            )
+
+        run_feature_tracking = False
+        if self.use_feature_tracking_subtask:
+            run_feature_tracking = self.should_run_feature_tracking()
+            if run_feature_tracking:
+                temp_context = [
+                    generate_openai_message(content="Image 1", image=self.acquisition_tool.image_km1),
+                    generate_openai_message(content="Image 2", image=self.acquisition_tool.image_k),
+                ]
+                response, outgoing = self.invoke_model_raw(
+                    "Does the last image have any overlap with the previous one? "
+                    "Just answer with 'yes' or 'no'.",
+                    image_path=image_path,
+                    context=temp_context,
+                    return_outgoing_message=True,
                 )
-                self.last_acquisition_count_stitched = self.acquisition_tool.counter_acquire_image
-                message = (
-                    "Here is the new image (left). "
-                    "The reference image (right) is also shown for your reference. "
-                )
-            
-            run_feature_tracking = use_feature_tracking_subtask
-            if use_feature_tracking_subtask:
-                # Let agent decide whether feature tracking is needed.
-                if (
-                    self.acquisition_tool.image_km1 is not None
-                    and self.acquisition_tool.image_k is not None
-                    and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
-                ):
-                    temp_context = [
-                        generate_openai_message(content="Image 1", image=self.acquisition_tool.image_km1),
-                        generate_openai_message(content="Image 2", image=self.acquisition_tool.image_k)
-                    ]
-                    response, outgoing = self.invoke_model_raw(
-                        "Does the last image have any overlap with the previous one? "
-                        "Just answer with 'yes' or 'no'.",
-                        image_path=image_path,
-                        context=temp_context,
-                        return_outgoing_message=True
+                self.update_message_history(outgoing, update_context=False, update_full_history=True)
+                self.update_message_history(response, update_context=False, update_full_history=True)
+
+                if "no" in response["content"].lower():
+                    feature_tracking_response = self.restore_fov(
+                        self.acquisition_tool.image_km1,
+                        add_target_image_to_images_acquired=(
+                            self.active_add_reference_image_to_images_acquired
+                        ),
                     )
-                    # Context is not updated in the hook.
-                    self.update_message_history(outgoing, update_context=False, update_full_history=True)
-                    self.update_message_history(response, update_context=False, update_full_history=True)
-                    
-                    if "no" in response["content"].lower():
-                        # If there is no overlap, run feature tracking to restore the FOV.
-                        run_feature_tracking = True
-                        feature_tracking_response = self.restore_fov(
-                            self.acquisition_tool.image_km1,
-                            add_target_image_to_images_acquired=add_reference_image_to_images_acquired
-                        )
-                        self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
-                        
-                        if len(message) == 0:
-                            message = ""
-                        message += (
-                            f"Here is the image you just acquired. Since there is no overlap "
-                            f"with the last image, feature tracking has been performed. Here "
-                            f"is the result: \n{feature_tracking_response}\n"
-                            f"Use the result to adjust the line scan positions."
-                        )
-                    else:
-                        run_feature_tracking = False
+                    self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
+                    message += (
+                        "Here is the image you just acquired. Since there is no overlap "
+                        "with the last image, feature tracking has been performed. Here "
+                        f"is the result: \n{feature_tracking_response}\n"
+                        "Use the result to adjust the line scan positions."
+                    )
                 else:
                     run_feature_tracking = False
-            
-            if use_registration_in_workflow and not run_feature_tracking:
-                image_k = self.acquisition_tool.image_k
-                image_km1 = self.acquisition_tool.image_km1
-                if (
-                    image_km1 is not None
-                    and image_k is not None
-                    and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
-                ):
-                    shift = self.register_images(image_k, image_km1)
-                    
-                    if len(message) == 0:
-                        message = "Here is the new image. "
-                    scan_pos_diff = [
-                        float(self.acquisition_tool.image_acquisition_call_history[-1][f"{dir}_center"])
-                        - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{dir}_center"])
-                        for dir in ["y", "x"]
-                    ]
-                    offset_to_subtract = [float(shift[i] - scan_pos_diff[i]) for i in [0, 1]]
-                    message += (
-                        f"Image registration has found the offset to apply to the new image for "
-                        f"alignment with the previous one to be {shift.tolist()} (y, x). Taking "
-                        f"into account the difference in scan positions ({scan_pos_diff}), the "
-                        f"offset to use is {offset_to_subtract} (y, x). Use this offset to "
-                        f"adjust the line scan positions by **subtracting** it from both "
-                        f"the x and y coordinates of the start and end points of the previous line scan. "
-                    )
-                    if len(self.acquisition_tool.line_scan_call_history[-1]) > 0:
-                        message += (
-                            f"For your reference, the last line scan tool call is {self.acquisition_tool.line_scan_call_history[-1]}."
-                            f"Also use this offset to update the argument when you perform 2D image acquisition "
-                            f"next time. The last 2D image acquisition call is {self.acquisition_tool.image_acquisition_call_history[-1]}."
-                        )
-                    self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
-            return [generate_openai_message(content=message, image_path=image_path)]
-        
-        if (
-            (not use_registration_in_workflow)
-            and (not add_reference_image_to_images_acquired)
-            and (not use_feature_tracking_subtask)
-        ):
-            return None
-        else:
-            return hook_function
-        
+
+        if run_registration and not run_feature_tracking and self.should_run_feature_registration():
+            shift = self.register_images(
+                self.acquisition_tool.image_k,
+                self.acquisition_tool.image_km1,
+            )
+            if len(message) == 0:
+                message = "Here is the new image. "
+            scan_pos_diff = [
+                float(self.acquisition_tool.image_acquisition_call_history[-1][f"{direction}_center"])
+                - float(self.acquisition_tool.image_acquisition_call_history[-2][f"{direction}_center"])
+                for direction in ["y", "x"]
+            ]
+            offset_to_subtract = [float(shift[i] - scan_pos_diff[i]) for i in [0, 1]]
+            message += (
+                "Image registration has found the offset to apply to the new image for "
+                f"alignment with the previous one to be {shift.tolist()} (y, x). Taking "
+                f"into account the difference in scan positions ({scan_pos_diff}), the "
+                f"offset to use is {offset_to_subtract} (y, x). Use this offset to "
+                "adjust the line scan positions by **subtracting** it from both "
+                "the x and y coordinates of the start and end points of the previous line scan. "
+            )
+            if len(self.acquisition_tool.line_scan_call_history[-1]) > 0:
+                message += (
+                    "For your reference, the last line scan tool call is "
+                    f"{self.acquisition_tool.line_scan_call_history[-1]}."
+                    "Also use this offset to update the argument when you perform 2D image acquisition "
+                    "next time. The last 2D image acquisition call is "
+                    f"{self.acquisition_tool.image_acquisition_call_history[-1]}."
+                )
+            self.last_acquisition_count_registered = self.acquisition_tool.counter_acquire_image
+
+        if len(message) == 0:
+            message = "Here is the image the tool returned."
+        return [generate_openai_message(content=message, image_path=image_path)]
+
+    def should_run_feature_tracking(self) -> bool:
+        """Return whether overlap should be checked for feature tracking.
+
+        Returns
+        -------
+        bool
+            Whether overlap-check logic should run.
+        """
+        return (
+            self.acquisition_tool.image_km1 is not None
+            and self.acquisition_tool.image_k is not None
+            and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
+        )
+
+    def should_run_feature_registration(self) -> bool:
+        """Return whether image registration can run on the latest acquisition.
+
+        Returns
+        -------
+        bool
+            Whether registration can run.
+        """
+        return (
+            self.acquisition_tool.image_km1 is not None
+            and self.acquisition_tool.image_k is not None
+            and self.acquisition_tool.counter_acquire_image > self.last_acquisition_count_registered
+        )
+
     def restore_fov(
         self, 
         target_image: np.ndarray, 
@@ -509,33 +791,45 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             )
         if additional_prompt is not None:
             initial_prompt += "\nAdditional instructions:\n" + additional_prompt
+
+        self.active_use_registration_in_workflow = use_registration_in_workflow
+        self.active_add_reference_image_to_images_acquired = (
+            add_reference_image_to_images_acquired
+        )
+        self.active_reference_image_path = reference_image_path
         
-        # Always keep the first (reference) image.
-        self.run_feedback_loop(
+        self.state = FeedbackLoopState(
+            messages=list(self.context),
+            full_history=list(self.full_history),
+            round_index=0,
+            await_user_input=False,
             initial_prompt=initial_prompt,
             initial_image_path=reference_image_path,
-            allow_non_image_tool_responses=True,
+            message_with_yielded_image="Here is the image the tool returned.",
+            max_rounds=max_iters,
             n_first_images_to_keep_in_context=1,
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
-            max_rounds=max_iters,
-            hook_functions={
-                "image_path_tool_response": self.image_path_tool_response_hook_factory(
-                    use_registration_in_workflow=use_registration_in_workflow,
-                    add_reference_image_to_images_acquired=add_reference_image_to_images_acquired,
-                    use_feature_tracking_subtask=self.use_feature_tracking_subtask,
-                    reference_image_path=reference_image_path
-                )
-            },
+            allow_non_image_tool_responses=True,
+            allow_multiple_tool_calls=False,
+            hook_functions={},
             expected_tool_call_sequence=[
                 "scan_line",
                 "set_parameters",
                 "acquire_image",
             ],
             expected_tool_call_sequence_tolerance=1,
-            *args, **kwargs
+            termination_behavior=kwargs.pop("termination_behavior", "ask"),
+            max_arounds_reached_behavior=kwargs.pop("max_arounds_reached_behavior", "return"),
         )
+        super().run()
 
-    def run_from_checkpoint(self, checkpoint_db_path: Optional[str] = None) -> None:
+    def run_from_checkpoint(
+        self,
+        checkpoint_db_path: Optional[str] = None,
+        use_registration_in_workflow: Optional[bool] = None,
+        add_reference_image_to_images_acquired: Optional[bool] = None,
+        reference_image_path: Optional[str] = None,
+    ) -> None:
         """Resume the scanning-microscope focusing workflow from a checkpoint.
 
         Parameters
@@ -543,9 +837,71 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and updates instead of
             ``self.session_db_path``.
+        use_registration_in_workflow : Optional[bool], optional
+            Override for whether registration follow-up should be routed
+            through the dedicated node.
+        add_reference_image_to_images_acquired : Optional[bool], optional
+            Override for whether the reference image should be stitched onto
+            newly acquired images.
+        reference_image_path : Optional[str], optional
+            Override for the reference image path used for stitched follow-up
+            images.
         """
         self.prerun_check()
-        self.run_feedback_loop_from_checkpoint(
-            hook_functions=self.active_feedback_hook_functions,
+        if use_registration_in_workflow is not None:
+            self.active_use_registration_in_workflow = use_registration_in_workflow
+        if add_reference_image_to_images_acquired is not None:
+            self.active_add_reference_image_to_images_acquired = (
+                add_reference_image_to_images_acquired
+            )
+        if reference_image_path is not None:
+            self.active_reference_image_path = reference_image_path
+        graph, checkpoint_config, _ = self.get_checkpointed_graph(
+            "task_graph",
             checkpoint_db_path=checkpoint_db_path,
+            load_state=False,
         )
+        snapshot = graph.get_state(checkpoint_config)
+        fallback_loaded = (
+            snapshot.created_at is None
+            or snapshot.values is None
+            or len(snapshot.values) == 0
+        )
+        if not fallback_loaded and snapshot.values is not None:
+            resumed_state = FeedbackLoopState.model_validate(snapshot.values)
+        else:
+            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
+                "task_graph",
+                checkpoint_db_path=checkpoint_db_path,
+            )
+            latest_state = load_latest_checkpoint_state_from_connection(
+                connection=self.checkpoint_connections[("task_graph", resolved_checkpoint_path)],
+                prune_checkpoints=self.prune_checkpoints,
+            )
+            if latest_state is None:
+                raise ValueError(
+                    f"No task-graph checkpoint found in shared checkpoint DB "
+                    f"{resolved_checkpoint_path}."
+                )
+            resumed_state = FeedbackLoopState.model_validate(latest_state)
+        restart_from_human_gate = (
+            fallback_loaded
+            or resumed_state.exit_requested
+            or resumed_state.return_requested
+        )
+        if restart_from_human_gate:
+            resumed_state.exit_requested = False
+            resumed_state.return_requested = False
+            resumed_state.await_user_input = True
+        self.state = resumed_state
+        self.task_graph = graph
+        if restart_from_human_gate:
+            checkpoint_config = graph.update_state(
+                checkpoint_config,
+                resumed_state.model_dump(),
+                as_node="handle_human_gate",
+            )
+        final_state = graph.invoke(None, config=checkpoint_config)
+        self.state = FeedbackLoopState.model_validate(final_state)
+        if self.state.chat_requested:
+            self.handoff_to_chat()

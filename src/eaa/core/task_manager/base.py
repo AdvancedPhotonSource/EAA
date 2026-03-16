@@ -870,17 +870,57 @@ class BaseTaskManager:
         return True
 
     def run(self, *args, **kwargs) -> None:
-        """Run the task manager.
+        """Run the task graph using the current state as input.
 
         Raises
         ------
-        NotImplementedError
-            Always raised because concrete task managers must implement their
-            own `run()` method.
+        ValueError
+            If the task manager does not define a runnable task graph.
         """
-        raise NotImplementedError(
-            "Concrete task managers must implement `run()`."
-        )
+        graph = self.task_graph
+        graph_kwargs: dict[str, Any] = {}
+        if self.session_db_path is not None:
+            graph, checkpoint_config, _ = self.get_checkpointed_graph(
+                "task_graph",
+                load_state=False,
+            )
+            self.task_graph = graph
+            graph_kwargs["config"] = checkpoint_config
+        if graph is None:
+            raise ValueError("The task manager does not define a runnable task graph.")
+        initial_state = self.state
+        try:
+            final_state = graph.invoke(initial_state, **graph_kwargs)
+        except KeyboardInterrupt:
+            interrupt_message = generate_openai_message(
+                content=(
+                    "Keyboard interrupt detected. The current task was interrupted. "
+                    "You can now provide new instructions."
+                ),
+                role="system",
+            )
+            if not self.use_webui:
+                print_message(interrupt_message)
+            self.update_message_history(
+                interrupt_message,
+                update_context=True,
+                update_full_history=True,
+            )
+            if (
+                isinstance(initial_state, FeedbackLoopState)
+                and initial_state.termination_behavior == "ask"
+            ):
+                self.run_conversation(
+                    store_all_images_in_context=True,
+                    termination_behavior="user",
+                )
+            return
+        state_model = type(initial_state)
+        if not issubclass(state_model, TaskManagerState):
+            state_model = TaskManagerState
+        self.state = state_model.model_validate(final_state)
+        if isinstance(self.state, FeedbackLoopState) and self.state.chat_requested:
+            self.handoff_to_chat()
 
     def run_from_checkpoint(self, checkpoint_db_path: Optional[str] = None) -> None:
         """Resume a task manager from a task-graph checkpoint.
@@ -917,7 +957,12 @@ class BaseTaskManager:
             raise ValueError("The task manager does not define a checkpointable task graph.")
         graph_input = loaded_state if fallback_loaded else None
         final_state = graph.invoke(graph_input, config=checkpoint_config)
-        self.state = TaskManagerState.model_validate(final_state)
+        state_model = type(loaded_state)
+        if not issubclass(state_model, TaskManagerState):
+            state_model = TaskManagerState
+        self.state = state_model.model_validate(final_state)
+        if isinstance(self.state, FeedbackLoopState) and self.state.chat_requested:
+            self.handoff_to_chat()
 
     def _message_contains_image(self, message: dict[str, Any]) -> bool:
         """Return whether a message contains image payloads."""
