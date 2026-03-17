@@ -2,7 +2,7 @@ from typing import Annotated
 import json
 
 import numpy as np
-from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 from eaa.tool.imaging.acquisition import SimulatedAcquireImage
 
@@ -88,11 +88,11 @@ class SetParameters(BaseTool):
     def get_initial_parameter_history(self, parameter_names: list[str]):
         return {name: [] for name in parameter_names}
         
-    @tool(name="set_parameters", return_type=ToolReturnType.TEXT)
+    @tool(name="set_parameters")
     def set_parameters(*args, **kwargs):
         raise NotImplementedError
 
-    @tool(name="get_current_parameters", return_type=ToolReturnType.TEXT)
+    @tool(name="get_current_parameters")
     def get_current_parameters(self):
         return json.dumps(self.get_parameter_at_iteration(-1, as_dict=True))
     
@@ -162,7 +162,7 @@ class SimulatedSetParameters(SetParameters):
         self.blur_factor = blur_factor
         self.drift_factor = drift_factor
         
-    @tool(name="set_parameters", return_type=ToolReturnType.TEXT)
+    @tool(name="set_parameters")
     def set_parameters(
         self, 
         parameters: Annotated[list[float], "The parameters to set the optics to"],

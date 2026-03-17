@@ -11,7 +11,7 @@ from eaa.api.llm_config import LLMConfig
 from eaa.core.message_proc import generate_openai_message
 from eaa.core.skill import SkillMetadata
 from eaa.core.task_manager.base import BaseTaskManager
-from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 from eaa.image_proc import (
@@ -139,7 +139,7 @@ class ImageRegistration(BaseTool):
             return image
         return ndi.zoom(image, zoom=self.zoom, order=1, mode="nearest")
 
-    @tool(name="get_offset", return_type=ToolReturnType.LIST)
+    @tool(name="get_offset")
     def get_offset(
         self,
         target: Annotated[
@@ -183,7 +183,7 @@ class ImageRegistration(BaseTool):
             raise ValueError(f"Invalid value for register_with: {register_with}")
         return image_t, image_r, float(psize_t), float(psize_r)
 
-    @tool(name="apply_and_view_offset", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="apply_and_view_offset")
     def apply_and_view_offset(
         self,
         register_with: Annotated[
@@ -199,7 +199,7 @@ class ImageRegistration(BaseTool):
             float,
             "Fractional x-shift (right is positive) relative to image width.",
         ],
-    ) -> Annotated[str, "Path to side-by-side plot of reference image and shifted current image."]:
+    ) -> Annotated[dict[str, str], "Tool payload containing `img_path` for the verification figure."]:
         """Apply a fractional offset to the latest (moving) image and
         view it side by side with the reference image.
         """
@@ -224,11 +224,13 @@ class ImageRegistration(BaseTool):
             shifted_image_t,
             images_are_processed=True,
         )
-        return BaseTool.save_image_to_temp_dir(
-            fig=fig,
-            filename="llm_registration_offset_check.png",
-            add_timestamp=True,
-        )
+        return {
+            "img_path": BaseTool.save_image_to_temp_dir(
+                fig=fig,
+                filename="llm_registration_offset_check.png",
+                add_timestamp=True,
+            )
+        }
 
     def parse_llm_shift(self, response_text: str) -> np.ndarray:
         content = response_text.strip()

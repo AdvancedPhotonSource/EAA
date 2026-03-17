@@ -7,7 +7,7 @@ This module provides a simple calculator tool that can be exposed via MCP.
 from typing import List
 import logging
 
-from eaa.core.tooling.base import BaseTool, ToolReturnType, check, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class CalculatorTool(BaseTool):
         
         self.calculation_history: List[str] = []
     
-    @tool(name="add", return_type=ToolReturnType.NUMBER)
+    @tool(name="add")
     def add(self, a: float, b: float) -> float:
         """
         Add two numbers together.
@@ -56,7 +56,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Added {a} + {b} = {result}")
         return result
     
-    @tool(name="subtract", return_type=ToolReturnType.NUMBER)
+    @tool(name="subtract")
     def subtract(self, a: float, b: float) -> float:
         """
         Subtract the second number from the first.
@@ -78,7 +78,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Subtracted {a} - {b} = {result}")
         return result
     
-    @tool(name="multiply", return_type=ToolReturnType.NUMBER)
+    @tool(name="multiply")
     def multiply(self, a: float, b: float) -> float:
         """
         Multiply two numbers together.
@@ -100,7 +100,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Multiplied {a} * {b} = {result}")
         return result
     
-    @tool(name="divide", return_type=ToolReturnType.NUMBER)
+    @tool(name="divide")
     def divide(self, a: float, b: float) -> float:
         """
         Divide the first number by the second.
@@ -130,7 +130,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Divided {a} / {b} = {result}")
         return result
     
-    @tool(name="get_history", return_type=ToolReturnType.LIST)
+    @tool(name="get_history")
     def get_history(self) -> List[str]:
         """
         Get the calculation history.
@@ -143,7 +143,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Retrieved calculation history with {len(self.calculation_history)} entries")
         return self.calculation_history.copy()
     
-    @tool(name="clear_history", return_type=ToolReturnType.TEXT)
+    @tool(name="clear_history")
     def clear_history(self) -> str:
         """
         Clear the calculation history.

@@ -10,7 +10,7 @@ import sys
 import tempfile
 from typing import Annotated, Any, Dict, Optional
 
-from eaa.core.tooling.base import BaseTool, ToolReturnType, check, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 
 class CodingTool(BaseTool):
@@ -156,7 +156,7 @@ class PythonCodingTool(CodingTool):
             **kwargs,
         )
 
-    @tool(name="execute_python_code", return_type=ToolReturnType.DICT)
+    @tool(name="execute_python_code")
     def execute_code(
         self,
         code: Annotated[str, "Python source code to execute in a subprocess."],
@@ -226,7 +226,7 @@ class PythonCodingTool(CodingTool):
                 if non_empty_lines:
                     candidate = non_empty_lines[-1].strip()
                     if os.path.isfile(candidate) and os.path.splitext(candidate)[1].lower() == ".png":
-                        result_dict["image_path"] = candidate
+                        result_dict["img_path"] = candidate
             return result_dict
         except subprocess.TimeoutExpired as exc:
             return {
@@ -287,7 +287,7 @@ class BashCodingTool(CodingTool):
             **kwargs,
         )
 
-    @tool(name="execute_bash_code", return_type=ToolReturnType.DICT)
+    @tool(name="execute_bash_code")
     def execute_code(
         self,
         code: str,

@@ -1,12 +1,12 @@
 import sys
+import json
 from pathlib import Path
 
 from eaa.core.task_manager.tool_executor import SerialToolExecutor
-from eaa.core.tooling.base import ToolReturnType
 from eaa.tool.mcp import MCPTool
 
 
-def test_mcp_tool_registers_remote_tools_and_preserves_return_type(tmp_path):
+def test_mcp_tool_registers_remote_tools_and_normalizes_json_results(tmp_path):
     script_path = tmp_path / "mcp_server.py"
     repo_src = Path(__file__).resolve().parents[1] / "src"
     script_path.write_text(
@@ -14,11 +14,11 @@ def test_mcp_tool_registers_remote_tools_and_preserves_return_type(tmp_path):
             [
                 "import sys",
                 f"sys.path.insert(0, {str(repo_src)!r})",
-                "from eaa.core.tooling.base import BaseTool, ToolReturnType, tool",
+                "from eaa.core.tooling.base import BaseTool, tool",
                 "from eaa.core.mcp.server import run_mcp_server_from_tools",
                 "",
                 "class RemoteImageTool(BaseTool):",
-                "    @tool(name='remote_image', return_type=ToolReturnType.IMAGE_PATH)",
+                "    @tool(name='remote_image')",
                 "    def remote_image(self) -> str:",
                 "        return 'remote.png'",
                 "",
@@ -53,7 +53,6 @@ def test_mcp_tool_registers_remote_tools_and_preserves_return_type(tmp_path):
             }
         )
 
-        assert result.return_type == ToolReturnType.IMAGE_PATH
-        assert result.message["content"] == "remote.png"
+        assert json.loads(result.message["content"]) == {"img_path": "remote.png"}
     finally:
         mcp_tool._run_coroutine(mcp_tool.disconnect())

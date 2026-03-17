@@ -5,19 +5,23 @@ BaseTool
 --------
 
 EAA tools are stateful Python objects derived from ``BaseTool``. Tool methods
-are exposed by decorating them with ``@tool(name=..., return_type=...)``.
+are exposed by decorating them with ``@tool(name=...)``.
 
 A typical tool looks like this:
 
 .. code-block:: python
 
-   from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
+   from eaa.core.tooling.base import BaseTool, tool
 
 
    class ExampleTool(BaseTool):
-       @tool(name="add", return_type=ToolReturnType.NUMBER)
+       @tool(name="add")
        def add(self, a: float, b: float) -> float:
            return a + b
+
+Tool execution normalizes every result into a JSON object. Scalar returns are
+wrapped as ``{"result": ...}``, while image-producing tools should surface the
+path through ``{"img_path": "..."}``.
 
 When a ``BaseTool`` instance is created, it discovers decorated methods and
 builds ``exposed_tools`` metadata that the task manager can register with the
@@ -61,8 +65,8 @@ the helpers in ``eaa.core.mcp.server``.
        server_name="Calculator MCP Server",
    )
 
-The MCP wrapper preserves EAA tool return metadata such as ``IMAGE_PATH`` by
-publishing an output schema extension.
+The MCP wrapper preserves the normalized EAA JSON result contract by
+publishing an object output schema.
 
 Using external MCP servers
 --------------------------
@@ -91,6 +95,8 @@ interface.
 
 Notes:
 
-- EAA preserves return types for tools served through the EAA MCP server helper
-- arbitrary third-party MCP servers may not provide EAA return-type metadata,
-  so their results may degrade to plain text in the agent loop
+- EAA normalizes tool results to JSON for tools served through the EAA MCP
+  server helper
+- arbitrary third-party MCP servers may still return non-EAA payloads, so the
+  agent loop only treats results as image-bearing when an ``img_path`` is
+  present

@@ -1,5 +1,3 @@
-
-from scipy.signal.windows import gaussian
 import os
 import argparse
 
@@ -77,6 +75,21 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
             scan_step=0.2,
         )
         return fname
+
+    def test_simulated_image_message_returns_json_payload(self):
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+
+        tool = SimulatedAcquireImage(whole_image, return_message=True)
+        result = tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
+
+        assert isinstance(result, dict)
+        assert isinstance(result.get("img_path"), str)
         
         
 if __name__ == '__main__':

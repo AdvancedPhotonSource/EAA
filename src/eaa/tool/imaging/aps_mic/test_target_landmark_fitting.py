@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.ndimage as ndi
 from skimage import filters, measure
-from eaa.core.tooling.base import BaseTool, ToolReturnType, check, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 
@@ -314,7 +314,7 @@ class TestPatternLandmarkFitting(BaseTool):
         ax.set_ylim(self.latest_image.shape[0] - 0.5, -0.5)
         return fig
 
-    @tool(name="fit_landmark_center", return_type=ToolReturnType.LIST)
+    @tool(name="fit_landmark_center")
     def fit_landmark_center(
         self,
         image: Annotated[
@@ -377,7 +377,7 @@ class TestPatternLandmarkFitting(BaseTool):
             float(circle_model_px.params[0] * resolved_pixel_size),
         ]
 
-    @tool(name="get_offset", return_type=ToolReturnType.LIST)
+    @tool(name="get_offset")
     def get_offset(
         self,
         target: Annotated[

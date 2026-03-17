@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Sequence, Tuple
 
-from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, tool
 
 logger = logging.getLogger(__name__)
 MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\(([^)]+)\)")
@@ -42,7 +42,7 @@ class SkillTool(BaseTool):
         """Apply the externally visible tool name."""
         self.tool_name_overrides = {"fetch_skill_docs": self.metadata.tool_name}
 
-    @tool(name="fetch_skill_docs", return_type=ToolReturnType.DICT)
+    @tool(name="fetch_skill_docs")
     def fetch_skill_docs(self) -> Dict[str, Any]:
         """Return the documentation files for this skill."""
         files, skipped, images_by_file = collect_skill_docs(

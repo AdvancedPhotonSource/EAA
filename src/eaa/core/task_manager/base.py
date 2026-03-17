@@ -102,10 +102,6 @@ def build_compatible_checkpoint_state(
         full_history = list(messages)
     if len(messages) == 0 and len(full_history) == 0:
         return None
-    latest_tool_return_types = state_data.get("latest_tool_return_types")
-    if not isinstance(latest_tool_return_types, list):
-        latest_tool_return_types = []
-
     shared_fields = {
         "messages": list(messages),
         "full_history": list(full_history),
@@ -114,7 +110,6 @@ def build_compatible_checkpoint_state(
         "store_all_images_in_context": bool(
             state_data.get("store_all_images_in_context", True)
         ),
-        "latest_tool_return_types": list(latest_tool_return_types),
     }
     if graph_name == "chat_graph":
         return ChatGraphState(
@@ -176,12 +171,9 @@ class TaskManagerAgentAdapter:
             return_outgoing_message=return_outgoing_message,
         )
 
-    def handle_tool_call(self, message: dict[str, Any], return_tool_return_types: bool = False):
+    def handle_tool_call(self, message: dict[str, Any]):
         """Execute tool calls found in an assistant response."""
-        return self.task_manager.tool_executor.execute_tool_calls_from_message(
-            message,
-            return_tool_return_types=return_tool_return_types,
-        )
+        return self.task_manager.tool_executor.execute_tool_calls_from_message(message)
 
 
 class BaseTaskManager:

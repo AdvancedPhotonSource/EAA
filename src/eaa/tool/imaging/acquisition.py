@@ -1,13 +1,12 @@
 from typing import Annotated, Dict, List, Any
 import logging
 import os
-import json
 
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.interpolate
 import scipy.ndimage as ndi
-from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 from eaa.core.util import get_timestamp
 
 import eaa.maths
@@ -114,7 +113,7 @@ class AcquireImage(BaseTool):
         self.image_k = new_image
         self.psize_k = psize
 
-    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="acquire_image")
     def acquire_image(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -398,7 +397,7 @@ class SimulatedAcquireImage(AcquireImage):
 
         return arr_flat
 
-    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="acquire_image")
     def acquire_image(
         self,
         y_center: Annotated[float, "The y-coordinate of the center of the image to acquire."],
@@ -406,7 +405,7 @@ class SimulatedAcquireImage(AcquireImage):
         size_y: Annotated[int, "The height of the image to acquire."],
         size_x: Annotated[int, "The width of the image to acquire."],
         scan_step: Annotated[float, "The step size between sampled points in both y and x directions."] = 1,
-    ) -> Annotated[str, "The path to the acquired image."]:
+    ) -> Annotated[dict[str, str] | np.ndarray, "Tool payload containing `img_path`, or the image array when `return_message` is False."]:
         """Acquire an image of a given size from the whole image centered at a
         given location.
 
@@ -420,8 +419,9 @@ class SimulatedAcquireImage(AcquireImage):
 
         Returns
         -------
-        str
-            The path of the acquired image saved in hard drive.
+        dict or np.ndarray
+            Tool payload containing ``img_path`` when ``return_message`` is
+            enabled, otherwise the acquired image array.
         """
         loc_y = y_center - size_y / 2
         loc_x = x_center - size_x / 2
@@ -455,12 +455,12 @@ class SimulatedAcquireImage(AcquireImage):
             )
             if self.add_line_scan_candidates_to_image:
                 fig = self.add_line_scan_candidates(fig)
-            self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
-            return f".tmp/{filename}"
+            image_path = self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
+            return {"img_path": image_path}
         else:
             return arr
 
-    @tool(name="acquire_line_scan", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="acquire_line_scan")
     def acquire_line_scan(
         self,
         x_center: Annotated[float, "The x-coordinate of the center of the line scan."],
@@ -468,7 +468,7 @@ class SimulatedAcquireImage(AcquireImage):
         length: Annotated[float, "The length of the line scan."],
         scan_step: float,
         angle: Annotated[float, "The angle of the line scan in degrees. 0 degrees means horizontal (along the x-axis). Positive angles rotate counter-clockwise."] = 0.0,
-    ) -> Annotated[str, "The path to the plot of the line scan."]:
+    ) -> Annotated[dict[str, Any], "Tool payload containing `img_path` and optional fit metadata."]:
         """Scan along a line in the sample. This function
         generates a plot of the line scan, and a Gaussian fit
         of it. The FWHM of the Gaussian fit is annotated on the plot.
@@ -487,8 +487,8 @@ class SimulatedAcquireImage(AcquireImage):
 
         Returns
         -------
-        str
-            The path of the plot of the line scan saved in hard drive.
+        dict[str, Any]
+            Tool payload containing ``img_path`` and optional fit metadata.
         """
         angle_rad = np.radians(angle)
         half = length / 2
@@ -625,8 +625,8 @@ class SimulatedAcquireImage(AcquireImage):
         fig.savefig(fname)
         plt.close(fig)
         if self.line_scan_return_gaussian_fit:
-            return json.dumps({
-                "image_path": fname,
+            return {
+                "img_path": fname,
                 "fwhm": fwhm,
                 "a": a,
                 "mu": mu,
@@ -635,9 +635,8 @@ class SimulatedAcquireImage(AcquireImage):
                 "normalized_residual": normalized_residual,
                 "x_min": fit_x_min,
                 "x_max": fit_x_max,
-            })
-        else:
-            return fname
+            }
+        return {"img_path": fname}
 
     def scan_line_by_choice(
         self, 

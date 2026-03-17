@@ -12,7 +12,7 @@ from botorch.models.transforms.input import Normalize
 from botorch.acquisition import AcquisitionFunction
 import gpytorch
 import torch
-from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, tool
 
 from eaa.util import to_tensor
 
@@ -574,7 +574,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         """
         return y * self.outcome_transform.stdvs[dim]
 
-    @tool(name="update", return_type=ToolReturnType.NUMBER)
+    @tool(name="update")
     def update(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
@@ -640,7 +640,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                 "already done so, this is unexpected."
             )
 
-    @tool(name="suggest", return_type=ToolReturnType.NUMBER)
+    @tool(name="suggest")
     def suggest(
         self, 
         n_suggestions: Annotated[int, "The number of suggestions to make."] = 1
@@ -995,7 +995,7 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
         quadratic = torch.einsum("bi,ij,bj->b", x_tensor, Q_tensor, x_tensor)
         return (quadratic + x_tensor @ linear_tensor + constant_tensor)[:, None]
 
-    @tool(name="update", return_type=ToolReturnType.NUMBER)
+    @tool(name="update")
     def update(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
@@ -1026,7 +1026,7 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
             self.xs_untransformed = torch.cat([self.xs_untransformed, x_tensor], dim=0)
             self.ys_untransformed = torch.cat([self.ys_untransformed, y_tensor], dim=0)
 
-    @tool(name="suggest", return_type=ToolReturnType.NUMBER)
+    @tool(name="suggest")
     def suggest(
         self,
         n_suggestions: Annotated[int, "The number of suggestions to return."] = 1,

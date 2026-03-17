@@ -1,11 +1,11 @@
 import base64
 import inspect
 import io
+import json
 import os
 import re
 import typing
 from dataclasses import dataclass
-from enum import StrEnum, auto
 from types import FunctionType, MethodType
 from typing import Any, Callable, Dict, List, Optional, get_args, get_type_hints
 
@@ -15,16 +15,17 @@ import numpy as np
 from eaa.core.util import get_timestamp
 
 
-class ToolReturnType(StrEnum):
-    """Supported tool return types."""
-
-    TEXT = auto()
-    IMAGE_PATH = auto()
-    NUMBER = auto()
-    BOOL = auto()
-    LIST = auto()
-    DICT = auto()
-    EXCEPTION = auto()
+TOOL_RESULT_FIELD = "result"
+TOOL_IMAGE_PATH_FIELD = "img_path"
+IMAGE_PATH_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".gif",
+}
 
 
 @dataclass
@@ -33,12 +34,11 @@ class ExposedToolSpec:
 
     name: str
     function: Callable[..., Any]
-    return_type: ToolReturnType
     require_approval: Optional[bool] = None
     schema: Optional[Dict[str, Any]] = None
 
 
-def tool(name: str, return_type: ToolReturnType):
+def tool(name: str):
     """Mark a method as an exposed tool."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -46,7 +46,6 @@ def tool(name: str, return_type: ToolReturnType):
             raise TypeError("@tool can only decorate callables.")
         setattr(func, "is_tool", True)
         setattr(func, "tool_name", name)
-        setattr(func, "tool_return_type", return_type)
         return func
 
     return decorator
@@ -154,7 +153,6 @@ class BaseTool:
                     ExposedToolSpec(
                         name=name,
                         function=bound,
-                        return_type=getattr(target, "tool_return_type"),
                     )
                 )
         return discovered
@@ -237,63 +235,71 @@ def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any
     }
 
 
-def build_mcp_output_schema(return_type: ToolReturnType) -> Dict[str, Any]:
-    """Build an MCP output schema that preserves EAA tool return metadata.
+def looks_like_image_path(value: str) -> bool:
+    """Return whether a string looks like a filesystem image path."""
+    suffix = os.path.splitext(value.strip())[1].lower()
+    return suffix in IMAGE_PATH_SUFFIXES
+
+
+def normalize_tool_result(result: Any) -> Dict[str, Any]:
+    """Normalize a tool return value into a JSON-serializable object.
 
     Parameters
     ----------
-    return_type : ToolReturnType
-        Declared EAA return type for the tool.
+    result : Any
+        Raw value returned by a tool implementation.
 
     Returns
     -------
     dict[str, Any]
-        MCP output schema with a wrapped ``result`` field and an
-        ``x-eaa-return-type`` extension.
+        Normalized JSON object. Scalar and list outputs are wrapped under
+        ``result``. Image-bearing payloads should use ``img_path``.
     """
-    json_type_by_return_type = {
-        ToolReturnType.TEXT: "string",
-        ToolReturnType.IMAGE_PATH: "string",
-        ToolReturnType.NUMBER: "number",
-        ToolReturnType.BOOL: "boolean",
-        ToolReturnType.LIST: "array",
-        ToolReturnType.DICT: "object",
-        ToolReturnType.EXCEPTION: "string",
-    }
-    result_schema: Dict[str, Any] = {"type": json_type_by_return_type[return_type]}
-    if return_type == ToolReturnType.LIST:
-        result_schema["items"] = {}
+    payload: Dict[str, Any]
+    if isinstance(result, dict):
+        payload = dict(result)
+    elif isinstance(result, str):
+        stripped = result.strip()
+        if stripped:
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                payload = parsed
+            elif looks_like_image_path(stripped):
+                payload = {TOOL_IMAGE_PATH_FIELD: result}
+            else:
+                payload = {TOOL_RESULT_FIELD: result}
+        else:
+            payload = {TOOL_RESULT_FIELD: result}
+    elif isinstance(result, list) and all(isinstance(value, str) for value in result):
+        if all(looks_like_image_path(value) for value in result):
+            payload = {TOOL_IMAGE_PATH_FIELD: result}
+        else:
+            payload = {TOOL_RESULT_FIELD: result}
+    else:
+        payload = {TOOL_RESULT_FIELD: result}
+    if "image_path" in payload and TOOL_IMAGE_PATH_FIELD not in payload:
+        payload[TOOL_IMAGE_PATH_FIELD] = payload.pop("image_path")
+    if "image_paths" in payload and TOOL_IMAGE_PATH_FIELD not in payload:
+        payload[TOOL_IMAGE_PATH_FIELD] = payload.pop("image_paths")
+    return payload
+
+
+def build_mcp_output_schema() -> Dict[str, Any]:
+    """Build the normalized MCP output schema for EAA tools."""
     return {
         "type": "object",
-        "properties": {"result": result_schema},
-        "required": ["result"],
+        "properties": {
+            TOOL_RESULT_FIELD: {},
+            TOOL_IMAGE_PATH_FIELD: {
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ]
+            },
+        },
+        "additionalProperties": True,
         "x-fastmcp-wrap-result": True,
-        "x-eaa-return-type": return_type.value,
     }
-
-
-def parse_mcp_output_schema_return_type(
-    output_schema: Optional[Dict[str, Any]],
-) -> ToolReturnType:
-    """Recover an EAA tool return type from an MCP output schema.
-
-    Parameters
-    ----------
-    output_schema : dict[str, Any] or None
-        Output schema returned by the MCP server.
-
-    Returns
-    -------
-    ToolReturnType
-        Parsed return type. Defaults to ``ToolReturnType.TEXT`` when no EAA
-        metadata is available.
-    """
-    if output_schema is None:
-        return ToolReturnType.TEXT
-    value = output_schema.get("x-eaa-return-type")
-    if value is None:
-        return ToolReturnType.TEXT
-    try:
-        return ToolReturnType(value)
-    except ValueError:
-        return ToolReturnType.TEXT

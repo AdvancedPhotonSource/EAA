@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import requests
 import tifffile
-from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 
@@ -51,7 +51,7 @@ class LineScanPredictor(BaseTool):
         tifffile.imwrite(buf, image.astype(np.float32))
         return buf.getvalue()
 
-    @tool(name="predict_line_scan_position", return_type=ToolReturnType.TEXT)
+    @tool(name="predict_line_scan_position")
     def predict_line_scan_position(
         self,
     ) -> Annotated[

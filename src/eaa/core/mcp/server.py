@@ -1,6 +1,8 @@
 """MCP server helpers for exposing EAA tools."""
 
+import inspect
 import logging
+from functools import wraps
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastmcp import FastMCP
@@ -10,6 +12,7 @@ from eaa.core.tooling.base import (
     ExposedToolSpec,
     build_mcp_output_schema,
     generate_openai_tool_schema,
+    normalize_tool_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,10 +76,22 @@ class MCPToolServer:
                 raise ValueError(f"Tool '{spec.name}' is already registered")
             self._tool_instances[spec.name] = tool
             self._registered_tools[spec.name] = spec
+
             self.mcp_server.tool(
                 name=spec.name,
-                output_schema=build_mcp_output_schema(spec.return_type),
-            )(spec.function)
+                output_schema=build_mcp_output_schema(),
+            )(self._wrap_tool_function(spec.function))
+
+    @staticmethod
+    def _wrap_tool_function(function):
+        """Wrap a tool function so MCP always receives normalized JSON."""
+
+        @wraps(function)
+        def wrapped_function(*args, **kwargs):
+            return normalize_tool_result(function(*args, **kwargs))
+
+        wrapped_function.__signature__ = inspect.signature(function)
+        return wrapped_function
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """Return OpenAI-compatible schemas for registered MCP tools.

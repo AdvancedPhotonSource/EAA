@@ -1,4 +1,4 @@
-from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, tool
 from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa.task_manager.imaging.roi_search import ROISearchTaskManager
 
@@ -8,7 +8,7 @@ class DummyAcquireImageTool(BaseTool):
         self.counter_acquire_image = 0
         super().__init__()
 
-    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="acquire_image")
     def acquire_image(self) -> str:
         return "dummy.png"
 

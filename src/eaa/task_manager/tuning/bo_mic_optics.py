@@ -139,9 +139,13 @@ class MicroscopyOpticsTuningBOTaskManager(
         for i, x_i in enumerate(x):
             # Acquire an image with the current parameters. It will be used
             # as the reference image for feature tracking.
-            acquired_image_path = self.image_acquisition_tool.acquire_image(
+            acquired_image_response = self.image_acquisition_tool.acquire_image(
                 **self.image_acquisition_kwargs
             )
+            acquired_image_paths = self.tool_executor.extract_image_paths_from_tool_response(
+                acquired_image_response
+            )
+            acquired_image_path = acquired_image_paths[0] if len(acquired_image_paths) > 0 else None
             
             # Apply parameters.
             self.parameter_setting_tool.set_parameters(x_i)
@@ -154,9 +158,17 @@ class MicroscopyOpticsTuningBOTaskManager(
             )
             
             # Get a new image after feature tracking.
-            acquired_image_path = self.image_acquisition_tool.acquire_image(
+            acquired_image_response = self.image_acquisition_tool.acquire_image(
                 **self.image_acquisition_kwargs
             )
+            acquired_image_paths = self.tool_executor.extract_image_paths_from_tool_response(
+                acquired_image_response
+            )
+            acquired_image_path = acquired_image_paths[0] if len(acquired_image_paths) > 0 else None
+            if acquired_image_path is None:
+                raise ValueError(
+                    "The image acquisition tool should return a JSON object with `img_path`."
+                )
             image = Image.open(acquired_image_path)
             image = np.array(image)
             

@@ -5,7 +5,7 @@ from typing import Literal
 import numpy as np
 import requests
 import tifffile
-from eaa.core.tooling.base import BaseTool, check, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, check, tool
 
 from eaa.tool.imaging.acquisition import AcquireImage
 
@@ -57,7 +57,7 @@ class NNRegistration(BaseTool):
         tifffile.imwrite(buf, image.astype(np.float32))
         return buf.getvalue()
 
-    @tool(name="get_offset", return_type=ToolReturnType.LIST)
+    @tool(name="get_offset")
     def get_offset(self, target: Literal["previous", "initial"] = "initial") -> np.ndarray:
         """Query the server and return the registration offset in physical units.
 

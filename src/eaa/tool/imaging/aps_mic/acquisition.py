@@ -1,13 +1,12 @@
-from typing import Annotated, Tuple, Optional
+from typing import Annotated, Any, Tuple, Optional
 from io import BytesIO
 import logging
 import os
-import json
 
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
-from eaa.core.tooling.base import ToolReturnType, tool
+from eaa.core.tooling.base import tool
 
 from eaa.tool.imaging.aps_mic.util import (
     process_xrfdata,
@@ -113,7 +112,7 @@ class BlueSkyAcquireImage(AcquireImage):
         super().__init__(*args, require_approval=require_approval, **kwargs)
         
         
-    @tool(name="acquire_image", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="acquire_image")
     def acquire_image(
         self,
         width: Annotated[float, "The width of the scan area in microns"] = 0,
@@ -122,7 +121,7 @@ class BlueSkyAcquireImage(AcquireImage):
         y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
         stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
         stepsize_y: Annotated[float, "The scan step size in the y direction, i.e., the distance between two adjacent pixels in the y direction in microns"] = 0,
-    )->Annotated[str, "The path to the acquired image."]:
+    )->Annotated[dict[str, str], "Tool payload containing `img_path` or a result message."]:
         """Acquire an image of a given scan area with the scanning x-ray microscope.
         
         Parameters
@@ -144,8 +143,9 @@ class BlueSkyAcquireImage(AcquireImage):
 
         Returns
         -------
-        str
-            The path of the acquired image saved in hard drive.
+        dict[str, str]
+            Tool payload containing ``img_path`` or a failure message in
+            ``result``.
         """
         self.update_image_acquisition_call_history(x_center, y_center, width, height, stepsize_x, stepsize_y)
         try:
@@ -209,26 +209,25 @@ class BlueSkyAcquireImage(AcquireImage):
 
                 self.update_image_buffers(img_arr, psize=stepsize_x)
                 if img_path:
-                    return img_path
-                else:
-                    logger.error(f"Failed to save images for {current_mda_file}")
-                    return f"Failed to save images for {current_mda_file}"
+                    return {"img_path": img_path}
+                logger.error(f"Failed to save images for {current_mda_file}")
+                return {"result": f"Failed to save images for {current_mda_file}"}
             logger.error(f"Failed to process {current_mda_file}")
-            return f"Failed to process {current_mda_file}"
+            return {"result": f"Failed to process {current_mda_file}"}
         
         except Exception as e:
             logger.error(f"Error acquiring image: {e}")
             raise e
 
 
-    @tool(name="acquire_line_scan", return_type=ToolReturnType.IMAGE_PATH)
+    @tool(name="acquire_line_scan")
     def acquire_line_scan(
         self,
         length: Annotated[float, "The length of the scan area in microns"] = 0,
         x_center: Annotated[float, "The center of the scan area in the x direction in microns"] = None,
         y_center: Annotated[float, "The center of the scan area in the y direction in microns"] = None,
         stepsize_x: Annotated[float, "The scan step size in the x direction, i.e., the distance between two adjacent pixels in the x direction in microns"] = 0,
-    )->Annotated[str, "The path to the plot of the line scan."]:
+    )->Annotated[dict[str, Any], "Tool payload containing `img_path` and optional fit metadata."]:
         """Acquire a horizontal line scan of a given length at a given center position.
         This function returns a plot of the acquired data, and a Gaussian fit of it.
         The FWHM of the Gaussian fit is annotated on the plot.
@@ -247,8 +246,8 @@ class BlueSkyAcquireImage(AcquireImage):
 
         Returns
         -------
-        str
-            The path of the plot of the line scan saved in hard drive.
+        dict[str, Any]
+            Tool payload containing ``img_path`` and optional fit metadata.
 
         """
         self.set_motor_y(y_center)
@@ -411,8 +410,8 @@ class BlueSkyAcquireImage(AcquireImage):
                             x_offset += overlay_image.width
                         stitched_image.save(img_path)
                     if self.line_scan_return_gaussian_fit:
-                        return json.dumps({
-                            "image_path": img_path,
+                        return {
+                            "img_path": img_path,
                             "fwhm": fwhm,
                             "a": fit_payload.get("a"),
                             "mu": fit_payload.get("mu"),
@@ -421,13 +420,12 @@ class BlueSkyAcquireImage(AcquireImage):
                             "normalized_residual": fit_payload.get("normalized_residual"),
                             "x_min": fit_payload.get("x_min"),
                             "x_max": fit_payload.get("x_max"),
-                        })
-                    return img_path
-                else:
-                    logger.error(f"Failed to save images for {current_mda_file}")
-                    return f"Failed to save images for {current_mda_file}"
+                        }
+                    return {"img_path": img_path}
+                logger.error(f"Failed to save images for {current_mda_file}")
+                return {"result": f"Failed to save images for {current_mda_file}"}
             logger.error(f"Failed to process {current_mda_file}")
-            return f"Failed to process {current_mda_file}"
+            return {"result": f"Failed to process {current_mda_file}"}
         
         except Exception as e:
             logger.error(f"Error acquiring line scan: {e}")

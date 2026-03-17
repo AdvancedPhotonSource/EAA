@@ -2,7 +2,7 @@ from typing import Annotated
 
 import numpy as np
 import matplotlib.pyplot as plt
-from eaa.core.tooling.base import BaseTool, ToolReturnType, tool
+from eaa.core.tooling.base import BaseTool, tool
 
 
 class MultivariateLinearRegression(BaseTool):
@@ -39,7 +39,7 @@ class MultivariateLinearRegression(BaseTool):
             return 0
         return int(self.xs.shape[0])
 
-    @tool(name="update", return_type=ToolReturnType.TEXT)
+    @tool(name="update")
     def update(
         self,
         x: Annotated[list[list[float]], "Input data with shape (n_samples, n_feat_in)."],
@@ -96,7 +96,7 @@ class MultivariateLinearRegression(BaseTool):
             f"Input features: {self.n_feat_in}, output features: {self.n_feat_out}."
         )
 
-    @tool(name="predict", return_type=ToolReturnType.LIST)
+    @tool(name="predict")
     def predict(
         self,
         x: Annotated[list[list[float]], "Input data with shape (n_samples, n_feat_in)."],

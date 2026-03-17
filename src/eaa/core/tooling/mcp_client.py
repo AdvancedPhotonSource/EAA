@@ -3,7 +3,7 @@ from typing import Any
 
 import fastmcp
 
-from eaa.core.tooling.base import ExposedToolSpec, BaseTool, parse_mcp_output_schema_return_type
+from eaa.core.tooling.base import ExposedToolSpec, BaseTool
 
 
 class MCPTool(BaseTool):
@@ -221,7 +221,6 @@ class MCPTool(BaseTool):
                 ExposedToolSpec(
                     name=remote_tool.name,
                     function=self._make_tool_callable(remote_tool.name),
-                    return_type=parse_mcp_output_schema_return_type(remote_tool.outputSchema),
                     require_approval=self.require_approval,
                     schema=self._build_openai_schema_from_mcp_tool(remote_tool),
                 )

@@ -19,7 +19,6 @@ from eaa.core.task_manager.state import (
     FeedbackLoopState,
     TaskManagerState,
 )
-from eaa.core.tooling.base import ToolReturnType
 
 if TYPE_CHECKING:
     from eaa.core.task_manager.base import BaseTaskManager
@@ -238,13 +237,10 @@ class NodeFactory:
         -------
         dict[str, object]
             Dumped state payload after tool messages have been appended and
-            ``state.latest_tool_return_types`` has been refreshed.
+            the tool transcript has been refreshed.
         """
         response = state.latest_response
-        tool_messages, tool_return_types = self.task_manager.tool_executor.execute_tool_calls_from_message(
-            response,
-            return_tool_return_types=True,
-        )
+        tool_messages = self.task_manager.tool_executor.execute_tool_calls_from_message(response)
         for tool_message in tool_messages:
             if not self.task_manager.use_webui:
                 print_message(tool_message)
@@ -254,7 +250,6 @@ class NodeFactory:
                 update_context=True,
                 update_full_history=True,
             )
-        state.latest_tool_return_types = list(tool_return_types)
         return state.model_dump()
 
     def enforce_tool_call_sequence_for_state(
@@ -641,7 +636,6 @@ class NodeFactory:
         response = state.latest_response or {}
         tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
-        tool_return_types = state.latest_tool_return_types
         for index, tool_message in enumerate(tool_messages):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
             if len(
@@ -652,23 +646,12 @@ class NodeFactory:
                 )
             ) > 0:
                 return True
-            tool_return_type = (
-                tool_return_types[index]
-                if index < len(tool_return_types)
-                else ToolReturnType.TEXT
+            image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
+                tool_message.get("content")
             )
-            if tool_return_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
-                image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
-                    tool_message.get("content")
-                )
-                if len(image_paths) > 0:
-                    return True
-                if (
-                    tool_return_type == ToolReturnType.DICT
-                    and not allow_non_image_tool_responses
-                ):
-                    return True
-            elif not allow_non_image_tool_responses:
+            if len(image_paths) > 0:
+                return True
+            if not allow_non_image_tool_responses:
                 return True
         return False
 
@@ -701,19 +684,12 @@ class NodeFactory:
         response = state.latest_response or {}
         tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
-        tool_return_types = state.latest_tool_return_types
         followup_messages: list[dict[str, object]] = []
         for index, tool_message in enumerate(tool_messages):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
-            tool_return_type = (
-                tool_return_types[index]
-                if index < len(tool_return_types)
-                else ToolReturnType.TEXT
-            )
             followup_messages.extend(
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
-                    tool_return_type,
                     skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=message_with_yielded_image,
                     allow_non_image_tool_responses=allow_non_image_tool_responses,

@@ -3,8 +3,6 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from eaa.core.tooling.base import ToolReturnType
-
 
 class TaskManagerState(BaseModel):
     """Minimal base state shared by graph-backed task managers."""
@@ -16,7 +14,6 @@ class TaskManagerState(BaseModel):
     await_user_input: bool = False
     round_index: int = 0
     store_all_images_in_context: bool = True
-    latest_tool_return_types: list[ToolReturnType] = Field(default_factory=list)
 
     def get_latest_message(self, role: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Return the most recent message, optionally filtered by role."""

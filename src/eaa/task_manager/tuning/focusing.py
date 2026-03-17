@@ -15,7 +15,7 @@ from eaa.api.memory import MemoryManagerConfig
 from eaa.core.exceptions import MaxRoundsReached
 from eaa.core.task_manager.nodes import NodeFactory
 from eaa.core.task_manager.state import FeedbackLoopState
-from eaa.core.tooling.base import BaseTool, ToolReturnType
+from eaa.core.tooling.base import BaseTool
 from eaa.core.task_manager.base import load_latest_checkpoint_state_from_connection
 
 from eaa.tool.imaging.acquisition import AcquireImage
@@ -68,23 +68,16 @@ class FocusingNodeFactory(NodeFactory):
         response = state.latest_response or {}
         tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
-        tool_return_types = state.latest_tool_return_types
         followup_messages: list[dict[str, Any]] = []
 
         for index, tool_message in enumerate(tool_messages):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
             tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
-            tool_return_type = (
-                tool_return_types[index]
-                if index < len(tool_return_types)
-                else ToolReturnType.TEXT
-            )
             image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
                 tool_message.get("content")
             )
             if (
                 tool_name == "acquire_image"
-                and tool_return_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT)
                 and len(image_paths) > 0
             ):
                 for image_path in image_paths:
@@ -99,7 +92,6 @@ class FocusingNodeFactory(NodeFactory):
             followup_messages.extend(
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
-                    tool_return_type,
                     skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=state.message_with_yielded_image,
                     allow_non_image_tool_responses=state.allow_non_image_tool_responses,
@@ -122,23 +114,16 @@ class FocusingNodeFactory(NodeFactory):
         response = state.latest_response or {}
         tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
-        tool_return_types = state.latest_tool_return_types
         followup_messages: list[dict[str, Any]] = []
 
         for index, tool_message in enumerate(tool_messages):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
             tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
-            tool_return_type = (
-                tool_return_types[index]
-                if index < len(tool_return_types)
-                else ToolReturnType.TEXT
-            )
             image_paths = self.task_manager.tool_executor.extract_image_paths_from_tool_response(
                 tool_message.get("content")
             )
             if (
                 tool_name == "acquire_image"
-                and tool_return_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT)
                 and len(image_paths) > 0
             ):
                 for image_path in image_paths:
@@ -153,7 +138,6 @@ class FocusingNodeFactory(NodeFactory):
             followup_messages.extend(
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
-                    tool_return_type,
                     skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=state.message_with_yielded_image,
                     allow_non_image_tool_responses=state.allow_non_image_tool_responses,
@@ -376,18 +360,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         response = state.latest_response or {}
         tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
-        tool_return_types = state.latest_tool_return_types
         for index, tool_message in enumerate(tool_messages):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
             tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
-            tool_return_type = (
-                tool_return_types[index]
-                if index < len(tool_return_types)
-                else ToolReturnType.TEXT
-            )
             if tool_name != "acquire_image":
-                continue
-            if tool_return_type not in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
                 continue
             image_paths = self.tool_executor.extract_image_paths_from_tool_response(
                 tool_message.get("content")

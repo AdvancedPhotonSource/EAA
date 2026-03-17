@@ -407,18 +407,21 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         while True:
             self.record_system_message(f"Acquiring line scan with ```{self.line_scan_kwargs}```")
             res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
-            try:
-                res = json.loads(res)
-            except json.JSONDecodeError:
-                raise ValueError(
-                    f"The line scan tool should return a stringified JSON object, but got {res}."
-                )
+            if isinstance(res, str):
+                try:
+                    res = json.loads(res)
+                except json.JSONDecodeError:
+                    raise ValueError(
+                        f"The line scan tool should return a JSON object, but got {res}."
+                    )
+            if not isinstance(res, dict):
+                raise ValueError(f"The line scan tool should return a JSON object, but got {res}.")
             if "fwhm" not in res:
                 raise ValueError(
-                    f"The stringified JSON object should contain the 'fwhm' key, but got {res}."
+                    f"The JSON object should contain the 'fwhm' key, but got {res}."
                 )
             content = f"Line scan completed with kwargs: ```{self.line_scan_kwargs}```\nFWHM = {res['fwhm']:.4f}"
-            image_path = res.get("image_path")
+            image_path = res.get("img_path")
             if isinstance(image_path, str):
                 self.record_system_message(content, image_path=image_path, update_context=False)
             else:
@@ -791,12 +794,14 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
     def run_2d_scan(self):
         self.record_system_message(f"Acquiring 2D scan...```{self.image_acquisition_kwargs}```")
-        image_path = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
+        image_response = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
         if self.initial_image_acquisition_position is None:
             self.initial_image_acquisition_position = self.extract_image_acquisition_position(
                 self.image_acquisition_kwargs
             )
         content = f"Acquired 2D scan with kwargs: ```{self.image_acquisition_kwargs}```"
+        image_paths = self.tool_executor.extract_image_paths_from_tool_response(image_response)
+        image_path = image_paths[0] if len(image_paths) > 0 else None
         if isinstance(image_path, str):
             self.record_system_message(content, image_path=image_path, update_context=False)
         else:
