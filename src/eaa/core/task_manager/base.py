@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Literal, Optional, Sequence
+from typing import Any, Dict, Literal, Optional, Sequence
 import json
 import logging
 import sqlite3
@@ -140,7 +140,6 @@ def build_compatible_checkpoint_state(
             n_last_images_to_keep_in_context=None,
             allow_non_image_tool_responses=True,
             allow_multiple_tool_calls=False,
-            hook_functions={},
             expected_tool_call_sequence=None,
             expected_tool_call_sequence_tolerance=0,
             termination_behavior="ask",
@@ -258,8 +257,6 @@ class BaseTaskManager:
         self.chat_graph = None
         self.feedback_loop_graph = None
         self.task_graph = None
-        self.active_feedback_hook_functions: dict[str, Callable] = {}
-
         self.checkpoint_connections: dict[tuple[str, str], sqlite3.Connection] = {}
         self.checkpoint_graphs: dict[tuple[str, str], Any] = {}
 
@@ -974,7 +971,6 @@ class BaseTaskManager:
         *,
         message_with_yielded_image: str,
         allow_non_image_tool_responses: bool,
-        hook_functions: Optional[dict[str, Callable]] = None,
         store_all_images_in_context: bool = True,
     ) -> dict[str, Any]:
         """Execute tool calls for a graph state.
@@ -988,9 +984,6 @@ class BaseTaskManager:
             Compatibility argument retained for callers that still route tool
             execution through the task manager boundary.
         allow_non_image_tool_responses : bool
-            Compatibility argument retained for callers that still route tool
-            execution through the task manager boundary.
-        hook_functions : dict[str, Callable], optional
             Compatibility argument retained for callers that still route tool
             execution through the task manager boundary.
         store_all_images_in_context : bool, default=True
@@ -1249,7 +1242,6 @@ class BaseTaskManager:
         n_last_images_to_keep_in_context: Optional[int] = None,
         allow_non_image_tool_responses: bool = True,
         allow_multiple_tool_calls: bool = False,
-        hook_functions: Optional[dict[str, Callable]] = None,
         expected_tool_call_sequence: Optional[list[str]] = None,
         expected_tool_call_sequence_tolerance: int = 0,
         termination_behavior: Literal["ask", "return"] = "ask",
@@ -1277,8 +1269,6 @@ class BaseTaskManager:
             Whether non-image tool outputs are accepted.
         allow_multiple_tool_calls : bool, default=False
             Whether the assistant may issue multiple tool calls in one response.
-        hook_functions : dict, optional
-            Optional post-tool hook callbacks.
         expected_tool_call_sequence : list of str, optional
             Expected tool-call order used for validation messaging.
         expected_tool_call_sequence_tolerance : int, default=0
@@ -1296,7 +1286,6 @@ class BaseTaskManager:
         """
         if termination_behavior not in ["ask", "return"]:
             raise ValueError("`termination_behavior` must be either 'ask' or 'return'.")
-        self.active_feedback_hook_functions = hook_functions or {}
         initial_state = FeedbackLoopState(
             messages=list(self.context),
             full_history=list(self.full_history),
@@ -1310,7 +1299,6 @@ class BaseTaskManager:
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
             allow_non_image_tool_responses=allow_non_image_tool_responses,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
-            hook_functions={},
             expected_tool_call_sequence=expected_tool_call_sequence,
             expected_tool_call_sequence_tolerance=expected_tool_call_sequence_tolerance,
             termination_behavior=termination_behavior,
@@ -1355,15 +1343,12 @@ class BaseTaskManager:
 
     def run_feedback_loop_from_checkpoint(
         self,
-        hook_functions: Optional[dict[str, Callable]] = None,
         checkpoint_db_path: Optional[str] = None,
     ) -> None:
         """Resume the feedback-loop graph directly from a saved checkpoint.
 
         Parameters
         ----------
-        hook_functions : dict[str, Callable], optional
-            Runtime hook functions to apply while resuming the workflow.
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and updates instead of
             ``self.session_db_path``.
@@ -1392,7 +1377,6 @@ class BaseTaskManager:
                 f"No feedback-loop checkpoint found in shared checkpoint DB "
                 f"{resolved_checkpoint_path}."
             )
-        self.active_feedback_hook_functions = hook_functions or {}
         resumed_state = FeedbackLoopState.model_validate(loaded_state.model_dump())
         restart_from_human_gate = (
             fallback_loaded

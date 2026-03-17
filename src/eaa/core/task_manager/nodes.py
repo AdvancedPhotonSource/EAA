@@ -446,7 +446,6 @@ class NodeFactory:
                 state,
                 message_with_yielded_image=state.message_with_yielded_image,
                 allow_non_image_tool_responses=state.allow_non_image_tool_responses,
-                hook_functions=self.task_manager.active_feedback_hook_functions,
                 store_all_images_in_context=state.store_all_images_in_context,
             )
         return self.task_manager.execute_tools_for_state(
@@ -511,7 +510,6 @@ class NodeFactory:
         *,
         message_with_yielded_image: str,
         allow_non_image_tool_responses: bool,
-        hook_functions: dict[str, object] | None = None,
     ) -> list[dict[str, object]]:
         """Build follow-up messages for the latest tool batch.
 
@@ -519,8 +517,6 @@ class NodeFactory:
             state: Active graph state.
             message_with_yielded_image: Text used when a tool returns images.
             allow_non_image_tool_responses: Whether non-image tool results are acceptable.
-            hook_functions: Optional post-tool hook mapping.
-
         Returns:
             Follow-up messages to append after tool execution.
         """
@@ -543,7 +539,6 @@ class NodeFactory:
                     skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=message_with_yielded_image,
                     allow_non_image_tool_responses=allow_non_image_tool_responses,
-                    hook_functions=hook_functions,
                     tool_call_info=tool_call_info,
                 )
             )
@@ -563,7 +558,6 @@ class NodeFactory:
                 state,
                 message_with_yielded_image=state.message_with_yielded_image,
                 allow_non_image_tool_responses=state.allow_non_image_tool_responses,
-                hook_functions=self.task_manager.active_feedback_hook_functions,
             )
             self.apply_followup_messages_for_state(state, followup_messages)
             return state.model_dump()

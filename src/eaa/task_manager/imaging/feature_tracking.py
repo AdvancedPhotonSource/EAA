@@ -1,8 +1,7 @@
-from typing import Callable, Literal, Optional
+from typing import Literal, Optional
 
 from eaa.api.llm_config import LLMConfig
 from eaa.api.memory import MemoryManagerConfig
-from eaa.core.message_proc import generate_openai_message
 from eaa.core.tooling.base import BaseTool
 from eaa.core.util import get_image_path_from_text
 from eaa.task_manager.imaging.base import ImagingBaseTaskManager
@@ -71,55 +70,6 @@ def initialize_feature_tracking_task_manager(
         **(kwargs or {}),
     )
 
-
-def build_image_path_tool_response_hook(
-    task_manager: ImagingBaseTaskManager,
-    add_reference_image_to_images_acquired: bool,
-    reference_image_path: str,
-) -> Optional[Callable[[str], list[dict]]]:
-    """Build the stitched-image follow-up hook for imaging workflows.
-
-    Parameters
-    ----------
-    task_manager : ImagingBaseTaskManager
-        Task manager that owns the acquisition tool state.
-    add_reference_image_to_images_acquired : bool
-        Whether to stitch the reference image onto newly acquired images.
-    reference_image_path : str
-        Path to the reference image used for stitching.
-
-    Returns
-    -------
-    callable or None
-        Hook that converts a returned image path into follow-up messages,
-        or ``None`` when no stitching behavior is needed.
-    """
-
-    def hook_function(image_path: str) -> list[dict]:
-        message = "Here is the image the tool returned."
-        if (
-            add_reference_image_to_images_acquired
-            and task_manager.image_acquisition_tool.counter_acquire_image
-            > task_manager.last_acquisition_count_stitched
-        ):
-            image_path = task_manager.add_reference_image_to_images_acquired(
-                image_path,
-                reference_image_path,
-            )
-            task_manager.last_acquisition_count_stitched = (
-                task_manager.image_acquisition_tool.counter_acquire_image
-            )
-            message = (
-                "Here is the new image (left). "
-                "The reference image (right) is also shown for your reference."
-            )
-        return [generate_openai_message(content=message, image_path=image_path)]
-
-    if not add_reference_image_to_images_acquired:
-        return None
-    return hook_function
-
-
 class FeatureTrackingTaskManager(ImagingBaseTaskManager):
     """Track a previously seen feature back into the microscope field of view."""
 
@@ -169,32 +119,6 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             build=build,
             args=args,
             kwargs=kwargs,
-        )
-
-    def image_path_tool_response_hook_factory(
-        self,
-        add_reference_image_to_images_acquired: bool,
-        reference_image_path: str,
-    ) -> Optional[Callable[[str], list[dict]]]:
-        """Build the follow-up hook for stitched acquisition images.
-
-        Parameters
-        ----------
-        add_reference_image_to_images_acquired : bool
-            Whether to stitch the reference image onto newly acquired images.
-        reference_image_path : str
-            Path to the reference image used for stitching.
-
-        Returns
-        -------
-        callable or None
-            Hook that converts a returned image path into follow-up messages,
-            or ``None`` when no stitching behavior is needed.
-        """
-        return build_image_path_tool_response_hook(
-            self,
-            add_reference_image_to_images_acquired,
-            reference_image_path,
         )
 
     def run(
@@ -326,12 +250,6 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
             allow_non_image_tool_responses=True,
-            hook_functions={
-                "image_path_tool_response": self.image_path_tool_response_hook_factory(
-                    add_reference_image_to_images_acquired,
-                    reference_image_path,
-                )
-            },
             termination_behavior=termination_behavior,
             max_arounds_reached_behavior=max_arounds_reached_behavior,
         )
@@ -346,13 +264,9 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             ``self.session_db_path``.
         """
         self.prerun_check()
-        self.run_feedback_loop_from_checkpoint(
-            hook_functions=self.active_feedback_hook_functions,
-            checkpoint_db_path=checkpoint_db_path,
-        )
+        self.run_feedback_loop_from_checkpoint(checkpoint_db_path=checkpoint_db_path)
 
 __all__ = [
-    "build_image_path_tool_response_hook",
     "initialize_feature_tracking_task_manager",
     "FeatureTrackingTaskManager",
 ]

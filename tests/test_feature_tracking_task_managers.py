@@ -63,7 +63,6 @@ def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
 
     assert captured["initial_image_path"] == "reference.png"
     assert "reference image" in captured["initial_prompt"]
-    assert "image_path_tool_response" in captured["hook_functions"]
 
 
 def test_feature_tracking_task_manager_no_longer_owns_fov_search():

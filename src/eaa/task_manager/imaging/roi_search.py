@@ -179,7 +179,4 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             ``self.session_db_path``.
         """
         self.prerun_check()
-        self.run_feedback_loop_from_checkpoint(
-            hook_functions=self.active_feedback_hook_functions,
-            checkpoint_db_path=checkpoint_db_path,
-        )
+        self.run_feedback_loop_from_checkpoint(checkpoint_db_path=checkpoint_db_path)

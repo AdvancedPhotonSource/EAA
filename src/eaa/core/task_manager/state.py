@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -118,7 +118,6 @@ class FeedbackLoopState(TaskManagerState):
     n_last_images_to_keep_in_context: Optional[int] = None
     allow_non_image_tool_responses: bool = True
     allow_multiple_tool_calls: bool = False
-    hook_functions: Dict[str, Callable] = Field(default_factory=dict)
     expected_tool_call_sequence: Optional[list[str]] = None
     expected_tool_call_sequence_tolerance: int = 0
     termination_behavior: Literal["ask", "return"] = "ask"

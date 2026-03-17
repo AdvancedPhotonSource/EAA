@@ -811,7 +811,6 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
             allow_non_image_tool_responses=True,
             allow_multiple_tool_calls=False,
-            hook_functions={},
             expected_tool_call_sequence=[
                 "scan_line",
                 "set_parameters",

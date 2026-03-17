@@ -370,42 +370,6 @@ def test_run_conversation_can_seed_from_feedback_checkpoint(tmp_path, monkeypatc
     assert resumed_manager.context == first_manager.context
 
 
-def test_feedback_loop_checkpoint_supports_runtime_hook_functions(tmp_path, monkeypatch):
-    checkpoint_base = tmp_path / "feedback.sqlite"
-
-    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
-        return {"role": "assistant", "content": "TERMINATE"}
-
-    task_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
-    )
-    task_manager.model = object()
-    checkpointed_graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
-        "feedback_loop_graph"
-    )
-
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
-
-    initial_state = FeedbackLoopState(
-        initial_prompt="test prompt",
-        termination_behavior="return",
-    )
-    task_manager.state = initial_state
-    final_state = checkpointed_graph.invoke(initial_state, config=checkpoint_config)
-    task_manager.state = FeedbackLoopState.model_validate(final_state)
-
-    hook_functions = {
-        "image_path_tool_response": test_feedback_loop_checkpoint_supports_runtime_hook_functions
-    }
-    task_manager.run_feedback_loop_from_checkpoint(hook_functions=hook_functions)
-
-    assert task_manager.active_feedback_hook_functions == hook_functions
-
-    assert checkpoint_base.exists()
-
-
 def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypatch):
     checkpoint_base = tmp_path / "feedback_resume.sqlite"
     model_calls = {"count": 0}
@@ -696,7 +660,6 @@ def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
         *,
         message_with_yielded_image,
         allow_non_image_tool_responses,
-        hook_functions=None,
         store_all_images_in_context=True,
     ):
         captured["state"] = state

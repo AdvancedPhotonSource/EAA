@@ -278,7 +278,6 @@ class SerialToolExecutor:
         skill_catalog: list[SkillMetadata],
         message_with_yielded_image: str,
         allow_non_image_tool_responses: bool,
-        hook_functions: Optional[dict[str, Callable]] = None,
         tool_call_info: Optional[Dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """Generate follow-up messages after a tool finishes.
@@ -295,8 +294,6 @@ class SerialToolExecutor:
             User-facing text used when an image path is returned.
         allow_non_image_tool_responses : bool
             Whether non-image tool results are acceptable in the current flow.
-        hook_functions : dict[str, Callable], optional
-            Optional post-tool hook mapping.
         tool_call_info : dict[str, Any], optional
             Tool call metadata from the originating assistant message.
 
@@ -305,7 +302,6 @@ class SerialToolExecutor:
         list[dict[str, Any]]
             Follow-up messages to append after tool execution.
         """
-        hook_functions = hook_functions or {}
         followup_messages = cls.build_skill_doc_messages(
             tool_response,
             tool_call_info,
@@ -314,19 +310,13 @@ class SerialToolExecutor:
         if tool_response_type in (ToolReturnType.IMAGE_PATH, ToolReturnType.DICT):
             image_paths = cls.extract_image_paths_from_tool_response(tool_response.get("content"))
             if len(image_paths) > 0:
-                hook = hook_functions.get("image_path_tool_response")
-                if hook is not None:
-                    for image_path in image_paths:
-                        hook_messages = hook(image_path) or []
-                        followup_messages.extend(list(hook_messages))
-                else:
-                    followup_messages.append(
-                        generate_openai_message(
-                            content=message_with_yielded_image,
-                            image_path=image_paths,
-                            role="user",
-                        )
+                followup_messages.append(
+                    generate_openai_message(
+                        content=message_with_yielded_image,
+                        image_path=image_paths,
+                        role="user",
                     )
+                )
             elif tool_response_type == ToolReturnType.IMAGE_PATH:
                 logger.warning(
                     "Tool returned IMAGE_PATH but no valid image path was found in %s",
