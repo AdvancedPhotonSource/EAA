@@ -7,6 +7,7 @@ import logging
 from typing import Optional, Tuple
 import os
 
+import eaa.matplotlib_setup  # noqa: F401
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py

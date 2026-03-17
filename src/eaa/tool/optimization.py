@@ -3,6 +3,7 @@ import inspect
 import logging
 
 import botorch.generation
+import eaa.matplotlib_setup  # noqa: F401
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt

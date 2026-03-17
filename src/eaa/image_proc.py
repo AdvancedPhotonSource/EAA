@@ -1,5 +1,6 @@
 from typing import Literal, Optional, List, Tuple
 
+import eaa.matplotlib_setup  # noqa: F401
 import numpy as np
 from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt

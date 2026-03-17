@@ -1,5 +1,6 @@
 from typing import Annotated
 
+import eaa.matplotlib_setup  # noqa: F401
 import numpy as np
 import matplotlib.pyplot as plt
 from eaa.core.tooling.base import BaseTool, tool

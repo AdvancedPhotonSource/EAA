@@ -2,6 +2,7 @@ from typing import Annotated, Dict, List, Any
 import logging
 import os
 
+import eaa.matplotlib_setup  # noqa: F401
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.interpolate
@@ -22,16 +23,12 @@ class AcquireImage(BaseTool):
     @check
     def __init__(
         self,
-        show_image_in_real_time: bool = False,
         *args,
         require_approval: bool = False,
         **kwargs,
     ):
         super().__init__(*args, require_approval=require_approval, **kwargs)
-        
-        self.show_image_in_real_time = show_image_in_real_time
-        self.rt_fig = None
-        
+
         # Buffered images:
         # image_0 - the first image
         # image_km1 - the previous image
@@ -83,18 +80,7 @@ class AcquireImage(BaseTool):
             "length": length,
             "angle": angle,
         })
-    
 
-    def update_real_time_view(self, image: np.ndarray):
-        if self.rt_fig is None:
-            self.rt_fig, ax = plt.subplots(1, 1, squeeze=True)
-        else:
-            ax = self.rt_fig.get_axes()[0]
-        ax.clear()
-        ax.imshow(image)
-        plt.draw()
-        plt.pause(0.001)  # Small pause to allow GUI to update
-        
     def update_image_buffers(self, new_image: np.ndarray, psize: float = 1):
         """Update the image buffers.
         
@@ -436,9 +422,6 @@ class SimulatedAcquireImage(AcquireImage):
 
         arr_shape = (len(y), len(x))
         arr = self._sample(yy.ravel(), xx.ravel(), shape=arr_shape).reshape(arr_shape)
-
-        if self.show_image_in_real_time:
-            self.update_real_time_view(arr)
 
         self.update_image_buffers(arr, psize=scan_step)
             

@@ -1,6 +1,7 @@
 from typing import Annotated, Literal, Optional
 import logging
 
+import eaa.matplotlib_setup  # noqa: F401
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.ndimage as ndi

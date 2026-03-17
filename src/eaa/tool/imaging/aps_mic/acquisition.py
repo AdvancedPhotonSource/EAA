@@ -3,6 +3,7 @@ from io import BytesIO
 import logging
 import os
 
+import eaa.matplotlib_setup  # noqa: F401
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np

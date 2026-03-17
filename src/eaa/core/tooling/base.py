@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from types import FunctionType, MethodType
 from typing import Any, Callable, Dict, List, Optional, get_args, get_type_hints
 
+import eaa.matplotlib_setup  # noqa: F401
 import matplotlib.pyplot as plt
 import numpy as np
 

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import botorch.acquisition
-import matplotlib.pyplot as plt
 
 from eaa.api.llm_config import LLMConfig
 from eaa.api.memory import MemoryManagerConfig
@@ -574,9 +573,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     axis_name,
                     exc,
                 )
-            finally:
-                if fig is not None:
-                    plt.close(fig)
 
         if len(image_paths) == 0:
             return
@@ -852,9 +848,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 self.get_registration_tool_name(registration_tool),
                 exc,
             )
-        finally:
-            if registration_fig is not None:
-                plt.close(registration_fig)
 
     def find_position_correction(
         self,

@@ -3,6 +3,7 @@ import logging
 import re
 from pathlib import Path
 
+import eaa.matplotlib_setup  # noqa: F401
 import numpy as np
 import scipy.ndimage as ndi
 import matplotlib.pyplot as plt
