@@ -182,7 +182,7 @@ class PythonCodingTool(CodingTool):
         if not isinstance(code, str):
             raise TypeError("code must be a string containing Python source")
         prepared_code = self._prepare_source_code(code)
-        exec_timeout = timeout if timeout is not None else self._default_timeout
+        exec_timeout = float(timeout) if timeout is not None else self._default_timeout
         exec_cwd = cwd or self._working_directory
         env = os.environ.copy()
         env.update(self._environment)
