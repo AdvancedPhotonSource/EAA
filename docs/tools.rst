@@ -93,6 +93,45 @@ interface.
 
    task_manager.register_tools(mcp_tool)
 
+To connect to an MCP server over HTTP from a different machine, configure the
+client with a named entry under ``mcpServers`` and point it at the server's MCP
+endpoint:
+
+.. code-block:: python
+
+   from eaa.tool.mcp import MCPTool
+
+   mcp_tool = MCPTool(
+       {
+           "mcpServers": {
+               "calculator": {
+                   "url": "http://SERVER_IP:8050/mcp",
+                   "transport": "http",
+               }
+           }
+       }
+   )
+
+The server side should be started with HTTP transport enabled, for example:
+
+.. code-block:: python
+
+   from eaa.core.mcp.server import run_mcp_server_from_tools
+   from eaa.tool.example_calculator import CalculatorTool
+
+   run_mcp_server_from_tools(
+       tools=CalculatorTool(),
+       server_name="Calculator MCP Server",
+       transport="http",
+       host="0.0.0.0",
+       port=8050,
+       path="/mcp",
+   )
+
+Do not pass only ``{"url": ..., "transport": "http"}`` to ``MCPTool``. The
+FastMCP client expects a full config object with one or more named servers
+inside ``mcpServers``.
+
 Notes:
 
 - EAA normalizes tool results to JSON for tools served through the EAA MCP

@@ -4,8 +4,8 @@ Example Calculator Tool for demonstrating MCP server functionality.
 This module provides a simple calculator tool that can be exposed via MCP.
 """
 
-from typing import List
 import logging
+from typing import Annotated, List
 
 from eaa.core.tooling.base import BaseTool, check, tool
 
@@ -35,7 +35,11 @@ class CalculatorTool(BaseTool):
         self.calculation_history: List[str] = []
     
     @tool(name="add")
-    def add(self, a: float, b: float) -> float:
+    def add(
+        self,
+        a: Annotated[float, "The first addend."],
+        b: Annotated[float, "The second addend."],
+    ) -> float:
         """
         Add two numbers together.
         
@@ -57,7 +61,11 @@ class CalculatorTool(BaseTool):
         return result
     
     @tool(name="subtract")
-    def subtract(self, a: float, b: float) -> float:
+    def subtract(
+        self,
+        a: Annotated[float, "The number to subtract from."],
+        b: Annotated[float, "The number to subtract."],
+    ) -> float:
         """
         Subtract the second number from the first.
         
@@ -79,7 +87,11 @@ class CalculatorTool(BaseTool):
         return result
     
     @tool(name="multiply")
-    def multiply(self, a: float, b: float) -> float:
+    def multiply(
+        self,
+        a: Annotated[float, "The first factor."],
+        b: Annotated[float, "The second factor."],
+    ) -> float:
         """
         Multiply two numbers together.
         
@@ -101,7 +113,11 @@ class CalculatorTool(BaseTool):
         return result
     
     @tool(name="divide")
-    def divide(self, a: float, b: float) -> float:
+    def divide(
+        self,
+        a: Annotated[float, "The dividend."],
+        b: Annotated[float, "The non-zero divisor."],
+    ) -> float:
         """
         Divide the first number by the second.
         

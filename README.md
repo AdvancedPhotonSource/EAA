@@ -188,6 +188,28 @@ mcp_tool = MCPTool(
 )
 ```
 
+Use an MCP server over HTTP from another machine:
+
+```python
+from eaa.tool.mcp import MCPTool
+
+mcp_tool = MCPTool(
+    {
+        "mcpServers": {
+            "calculator": {
+                "url": "http://SERVER_IP:8050/mcp",
+                "transport": "http",
+            }
+        }
+    }
+)
+```
+
+For this remote HTTP setup, the server side must be started with
+``run_mcp_server_from_tools(..., transport="http", host="0.0.0.0", port=8050, path="/mcp")``.
+The client config must keep the server definition under ``mcpServers``; passing
+only ``{"url": ..., "transport": "http"}`` is not enough.
+
 ## Skills
 
 Skills are reusable, markdown-first task packages that EAA can discover and
