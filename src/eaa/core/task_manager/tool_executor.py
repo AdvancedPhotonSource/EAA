@@ -54,6 +54,7 @@ class SerialToolExecutor:
                     require_approval=(
                         tool.require_approval if exposed.require_approval is None else exposed.require_approval
                     ),
+                    schema=exposed.schema,
                 )
                 self.tool_specs[spec.name] = spec
 

@@ -1,5 +1,6 @@
 import asyncio
-from typing import Any
+import inspect
+from typing import Annotated, Any
 
 import fastmcp
 
@@ -186,13 +187,103 @@ class MCPTool(BaseTool):
             },
         }
 
-    def _make_tool_callable(self, tool_name: str):
+    def _python_type_from_json_schema(self, schema: dict[str, Any]) -> type[Any] | Any:
+        """Map a JSON Schema field type to a Python type annotation.
+
+        Parameters
+        ----------
+        schema : dict[str, Any]
+            JSON Schema fragment describing a single parameter.
+
+        Returns
+        -------
+        type[Any] | Any
+            Best-effort Python type for introspection purposes.
+        """
+        json_type = schema.get("type")
+        if isinstance(json_type, list):
+            non_null_types = [value for value in json_type if value != "null"]
+            if len(non_null_types) == 1:
+                json_type = non_null_types[0]
+            else:
+                return Any
+        type_map = {
+            "string": str,
+            "integer": int,
+            "number": float,
+            "boolean": bool,
+            "array": list,
+            "object": dict,
+        }
+        return type_map.get(json_type, Any)
+
+    def _annotation_from_json_schema(self, schema: dict[str, Any]) -> Any:
+        """Build a Python annotation from a JSON Schema parameter definition.
+
+        Parameters
+        ----------
+        schema : dict[str, Any]
+            JSON Schema fragment describing a single parameter.
+
+        Returns
+        -------
+        Any
+            Python annotation suitable for an ``inspect.Signature``.
+        """
+        annotation = self._python_type_from_json_schema(schema)
+        description = schema.get("description")
+        if isinstance(description, str) and description:
+            return Annotated[annotation, description]
+        return annotation
+
+    def _build_signature_from_input_schema(
+        self,
+        input_schema: dict[str, Any],
+    ) -> inspect.Signature:
+        """Construct a synthetic callable signature from MCP input schema.
+
+        Parameters
+        ----------
+        input_schema : dict[str, Any]
+            MCP tool input schema.
+
+        Returns
+        -------
+        inspect.Signature
+            Keyword-only signature matching the remote tool parameters.
+        """
+        properties = input_schema.get("properties", {})
+        required = set(input_schema.get("required", []))
+        parameters = []
+        for name, schema in properties.items():
+            field_schema = schema if isinstance(schema, dict) else {}
+            default = inspect.Parameter.empty if name in required else None
+            parameters.append(
+                inspect.Parameter(
+                    name=name,
+                    kind=inspect.Parameter.KEYWORD_ONLY,
+                    default=default,
+                    annotation=self._annotation_from_json_schema(field_schema),
+                )
+            )
+        return inspect.Signature(parameters=parameters)
+
+    def _make_tool_callable(
+        self,
+        tool_name: str,
+        input_schema: dict[str, Any],
+        description: str = "",
+    ):
         """Create a synchronous callable that proxies a remote MCP tool.
 
         Parameters
         ----------
         tool_name : str
             Name of the remote tool to proxy.
+        input_schema : dict[str, Any]
+            MCP input schema used to synthesize a Python signature.
+        description : str, optional
+            Human-readable remote tool description.
 
         Returns
         -------
@@ -204,6 +295,13 @@ class MCPTool(BaseTool):
             return self._run_coroutine(self.call_tool(tool_name, kwargs))
 
         runner.__name__ = tool_name
+        runner.__doc__ = description
+        runner.__signature__ = self._build_signature_from_input_schema(input_schema)
+        runner.__annotations__ = {
+            name: parameter.annotation
+            for name, parameter in runner.__signature__.parameters.items()
+        }
+        runner.__annotations__["return"] = Any
         return runner
 
     def discover_tools(self) -> list[ExposedToolSpec]:
@@ -217,10 +315,15 @@ class MCPTool(BaseTool):
         remote_tools = self._run_coroutine(self.list_tools())
         exposed_tools = []
         for remote_tool in remote_tools:
+            input_schema = dict(remote_tool.inputSchema or {})
             exposed_tools.append(
                 ExposedToolSpec(
                     name=remote_tool.name,
-                    function=self._make_tool_callable(remote_tool.name),
+                    function=self._make_tool_callable(
+                        remote_tool.name,
+                        input_schema=input_schema,
+                        description=remote_tool.description or "",
+                    ),
                     require_approval=self.require_approval,
                     schema=self._build_openai_schema_from_mcp_tool(remote_tool),
                 )
