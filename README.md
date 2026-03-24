@@ -1,17 +1,16 @@
 # Experiment Automation Agents (EAA)
 
 EAA is a Python toolkit for building experiment-facing agents around a shared set
-of task-manager, tool, memory, and WebUI primitives. The current codebase centers
-on a LangGraph-backed `BaseTaskManager`, stateful `BaseTool` integrations,
-SQLite-backed checkpointing/WebUI relay, and a small set of concrete task
-managers for imaging and tuning workflows.
+of task-manager, tool, memory, and WebUI primitives. The repository is organized
+as a workspace with multiple installable packages, currently `eaa-core` and
+`eaa-imaging`.
 
 ## Current Status
 
-- Core agent runtime: `src/eaa/core/task_manager/base.py`
+- Core agent runtime: `packages/eaa-core/src/eaa/core/task_manager/base.py`
 - Reusable built-in graphs: chat and feedback loop
 - Concrete workflows: ROI search, feature tracking, parameter tuning, Bayesian
-  optimization, and analytical task managers under `src/eaa/task_manager/`
+  optimization, and analytical task managers under `packages/eaa-*/src/eaa/task_manager/`
 - Tool system: `BaseTool`, serialized execution, optional approval gates, MCP
   server/client helpers
 - Long-term memory: optional chat-memory layer configured through
@@ -21,7 +20,7 @@ managers for imaging and tuning workflows.
 
 ## Installation
 
-### Option 1: `uv` (recommended)
+### Option 1: `uv` Workspace Sync (recommended)
 
 ```bash
 uv sync
@@ -31,31 +30,21 @@ which python
 
 `which python` should resolve to `.venv/bin/python`.
 
-Optional extras are defined in `pyproject.toml`. Common ones are:
-
-- `docs` for Sphinx documentation
-- `asksage` for AskSage-specific LLM access
-- `aps_mic` for APS microscopy integrations
-- `postgresql_vector_store` for external PostgreSQL/pgvector client dependencies
-
-Install an extra set with:
-
-```bash
-uv sync --extra docs
-```
+This installs the workspace members `eaa-core` and `eaa-imaging` into the
+repository-local environment as editable packages.
 
 ### Option 2: `pip`
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e packages/eaa-core -e packages/eaa-imaging
 ```
 
-With extras:
+For published packages, users would typically install:
 
 ```bash
-pip install -e .[docs]
+pip install eaa-core eaa-imaging
 ```
 
 ## Quickstart
@@ -217,7 +206,8 @@ load at runtime. In the current implementation, each skill is a directory with
 at least a `SKILL.md` file. Additional markdown files and referenced images can
 live alongside it.
 
-Bundled skills live under `src/eaa/skills/`. A typical layout looks like:
+Bundled skills live under `packages/eaa-core/src/eaa/skills/` and
+`packages/eaa-imaging/src/eaa/skills/`. A typical layout looks like:
 
 ```text
 my-skill/
@@ -233,7 +223,7 @@ To use skills, point a task manager at one or more skill directories:
 task_manager = BaseTaskManager(
     llm_config=llm_config,
     tools=[acquisition_tool],
-    skill_dirs=["./src/eaa/skills", "~/.eaa_skills"],
+    skill_dirs=["./packages/eaa-imaging/src/eaa/skills", "~/.eaa_skills"],
 )
 ```
 

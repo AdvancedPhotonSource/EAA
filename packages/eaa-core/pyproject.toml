@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eaa-core"
+version = "0.1.0"
+description = "Core runtime, shared tooling, and generic task managers for EAA."
+requires-python = ">=3.11"
+dependencies = [
+    "chromadb",
+    "langgraph",
+    "langchain-chroma>=1.1.0",
+    "langchain-core",
+    "langchain-openai",
+    "fastapi",
+    "matplotlib",
+    "numpy",
+    "openai",
+    "tqdm",
+    "fastmcp>=2.11.3",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+asksage = [
+    "asksageclient==1.31",
+]
+bo = [
+    "botorch",
+]
+docs = [
+    "sphinx",
+    "pydata-sphinx-theme",
+]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["eaa*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"eaa" = [
+    "gui/webui_static/*",
+    "skills/*/SKILL.md",
+    "skills/*/references/*.md",
+]

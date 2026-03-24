@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eaa-imaging"
+version = "0.1.0"
+description = "Imaging and microscopy task managers, tools, and adapters for EAA."
+requires-python = ">=3.11"
+dependencies = [
+    "eaa-core[bo]>=0.1.0",
+    "numpy",
+    "pillow",
+    "requests",
+    "scikit-image",
+    "scipy",
+    "tifffile",
+]
+
+[project.optional-dependencies]
+aps_mic = [
+    "bluesky",
+    "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
+    "mic-vis@git+https://github.com/grace227/mic-vis",
+    "h5py",
+]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["eaa*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"eaa" = [
+    "assets/context_learning_examples/*",
+    "private_skills/*/SKILL.md",
+    "private_skills/*/images/*",
+    "skills/*/SKILL.md",
+    "skills/*/images/*",
+    "skills/*/references/*.md",
+]

@@ -1,55 +1,25 @@
-[build-system]
-requires = ["setuptools>=64", "setuptools_scm>=8"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "EAA"
-description = "EAA is an Experiment Automation Agent."
+name = "eaa-workspace"
+version = "0.0.0"
+description = "Workspace root for local development of EAA packages."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {file = "LICENSE.txt"}
 dependencies = [
-    "langgraph",
-    "langchain-core",
-    "langchain-openai",
-    "matplotlib",
-    "numpy",
-    "scikit-image",
-    "scipy",
-    "botorch",
-    "openai",
-    "tqdm",
-    "fastmcp>=2.11.3",
-    "fastapi",
-    "uvicorn[standard]",
-    "chromadb",
-    "langchain-chroma>=1.1.0",
-    "langgraph-checkpoint-sqlite>=3.0.3",
-]
-dynamic = ["version"]
-
-[project.optional-dependencies]
-aps_mic = [
-    "bluesky",
-    "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
-    "mic-vis@git+https://github.com/grace227/mic-vis",
-    "h5py",
-]
-asksage = [
-    "asksageclient==1.31"
-]
-postgresql_vector_store = [
-    "psycopg[binary]>=3.2.10"
-]
-docs = [
-    "sphinx",
-    "pydata-sphinx-theme"
-]
-dev = [
-    "pytest"
+    "eaa-core",
+    "eaa-imaging",
+    "pytest",
+    "ruff",
 ]
 
-[tool.setuptools_scm]
+[tool.uv]
+package = false
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.uv.sources]
+eaa-core = { workspace = true }
+eaa-imaging = { workspace = true }
+
+[tool.uv.workspace]
+members = [
+    "packages/eaa-core",
+    "packages/eaa-imaging",
+]
