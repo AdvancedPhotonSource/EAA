@@ -5,10 +5,10 @@ from openai import UnprocessableEntityError
 from types import SimpleNamespace
 from typing import Any
 
-from eaa.api.llm_config import OpenAIConfig
-from eaa.api.memory import MemoryManagerConfig
-from eaa.core.task_manager.base import BaseTaskManager
-from eaa.core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
+from eaa_core.api.llm_config import OpenAIConfig
+from eaa_core.api.memory import MemoryManagerConfig
+from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
 
 
 class CheckpointableTaskManager(BaseTaskManager):
@@ -43,7 +43,7 @@ def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch)
         input_calls["count"] += 1
         return "/exit"
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", fake_get_user_input)
 
     task_manager.run_conversation(message="hello", termination_behavior="user")
@@ -60,7 +60,7 @@ def test_feedback_initial_response_sets_await_user_input(monkeypatch):
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
         return {"role": "assistant", "content": "NEED HUMAN"}
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
 
     state = FeedbackLoopState(initial_prompt="test prompt")
     result = task_manager.node_factory.call_model(state)
@@ -92,7 +92,7 @@ def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch)
     def fake_get_user_input(prompt, display_prompt_in_webui=False, *args, **kwargs):
         return "/exit"
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", fake_get_user_input)
 
     task_manager.run_feedback_loop(initial_prompt="test prompt", max_rounds=1)
@@ -121,7 +121,7 @@ def test_run_conversation_keyboard_interrupt_reenters_chat(monkeypatch):
         printed_roles.append(message["role"])
         return None
 
-    monkeypatch.setattr("eaa.core.task_manager.base.print_message", fake_print_message)
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", fake_print_message)
 
     task_manager.run_conversation(message="hello", termination_behavior="user")
 
@@ -153,7 +153,7 @@ def test_run_feedback_loop_keyboard_interrupt_enters_chat_mode(monkeypatch):
         return None
 
     monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
-    monkeypatch.setattr("eaa.core.task_manager.base.print_message", fake_print_message)
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", fake_print_message)
 
     task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
 
@@ -184,7 +184,7 @@ def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
         captured["messages"] = list(task_manager.state.messages)
         captured["full_history"] = list(task_manager.state.full_history)
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/chat")
     monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
@@ -262,7 +262,7 @@ def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     )
     first_manager.model = object()
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
     first_manager.run_conversation(message="hello", termination_behavior="user")
 
@@ -301,7 +301,7 @@ def test_run_conversation_can_resume_from_override_checkpoint_path(tmp_path, mon
     )
     first_manager.model = object()
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
     first_manager.run_conversation(message="hello", termination_behavior="user")
 
@@ -342,7 +342,7 @@ def test_run_conversation_can_seed_from_feedback_checkpoint(tmp_path, monkeypatc
     )
     first_manager.model = object()
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
     first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
 
@@ -384,7 +384,7 @@ def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypa
         session_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
 
     first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
@@ -428,7 +428,7 @@ def test_run_feedback_loop_can_resume_from_override_checkpoint_path(tmp_path, mo
         session_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
 
     first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
@@ -468,7 +468,7 @@ def test_run_feedback_loop_can_seed_from_chat_checkpoint(tmp_path, monkeypatch):
         session_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
 
     first_manager.run_conversation(message="hello", termination_behavior="user")
@@ -541,7 +541,7 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
         "chat_graph"
     )
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/exit")
 
     initial_state = ChatGraphState(
@@ -691,7 +691,7 @@ def test_memory_llm_config_overrides_embedding_client_connection(monkeypatch):
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr("eaa.core.task_manager.memory_manager.OpenAIEmbeddings", fake_openai_embeddings)
+    monkeypatch.setattr("eaa_core.task_manager.memory_manager.OpenAIEmbeddings", fake_openai_embeddings)
 
     task_manager = BaseTaskManager(
         build=False,
@@ -804,7 +804,7 @@ def test_chat_graph_saves_keyword_triggered_long_term_memory(monkeypatch, tmp_pa
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
         return {"role": "assistant", "content": "I'll remember that."}
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
 
     task_manager.run_conversation(
         message="Remember this: the sky is blue.",
@@ -857,7 +857,7 @@ def test_chat_graph_retrieves_long_term_memory_into_model_context(monkeypatch, t
         captured["messages"] = messages
         return {"role": "assistant", "content": "The sky is blue."}
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
 
     task_manager.run_conversation(
         message="What color is the sky?",

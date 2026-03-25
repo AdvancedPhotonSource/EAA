@@ -41,7 +41,7 @@ jobs:
       - name: Run Ruff
         run: |
           source .venv_lint/bin/activate
-          ruff check src/ --output-format=github
+          ruff check packages/ --output-format=github
 
       - name: Remove environment
         if: always()

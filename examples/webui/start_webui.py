@@ -1,4 +1,4 @@
-from eaa.gui.chat import set_message_db_path, run_webui
+from eaa_core.gui.chat import set_message_db_path, run_webui
 
 # Use the same SQLite file as the task manager's `session_db_path`.
 # If you checkpoint the graph, point both the task manager and the WebUI at

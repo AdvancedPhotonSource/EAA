@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from matplotlib.figure import Figure
 
-from eaa.tool.regression import MultivariateLinearRegression
+from eaa_core.tool.regression import MultivariateLinearRegression
 
 
 class TestMultivariateLinearRegression:

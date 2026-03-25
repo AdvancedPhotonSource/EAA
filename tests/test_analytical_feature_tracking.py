@@ -4,13 +4,13 @@ import argparse
 import numpy as np
 import tifffile
 
-from eaa.api.llm_config import OpenAIConfig
+from eaa_core.api.llm_config import OpenAIConfig
 
-from eaa.task_manager.imaging import analytical_feature_tracking
-from eaa.task_manager.imaging.analytical_feature_tracking import (
+from eaa_imaging.task_manager.imaging import analytical_feature_tracking
+from eaa_imaging.task_manager.imaging.analytical_feature_tracking import (
     AnalyticalFeatureTrackingTaskManager,
 )
-from eaa.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
 
 import test_utils as tutils
 

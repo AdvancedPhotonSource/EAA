@@ -4,12 +4,12 @@ import os
 import numpy as np
 import tifffile
 
-from eaa.task_manager.tuning.analytical_focusing import (
+from eaa_imaging.task_manager.tuning.analytical_focusing import (
     AnalyticalScanningMicroscopeFocusingTaskManager,
 )
-from eaa.tool.imaging.acquisition import SimulatedAcquireImage
-from eaa.tool.imaging.param_tuning import SimulatedSetParameters
-from eaa.tool.imaging.registration import ImageRegistration
+from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa_imaging.tool.imaging.param_tuning import SimulatedSetParameters
+from eaa_imaging.tool.imaging.registration import ImageRegistration
 
 import test_utils as tutils
 

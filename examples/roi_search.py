@@ -1,8 +1,8 @@
 from skimage import data
 
-from eaa.task_manager.imaging.roi_search import ROISearchTaskManager
-from eaa.tool.imaging.acquisition import SimulatedAcquireImage
-from eaa.api.llm_config import OpenAIConfig
+from eaa_imaging.task_manager.imaging.roi_search import ROISearchTaskManager
+from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa_core.api.llm_config import OpenAIConfig
 
 
 def main() -> None:

@@ -1,8 +1,8 @@
 from skimage import data
 
-from eaa.core.task_manager.base import BaseTaskManager
-from eaa.tool.imaging.acquisition import SimulatedAcquireImage
-from eaa.api.llm_config import OpenAIConfig
+from eaa_core.task_manager.base import BaseTaskManager
+from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa_core.api.llm_config import OpenAIConfig
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
-from eaa.core.tooling.base import BaseTool, tool
-from eaa.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
-from eaa.task_manager.imaging.roi_search import ROISearchTaskManager
+from eaa_core.tool.base import BaseTool, tool
+from eaa_imaging.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa_imaging.task_manager.imaging.roi_search import ROISearchTaskManager
 
 
 class DummyAcquireImageTool(BaseTool):

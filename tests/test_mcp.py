@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from typing import Annotated, get_args, get_origin
 
-from eaa.core.task_manager.tool_executor import SerialToolExecutor
-from eaa.tool.mcp import MCPTool
+from eaa_core.task_manager.tool_executor import SerialToolExecutor
+from eaa_core.tool.mcp_client import MCPTool
 
 
 def load_module(module_name: str, path: Path):
@@ -27,8 +27,8 @@ def test_mcp_tool_registers_remote_tools_and_normalizes_json_results(tmp_path):
             [
                 "import sys",
                 f"sys.path.insert(0, {str(repo_src)!r})",
-                "from eaa.core.tooling.base import BaseTool, tool",
-                "from eaa.core.mcp.server import run_mcp_server_from_tools",
+                "from eaa_core.tool.base import BaseTool, tool",
+                "from eaa_core.tool.mcp_server import run_mcp_server_from_tools",
                 "",
                 "class RemoteImageTool(BaseTool):",
                 "    @tool(name='remote_image')",
@@ -80,8 +80,8 @@ def test_mcp_tool_preserves_remote_argument_signatures_and_schemas(tmp_path):
                 "import sys",
                 "from typing import Annotated",
                 f"sys.path.insert(0, {str(repo_src)!r})",
-                "from eaa.core.tooling.base import BaseTool, tool",
-                "from eaa.core.mcp.server import run_mcp_server_from_tools",
+                "from eaa_core.tool.base import BaseTool, tool",
+                "from eaa_core.tool.mcp_server import run_mcp_server_from_tools",
                 "",
                 "class RemoteMathTool(BaseTool):",
                 "    @tool(name='add')",

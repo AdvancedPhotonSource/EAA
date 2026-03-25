@@ -20,8 +20,8 @@ from pathlib import Path
 # Add the src directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from eaa.core.mcp.server import run_mcp_server_from_tools
-from eaa.tool.example_calculator import CalculatorTool
+from eaa_core.tool.mcp_server import run_mcp_server_from_tools
+from eaa_core.tool.example_calculator import CalculatorTool
 
 # Configure logging
 logging.basicConfig(

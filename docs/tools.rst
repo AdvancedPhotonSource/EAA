@@ -11,7 +11,7 @@ A typical tool looks like this:
 
 .. code-block:: python
 
-   from eaa.core.tooling.base import BaseTool, tool
+   from eaa_core.tool.base import BaseTool, tool
 
 
    class ExampleTool(BaseTool):
@@ -53,12 +53,12 @@ Serving built-in tools as MCP servers
 -------------------------------------
 
 EAA can expose any ``BaseTool`` instance as an MCP server by wrapping it with
-the helpers in ``eaa.core.mcp.server``.
+the helpers in ``eaa_core.tool.mcp_server``.
 
 .. code-block:: python
 
-   from eaa.core.mcp.server import run_mcp_server_from_tools
-   from eaa.tool.example_calculator import CalculatorTool
+   from eaa_core.tool.mcp_server import run_mcp_server_from_tools
+   from eaa_core.tool.example_calculator import CalculatorTool
 
    run_mcp_server_from_tools(
        tools=CalculatorTool(),
@@ -71,14 +71,14 @@ publishing an object output schema.
 Using external MCP servers
 --------------------------
 
-EAA can also consume remote MCP tools through ``MCPTool`` in ``eaa.tool.mcp``.
+EAA can also consume remote MCP tools through ``MCPTool`` in ``eaa_core.tool.mcp_client``.
 The wrapper connects to one or more MCP servers using a FastMCP-compatible
 configuration and exposes the remote tools through the normal ``BaseTool``
 interface.
 
 .. code-block:: python
 
-   from eaa.tool.mcp import MCPTool
+   from eaa_core.tool.mcp_client import MCPTool
 
    mcp_tool = MCPTool(
        {
@@ -99,7 +99,7 @@ endpoint:
 
 .. code-block:: python
 
-   from eaa.tool.mcp import MCPTool
+   from eaa_core.tool.mcp_client import MCPTool
 
    mcp_tool = MCPTool(
        {
@@ -116,8 +116,8 @@ The server side should be started with HTTP transport enabled, for example:
 
 .. code-block:: python
 
-   from eaa.core.mcp.server import run_mcp_server_from_tools
-   from eaa.tool.example_calculator import CalculatorTool
+   from eaa_core.tool.mcp_server import run_mcp_server_from_tools
+   from eaa_core.tool.example_calculator import CalculatorTool
 
    run_mcp_server_from_tools(
        tools=CalculatorTool(),

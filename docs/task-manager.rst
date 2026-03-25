@@ -69,8 +69,8 @@ it and implement ``run()`` or ``run_from_checkpoint()`` around it.
 
    from langgraph.graph import END, START, StateGraph
 
-   from eaa.core.task_manager.base import BaseTaskManager
-   from eaa.core.task_manager.state import TaskManagerState
+   from eaa_core.task_manager.base import BaseTaskManager
+   from eaa_core.task_manager.state import TaskManagerState
 
 
    class CustomState(TaskManagerState):

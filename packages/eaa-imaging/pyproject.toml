@@ -34,11 +34,11 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["eaa*"]
+include = ["eaa_imaging*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-"eaa" = [
+"eaa_imaging" = [
     "assets/context_learning_examples/*",
     "private_skills/*/SKILL.md",
     "private_skills/*/images/*",

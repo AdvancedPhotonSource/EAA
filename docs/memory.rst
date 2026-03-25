@@ -5,7 +5,7 @@ MemoryManagerConfig
 -------------------
 
 Long-term memory is optional and is configured through
-``eaa.api.memory.MemoryManagerConfig``.
+``eaa_core.api.memory.MemoryManagerConfig``.
 
 Important fields:
 
@@ -61,8 +61,8 @@ Example configuration
 
 .. code-block:: python
 
-   from eaa.api.llm_config import OpenAIConfig
-   from eaa.api.memory import MemoryManagerConfig
+   from eaa_core.api.llm_config import OpenAIConfig
+   from eaa_core.api.memory import MemoryManagerConfig
 
    memory_config = MemoryManagerConfig(
        enabled=True,

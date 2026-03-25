@@ -1,9 +1,9 @@
 import sqlite3
 
-from eaa.core.task_manager.base import BaseTaskManager
-from eaa.core.task_manager.state import ChatGraphState
-from eaa.gui.chat import _parse_images_field
-from eaa.gui.chat import _insert_user_message, _query_messages, set_message_db_path
+from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.task_manager.state import ChatGraphState
+from eaa_core.gui.chat import _parse_images_field
+from eaa_core.gui.chat import _insert_user_message, _query_messages, set_message_db_path
 
 
 def test_parse_images_field_single_data_url():
@@ -51,7 +51,7 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
         "chat_graph"
     )
 
-    monkeypatch.setattr("eaa.core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/exit")
 
     initial_state = ChatGraphState(

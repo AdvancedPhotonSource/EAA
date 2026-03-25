@@ -57,7 +57,7 @@ Example:
 
 .. code-block:: python
 
-   from eaa.core.task_manager.base import BaseTaskManager
+   from eaa_core.task_manager.base import BaseTaskManager
 
    task_manager = BaseTaskManager(
        llm_config=llm_config,
@@ -93,6 +93,6 @@ CLI helper:
 
 .. code-block:: bash
 
-   python -m eaa.cli install-skills --destination ~/.eaa_skills
+   python -m eaa_core.cli install-skills --destination ~/.eaa_skills
 
 You can then add that directory to ``skill_dirs``.

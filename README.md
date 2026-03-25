@@ -7,10 +7,11 @@ as a workspace with multiple installable packages, currently `eaa-core` and
 
 ## Current Status
 
-- Core agent runtime: `packages/eaa-core/src/eaa/core/task_manager/base.py`
+- Core agent runtime: `packages/eaa-core/src/eaa_core/task_manager/base.py`
 - Reusable built-in graphs: chat and feedback loop
 - Concrete workflows: ROI search, feature tracking, parameter tuning, Bayesian
-  optimization, and analytical task managers under `packages/eaa-*/src/eaa/task_manager/`
+  optimization, and analytical task managers under
+  `packages/eaa-*/src/eaa_*/task_manager/`
 - Tool system: `BaseTool`, serialized execution, optional approval gates, MCP
   server/client helpers
 - Long-term memory: optional chat-memory layer configured through
@@ -56,9 +57,9 @@ tool:
 ```python
 from skimage import data
 
-from eaa.api.llm_config import OpenAIConfig
-from eaa.core.task_manager.base import BaseTaskManager
-from eaa.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa_core.api.llm_config import OpenAIConfig
+from eaa_core.task_manager.base import BaseTaskManager
+from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
 
 llm_config = OpenAIConfig(
     model="your-model-name",
@@ -116,7 +117,7 @@ Set `use_webui=True` on the task manager and give it a `session_db_path`. Then
 launch the standalone WebUI process against the same SQLite file:
 
 ```python
-from eaa.gui.chat import run_webui, set_message_db_path
+from eaa_core.gui.chat import run_webui, set_message_db_path
 
 set_message_db_path("session.sqlite")
 run_webui(host="127.0.0.1", port=8008)
@@ -151,8 +152,8 @@ EAA supports both directions of MCP integration.
 Expose EAA tools as an MCP server:
 
 ```python
-from eaa.core.mcp.server import run_mcp_server_from_tools
-from eaa.tool.example_calculator import CalculatorTool
+from eaa_core.tool.mcp_server import run_mcp_server_from_tools
+from eaa_core.tool.example_calculator import CalculatorTool
 
 run_mcp_server_from_tools(
     tools=CalculatorTool(),
@@ -163,7 +164,7 @@ run_mcp_server_from_tools(
 Use an external MCP server as a normal EAA tool:
 
 ```python
-from eaa.tool.mcp import MCPTool
+from eaa_core.tool.mcp_client import MCPTool
 
 mcp_tool = MCPTool(
     {
@@ -180,7 +181,7 @@ mcp_tool = MCPTool(
 Use an MCP server over HTTP from another machine:
 
 ```python
-from eaa.tool.mcp import MCPTool
+from eaa_core.tool.mcp_client import MCPTool
 
 mcp_tool = MCPTool(
     {
@@ -238,7 +239,7 @@ inside the agent. In an interactive chat session you can:
 If you want to copy the bundled skills out of the package tree, use:
 
 ```bash
-python -m eaa.cli install-skills --destination ~/.eaa_skills
+python -m eaa_core.cli install-skills --destination ~/.eaa_skills
 ```
 
 ## Documentation

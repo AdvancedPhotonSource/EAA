@@ -25,7 +25,7 @@ Then start the WebUI process:
 
 .. code-block:: python
 
-   from eaa.gui.chat import run_webui, set_message_db_path
+   from eaa_core.gui.chat import run_webui, set_message_db_path
 
    set_message_db_path("session.sqlite")
    run_webui(host="127.0.0.1", port=8008)
@@ -57,7 +57,7 @@ Brief design introduction
 
 The current WebUI has a deliberately small design:
 
-- FastAPI backend in ``eaa.gui.chat``
+- FastAPI backend in ``eaa_core.gui.chat``
 - static frontend assets in ``src/eaa/gui/webui_static/``
 - polling-based message/status updates
 - clipboard image upload support

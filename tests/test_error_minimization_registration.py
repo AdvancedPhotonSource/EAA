@@ -4,7 +4,7 @@ import numpy as np
 import scipy.ndimage as ndi
 
 import test_utils as tutils
-from eaa.image_proc import error_minimization_registration
+from eaa_imaging.image_proc import error_minimization_registration
 
 
 class TestErrorMinimizationRegistration(tutils.BaseTester):
