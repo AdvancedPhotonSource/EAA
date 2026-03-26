@@ -11,13 +11,49 @@ import botorch
 from botorch.models.transforms.outcome import Standardize
 from botorch.models.transforms.input import Normalize
 from botorch.acquisition import AcquisitionFunction
+from botorch.acquisition.objective import PosteriorTransform
+from botorch.posteriors import TransformedPosterior
 import gpytorch
+import scipy.interpolate
 import torch
 from eaa_core.tool.base import BaseTool, tool
 
 from eaa_core.util import to_tensor
 
 logger = logging.getLogger(__name__)
+
+
+class OutcomeUnstandardizePosteriorTransform(PosteriorTransform):
+    """Posterior transform that reverses outcome standardization."""
+
+    def __init__(self, mean: torch.Tensor, std: torch.Tensor) -> None:
+        """Initialize the posterior transform.
+
+        Parameters
+        ----------
+        mean : torch.Tensor
+            Outcome-transform mean in raw y-space.
+        std : torch.Tensor
+            Outcome-transform standard deviation in raw y-space.
+        """
+        super().__init__()
+        self.register_buffer("mean", mean)
+        self.register_buffer("std", std)
+
+    def evaluate(self, Y: torch.Tensor) -> torch.Tensor:
+        """Return unstandardized outcomes."""
+        return Y * self.std + self.mean
+
+    def forward(self, posterior):
+        """Return a posterior in raw y-space."""
+        mean = self.mean
+        std = self.std
+        return TransformedPosterior(
+            posterior=posterior,
+            sample_transform=lambda samples: samples * std + mean,
+            mean_transform=lambda posterior_mean, posterior_variance: posterior_mean * std + mean,
+            variance_transform=lambda posterior_mean, posterior_variance: posterior_variance * std.pow(2),
+        )
 
 
 class BaseSequentialOptimizationTool(BaseTool):
@@ -225,6 +261,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         self.ys_transformed = torch.tensor([])
 
     def check_x_data(self, data: torch.Tensor):
+        """Validate that ``x`` has shape ``(n_samples, n_features)``."""
         if not (data.ndim == 2 and data.shape[1] == self.n_dims_in):
             raise ValueError(
                 f"Expected input data of shape (n_samples, {self.n_dims_in}), "
@@ -232,6 +269,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
             )
 
     def check_y_data(self, data: torch.Tensor):
+        """Validate that ``y`` has shape ``(n_samples, n_observations)``."""
         if not (data.ndim == 2 and data.shape[1] == self.n_dims_out):
             raise ValueError(
                 f"Expected output data of shape (n_samples, {self.n_dims_out}), "
@@ -378,12 +416,69 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                 )
 
     def build_acquisition_function(self, acquisition_function_kwargs: dict = None):
-        """Build the acquisition function."""
+        """Build the acquisition function.
+
+        Parameters
+        ----------
+        acquisition_function_kwargs : dict, optional
+            Extra constructor arguments merged into the configured acquisition
+            kwargs before instantiation.
+        """
         if acquisition_function_kwargs is not None:
             self.acquisition_function_kwargs.update(acquisition_function_kwargs)
-        self.acquisition_function = self.acquisition_function_class(
-            model=self.model,
-            **self.acquisition_function_kwargs,
+        kwargs = self.get_acquisition_function_kwargs()
+        self.acquisition_function = self.acquisition_function_class(**kwargs)
+
+    def get_acquisition_function_kwargs(self) -> dict:
+        """Build keyword arguments for the acquisition function constructor.
+
+        Returns
+        -------
+        dict
+            Constructor kwargs including the current GP model and, when the
+            target acquisition class accepts them, EAA-specific helpers such as
+            ``bo_tool`` and ``posterior_transform``.
+        """
+        kwargs = dict(self.acquisition_function_kwargs)
+        signature = inspect.signature(self.acquisition_function_class.__init__)
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+
+        constructor_kwargs = {
+            "model": self.model,
+            "bo_tool": self,
+            "posterior_transform": self.get_unstandardize_posterior_transform(),
+        }
+        for key, value in constructor_kwargs.items():
+            if key in kwargs:
+                continue
+            if accepts_var_kwargs or key in signature.parameters:
+                kwargs[key] = value
+        return kwargs
+
+    def get_unstandardize_posterior_transform(
+        self,
+    ) -> OutcomeUnstandardizePosteriorTransform | None:
+        """Return a posterior transform that maps predictions to raw y-space.
+
+        Returns
+        -------
+        OutcomeUnstandardizePosteriorTransform | None
+            Transform that maps posterior means / variances from standardized
+            y-space back to raw observation space, or ``None`` when the tool
+            does not currently have an outcome transform.
+        """
+        if self.outcome_transform is None:
+            return None
+        if not hasattr(self.outcome_transform, "means") or not hasattr(
+            self.outcome_transform, "stdvs"
+        ):
+            return None
+        return OutcomeUnstandardizePosteriorTransform(
+            mean=self.outcome_transform.means[0],
+            std=self.outcome_transform.stdvs[0],
         )
 
     def initialize_transforms(self):
@@ -476,6 +571,119 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
             self.outcome_transform.training = False
             y, _ = self.outcome_transform.untransform(y)
         return x, y
+
+    def untransform_posterior(self, posterior):
+        """Map a posterior in standardized space back to raw y-space.
+
+        Parameters
+        ----------
+        posterior : Posterior
+            Posterior whose event shape corresponds to ``(..., q, m)`` where
+            ``m == n_observations``.
+
+        Returns
+        -------
+        Posterior
+            Posterior in raw y-space with the same batch and event structure.
+        """
+        if self.outcome_transform is None:
+            return posterior
+        return self.outcome_transform.untransform_posterior(posterior)
+
+    def get_estimated_data_by_interpolation(
+        self,
+        x: torch.Tensor,
+        input_is_transformed: bool = False,
+    ) -> torch.Tensor:
+        """Estimate spectrum values by cubic-spline interpolation of observations.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Query points with shape ``(n_samples, n_features)``.
+        input_is_transformed : bool, optional
+            Whether ``x`` is already expressed in normalized x-space.
+
+        Returns
+        -------
+        torch.Tensor
+            Interpolated values in raw y-space with shape
+            ``(n_samples, n_observations)``.
+        """
+        if self.n_dims_in != 1:
+            raise NotImplementedError(
+                "Interpolation-based posterior mean is only implemented for "
+                "one-dimensional input spaces."
+            )
+        if self.xs_untransformed.shape[0] < 2:
+            raise ValueError(
+                "At least two observations are required for spline interpolation."
+            )
+        query = x.detach().cpu().double()
+        if query.ndim == 1:
+            query = query[:, None]
+        if not input_is_transformed:
+            query = self.transform_data(x=query, y=None, train_x=False, train_y=False)[0]
+
+        x_data = self.xs_transformed.detach().cpu().reshape(-1).numpy()
+        y_data = self.ys_untransformed.detach().cpu().numpy()
+        x_data, unique_indices = np.unique(x_data, return_index=True)
+        y_data = y_data[unique_indices]
+        sorted_indices = np.argsort(x_data)
+        x_data = x_data[sorted_indices]
+        y_data = y_data[sorted_indices]
+
+        interpolator = scipy.interpolate.CubicSpline(x_data, y_data, extrapolate=True)
+        y_interp = interpolator(query.reshape(-1).numpy())
+        y_tensor = torch.as_tensor(
+            y_interp,
+            dtype=self.ys_untransformed.dtype,
+            device=x.device,
+        )
+        if y_tensor.ndim == 1:
+            y_tensor = y_tensor[:, None]
+        return y_tensor
+
+    def get_posterior_mean_and_std(
+        self,
+        x: torch.Tensor,
+        transform: bool = True,
+        untransform: bool = True,
+        compute_sigma: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Return posterior mean and standard deviation at query points.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Query points with shape ``(n_samples, n_features)``.
+        transform : bool, optional
+            Whether ``x`` is given in raw x-space and should be normalized.
+        untransform : bool, optional
+            Whether posterior statistics should be returned in raw y-space.
+        compute_sigma : bool, optional
+            Whether to compute and return the posterior standard deviation.
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor | None]
+            Posterior mean with shape ``(n_samples, n_observations)`` and,
+            when requested, posterior standard deviation with the same shape.
+        """
+        if self.model is None:
+            raise ValueError("The GP model is not built yet.")
+
+        x_query = x
+        if transform:
+            x_query, _ = self.transform_data(x=x_query, y=None, train_x=False, train_y=False)
+        posterior = self.model.posterior(x_query)
+        if untransform:
+            posterior = self.untransform_posterior(posterior)
+        mean = posterior.mean
+        sigma = None
+        if compute_sigma:
+            sigma = posterior.variance.clamp_min(1e-12).sqrt()
+        return mean, sigma
 
     def scale_by_normalizer_bounds(self, x, dim=0):
         """
@@ -668,6 +876,11 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                     "Analytic acquisition functions only support a single suggestion."
                 )
 
+        optimization_kwargs = {
+            "num_restarts": 20,
+            "raw_samples": 50,
+            **self.optimization_function_kwargs,
+        }
         candidates, _ = self.optimization_function(
             acq_function=self.acquisition_function,
             bounds=torch.stack(
@@ -677,9 +890,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                 ]
             ),
             q=n_suggestions,
-            num_restarts=20,
-            raw_samples=50,
-            **self.optimization_function_kwargs,
+            **optimization_kwargs,
         )
 
         candidates = self.untransform_data(x=candidates)[0]

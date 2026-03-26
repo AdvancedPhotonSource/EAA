@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eaa-spectroscopy"
+version = "0.1.0"
+description = "Spectroscopy tools and adaptive-sampling task managers for EAA."
+requires-python = ">=3.11"
+dependencies = [
+    "eaa-core[bo]>=0.1.0",
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["eaa_spectroscopy*"]
+namespaces = true

@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "eaa-core",
     "eaa-imaging",
+    "eaa-spectroscopy",
     "pytest",
     "ruff",
 ]
@@ -17,9 +18,11 @@ package = false
 [tool.uv.sources]
 eaa-core = { workspace = true }
 eaa-imaging = { workspace = true }
+eaa-spectroscopy = { workspace = true }
 
 [tool.uv.workspace]
 members = [
     "packages/eaa-core",
     "packages/eaa-imaging",
+    "packages/eaa-spectroscopy",
 ]

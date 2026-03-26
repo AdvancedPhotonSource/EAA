@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "eaa-core",
     "eaa-imaging",
+    "eaa-spectroscopy",
     "eaa-workspace",
 ]
 
@@ -1651,12 +1652,39 @@ requires-dist = [
 provides-extras = ["aps-mic", "dev"]
 
 [[package]]
+name = "eaa-spectroscopy"
+version = "0.1.0"
+source = { editable = "packages/eaa-spectroscopy" }
+dependencies = [
+    { name = "eaa-core", extra = ["bo"] },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "eaa-core", extras = ["bo"], editable = "packages/eaa-core" },
+    { name = "numpy" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "scipy" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "eaa-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "eaa-core" },
     { name = "eaa-imaging" },
+    { name = "eaa-spectroscopy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1665,6 +1693,7 @@ dependencies = [
 requires-dist = [
     { name = "eaa-core", editable = "packages/eaa-core" },
     { name = "eaa-imaging", editable = "packages/eaa-imaging" },
+    { name = "eaa-spectroscopy", editable = "packages/eaa-spectroscopy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
