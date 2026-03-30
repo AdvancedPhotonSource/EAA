@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import warnings
 
 from eaa_core.api.base import BaseConfig
 
@@ -30,10 +31,19 @@ class AskSageConfig(LLMConfig):
 
 
 @dataclass
-class ArgoConfig(LLMConfig):
+class ArgoConfig(OpenAIConfig):
     """Configuration for Argo endpoints."""
 
-    model: str = None
-    base_url: str = "https://apps-dev.inside.anl.gov/argoapi/api/v1/resource/"
+    base_url: str = "https://apps-dev.inside.anl.gov/argoapi/v1"
     api_key: str = "ARGO_USER"
-    user: str = None
+    user: str | None = None
+
+    def __post_init__(self) -> None:
+        """Warn when the deprecated compatibility field is still used."""
+        if self.user is not None:
+            warnings.warn(
+                "`ArgoConfig.user` is deprecated and ignored. "
+                "Configure authentication through `api_key` instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )

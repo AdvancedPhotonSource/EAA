@@ -4,13 +4,13 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages.utils import convert_to_messages
 from langchain_openai import ChatOpenAI
 
-from eaa_core.api.llm_config import ArgoConfig, AskSageConfig, LLMConfig, OpenAIConfig
+from eaa_core.api.llm_config import AskSageConfig, LLMConfig, OpenAIConfig
 from eaa_core.message_proc import ai_message_to_openai_dict
 
 
 def build_chat_model(llm_config: LLMConfig) -> ChatOpenAI:
     """Build a LangChain chat model from an EAA LLM config."""
-    if isinstance(llm_config, (OpenAIConfig, ArgoConfig)):
+    if isinstance(llm_config, OpenAIConfig):
         return ChatOpenAI(
             model=llm_config.model,
             base_url=llm_config.base_url,

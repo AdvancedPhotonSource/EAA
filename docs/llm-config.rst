@@ -37,7 +37,7 @@ Available config classes
    - ``model``
    - ``base_url``
    - ``api_key``
-   - ``user``
+   - ``user`` (deprecated; accepted temporarily and ignored)
 
 How the config is used
 ----------------------
