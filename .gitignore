@@ -23,10 +23,3 @@ docs/_build/
 # Images
 **/*.png
 **/*.tiff
-!packages/eaa-imaging/src/eaa_imaging/assets/**/*.png
-!packages/eaa-imaging/src/eaa_imaging/assets/**/*.tiff
-!packages/eaa-imaging/src/eaa_imaging/private_skills/**/*.png
-!packages/eaa-imaging/src/eaa_imaging/private_skills/**/*.tiff
-!packages/eaa-imaging/src/eaa_imaging/skills/**/*.png
-!packages/eaa-imaging/src/eaa_imaging/skills/**/*.tiff
-packages/eaa-imaging/src/eaa_imaging/assets/context_learning_examples/*.png
