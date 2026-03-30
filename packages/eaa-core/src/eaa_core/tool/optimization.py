@@ -44,8 +44,32 @@ class OutcomeUnstandardizePosteriorTransform(PosteriorTransform):
         """Return unstandardized outcomes."""
         return Y * self.std + self.mean
 
-    def forward(self, posterior):
-        """Return a posterior in raw y-space."""
+    def forward(
+        self,
+        posterior: botorch.posteriors.Posterior,
+        X: torch.Tensor | None = None,
+        **kwargs,
+    ) -> TransformedPosterior:
+        """Return a posterior in raw y-space.
+
+        Parameters
+        ----------
+        posterior : botorch.posteriors.Posterior
+            Posterior in standardized outcome space.
+        X : torch.Tensor, optional
+            Candidate locations passed by newer BoTorch releases. The
+            unstandardization depends only on the posterior, so this argument is
+            accepted for compatibility and otherwise ignored.
+        **kwargs
+            Additional compatibility-only keyword arguments ignored by this
+            transform.
+
+        Returns
+        -------
+        TransformedPosterior
+            Posterior mapped back to the raw outcome space.
+        """
+        del X, kwargs
         mean = self.mean
         std = self.std
         return TransformedPosterior(

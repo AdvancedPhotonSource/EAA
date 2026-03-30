@@ -5,9 +5,13 @@ import gpytorch
 import numpy as np
 import pytest
 import torch
+from botorch.posteriors import Posterior, TransformedPosterior
 
 from eaa_core.task_manager.tuning.bo import BayesianOptimizationTaskManager
-from eaa_core.tool.optimization import BayesianOptimizationTool
+from eaa_core.tool.optimization import (
+    BayesianOptimizationTool,
+    OutcomeUnstandardizePosteriorTransform,
+)
 from eaa_spectroscopy.acquisition_function.xanes import (
     ComprehensiveAugmentedAcquisitionFunction,
 )
@@ -35,6 +39,60 @@ def force_cpu_execution(monkeypatch: pytest.MonkeyPatch):
 
 
 class TestXANESAdaptiveSampling(tutils.BaseTester):
+    def test_outcome_unstandardize_posterior_transform_accepts_x_kwarg(self):
+        class DummyPosterior(Posterior):
+            def __init__(
+                self,
+                mean: torch.Tensor,
+                variance: torch.Tensor,
+            ) -> None:
+                self._mean = mean
+                self._variance = variance
+
+            @property
+            def device(self) -> torch.device:
+                return self._mean.device
+
+            @property
+            def dtype(self) -> torch.dtype:
+                return self._mean.dtype
+
+            @property
+            def mean(self) -> torch.Tensor:
+                return self._mean
+
+            @property
+            def variance(self) -> torch.Tensor:
+                return self._variance
+
+            def rsample(
+                self,
+                sample_shape: torch.Size | None = None,
+            ) -> torch.Tensor:
+                sample_shape = torch.Size() if sample_shape is None else sample_shape
+                return self._mean.expand(sample_shape + self._mean.shape)
+
+        transform = OutcomeUnstandardizePosteriorTransform(
+            mean=torch.tensor([2.0], dtype=torch.double),
+            std=torch.tensor([4.0], dtype=torch.double),
+        )
+        posterior = DummyPosterior(
+            mean=torch.tensor([[1.5]], dtype=torch.double),
+            variance=torch.tensor([[0.25]], dtype=torch.double),
+        )
+
+        transformed = transform(
+            posterior,
+            X=torch.tensor([[0.1]], dtype=torch.double),
+        )
+
+        assert isinstance(transformed, TransformedPosterior)
+        assert torch.equal(transformed.mean, torch.tensor([[8.0]], dtype=torch.double))
+        assert torch.equal(
+            transformed.variance,
+            torch.tensor([[4.0]], dtype=torch.double),
+        )
+
     @staticmethod
     def load_ybco_xanes_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Load the YBCO XANES CI dataset.
