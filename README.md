@@ -228,13 +228,14 @@ task_manager = BaseTaskManager(
 )
 ```
 
-At build time, EAA scans those directories for `SKILL.md`, turns each skill
-into a documentation-fetching tool, and makes the discovered skills available
-inside the agent. In an interactive chat session you can:
+At build time, EAA wires in the skill library tool. That tool scans the
+configured directories for `SKILL.md`, exposes a skill catalog to the agent,
+and loads the selected skill docs on demand. In an interactive chat session
+you can:
 
 - run `/skill` to list the loaded skills
-- run `/subtask <task description>` to let the agent choose a skill, fetch its
-  docs, and launch a skill-driven subtask flow
+- run `/subtask <task description>` to let the agent choose a skill, load its
+  docs, and launch a skill-assisted subtask flow
 
 If you want to copy the bundled skills out of the package tree, use:
 

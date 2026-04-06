@@ -664,7 +664,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         if not skill_path.exists():
             raise FileNotFoundError(f"Line scan check skill file not found: {skill_path}")
 
-        skill_text = skill_path.read_text(encoding="utf-8")
         checker_task_manager = BaseTaskManager(
             llm_config=self.llm_config,
             memory_config=self.memory_config,
@@ -674,7 +673,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             build=True,
         )
         skill_tool_name = "skill-check-line-scan"
-        checker_task_manager.skill_catalog = [
+        if checker_task_manager.skill_tool is None:
+            raise RuntimeError("Skill tool is unavailable on the checker task manager.")
+        checker_task_manager.skill_tool.skill_catalog = [
             SkillMetadata(
                 name="check-line-scan",
                 description="Instructions for checking a line scan.",
@@ -682,16 +683,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 path=str(skill_path.parent),
             )
         ]
-        for message in checker_task_manager.tool_executor.build_skill_doc_messages(
-            tool_response={
-                "content": {
-                    "path": str(skill_path.parent),
-                    "files": {"SKILL.md": skill_text},
-                }
-            },
-            tool_call_info={"function": {"name": skill_tool_name}},
-            skill_catalog=checker_task_manager.skill_catalog,
-        ):
+        skill_payload = checker_task_manager.skill_tool.load_skill("check-line-scan")
+        for message in skill_payload["messages"]:
             checker_task_manager.update_message_history(
                 message,
                 update_context=True,

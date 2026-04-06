@@ -6,15 +6,16 @@ What skills are
 
 In EAA, a skill is a reusable, markdown-first task package that the agent can
 discover and use at runtime. Skills are not Python subclasses. Instead, they
-are directories of documentation that the task manager exposes through generated
-``SkillTool`` wrappers.
+are directories of documentation that the agent can inspect through the
+``SkillLibraryTool``.
 
 At load time, EAA:
 
+- makes the skill library tool available to the agent
 - scans the configured skill directories for ``SKILL.md``
 - extracts basic metadata such as the skill name and description
 - assigns each skill a tool name like ``skill-feature-tracking-task-manager``
-- exposes a tool that returns the skill documentation files to the agent
+- exposes a catalog tool plus a loader tool for fetching skill docs on demand
 
 This lets the agent pull in focused instructions for a subtask without baking
 every workflow into one prompt or one task-manager class.
@@ -68,8 +69,8 @@ Example:
 Once loaded, the base chat loop supports:
 
 - ``/skill`` to display the discovered skills
-- ``/subtask <task description>`` to let the agent choose a skill, fetch its
-  docs, and run a skill-driven subtask flow
+- ``/subtask <task description>`` to let the agent choose a skill, load its
+  docs, and run a skill-assisted subtask flow
 
 What happens during ``/subtask``
 --------------------------------
@@ -79,8 +80,8 @@ When you launch a subtask, the task manager:
 - records the available skill catalog in context
 - exposes the current task-manager metadata to the model
 - runs the feedback-loop graph with instructions to select the right skill
-- lets the model call the generated skill tool to fetch the markdown docs
-- expands those docs back into conversation messages for the subtask
+- lets the model call ``get_skill_catelog`` and ``load_skill`` as needed
+- injects the loaded skill docs back into conversation messages for the subtask
 
 This means skills are currently best understood as documented agent playbooks
 that can be injected on demand.

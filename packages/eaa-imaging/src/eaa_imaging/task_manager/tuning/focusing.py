@@ -92,10 +92,8 @@ class FocusingNodeFactory(NodeFactory):
             followup_messages.extend(
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
-                    skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=state.message_with_yielded_image,
                     allow_non_image_tool_responses=state.allow_non_image_tool_responses,
-                    tool_call_info=tool_call_info,
                 )
             )
 
@@ -138,10 +136,8 @@ class FocusingNodeFactory(NodeFactory):
             followup_messages.extend(
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
-                    skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=state.message_with_yielded_image,
                     allow_non_image_tool_responses=state.allow_non_image_tool_responses,
-                    tool_call_info=tool_call_info,
                 )
             )
 

@@ -7,7 +7,6 @@ import logging
 import numpy as np
 
 from eaa_core.message_proc import generate_openai_message
-from eaa_core.skill import SkillMetadata, split_markdown_into_message_sections
 from eaa_core.tool.base import (
     BaseTool,
     ExposedToolSpec,
@@ -193,82 +192,23 @@ class SerialToolExecutor:
         return []
 
     @classmethod
-    def build_skill_doc_messages(
-        cls,
-        tool_response: Dict[str, Any],
-        tool_call_info: Optional[Dict[str, Any]],
-        skill_catalog: list[SkillMetadata],
-    ) -> list[Dict[str, Any]]:
-        """Expand skill-documentation tool payloads into OpenAI messages.
-
-        Parameters
-        ----------
-        tool_response : dict[str, Any]
-            Tool response message containing the documentation payload.
-        tool_call_info : dict[str, Any], optional
-            Tool call metadata from the originating assistant message.
-        skill_catalog : list[SkillMetadata]
-            Skills available to the task manager.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            Message sequence extracted from the skill documentation payload.
-        """
-        if tool_call_info is None:
+    def extract_followup_messages_from_tool_response(cls, content: Any) -> list[Dict[str, Any]]:
+        """Extract follow-up messages emitted by a tool response payload."""
+        payload = cls.parse_tool_response_payload(content)
+        if payload is None:
             return []
-        tool_name = tool_call_info.get("function", {}).get("name")
-        skill_tool_names = {skill.tool_name for skill in skill_catalog}
-        if tool_name not in skill_tool_names:
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
             return []
-        payload = cls.parse_tool_response_payload(tool_response.get("content"))
-        if payload is None or not isinstance(payload.get("files"), dict):
-            return []
-        skill_root = payload.get("path")
-        skill_root_path = Path(skill_root) if isinstance(skill_root, str) else None
-        messages = []
-        for relative_path, file_content in payload["files"].items():
-            if not isinstance(relative_path, str) or not isinstance(file_content, str):
-                continue
-            markdown_path = skill_root_path / relative_path if skill_root_path is not None else None
-            for section in split_markdown_into_message_sections(
-                file_content,
-                markdown_path=markdown_path,
-            ):
-                if len(section["image_paths"]) == 0:
-                    messages.append(generate_openai_message(content=section["text"], role="user"))
-                    continue
-                try:
-                    messages.append(
-                        generate_openai_message(
-                            content=section["text"],
-                            role="user",
-                            image_path=section["image_paths"][0],
-                        )
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to load skill image '%s': %s",
-                        section["image_paths"][0],
-                        exc,
-                    )
-                    messages.append(generate_openai_message(content=section["text"], role="user"))
-                for image_path in section["image_paths"][1:]:
-                    try:
-                        messages.append(generate_openai_message(content="", role="user", image_path=image_path))
-                    except Exception as exc:
-                        logger.warning("Failed to load skill image '%s': %s", image_path, exc)
-        return messages
+        return [message for message in messages if isinstance(message, dict)]
 
     @classmethod
     def build_tool_followup_messages(
         cls,
         tool_response: Dict[str, Any],
         *,
-        skill_catalog: list[SkillMetadata],
         message_with_yielded_image: str,
         allow_non_image_tool_responses: bool,
-        tool_call_info: Optional[Dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """Generate follow-up messages after a tool finishes.
 
@@ -276,24 +216,18 @@ class SerialToolExecutor:
         ----------
         tool_response : dict[str, Any]
             Normalized tool response message.
-        skill_catalog : list[SkillMetadata]
-            Skills available to the task manager.
         message_with_yielded_image : str
             User-facing text used when an image path is returned.
         allow_non_image_tool_responses : bool
             Whether non-image tool results are acceptable in the current flow.
-        tool_call_info : dict[str, Any], optional
-            Tool call metadata from the originating assistant message.
 
         Returns
         -------
         list[dict[str, Any]]
             Follow-up messages to append after tool execution.
         """
-        followup_messages = cls.build_skill_doc_messages(
-            tool_response,
-            tool_call_info,
-            skill_catalog,
+        followup_messages = cls.extract_followup_messages_from_tool_response(
+            tool_response.get("content")
         )
         image_paths = cls.extract_image_paths_from_tool_response(tool_response.get("content"))
         if len(image_paths) > 0:

@@ -8,7 +8,6 @@ from langgraph.runtime import Runtime
 from eaa_core.exceptions import MaxRoundsReached
 from eaa_core.message_proc import (
     generate_openai_message,
-    get_tool_call_info,
     has_tool_call,
     print_message,
     purge_context_images,
@@ -629,20 +628,15 @@ class NodeFactory:
 
         Notes
         -----
-        Follow-up is required when any tool result yields skill-document
-        messages, returns image paths, or returns a non-image payload in a flow
-        that requires image output.
+        Follow-up is required when any tool result emits follow-up messages,
+        returns image paths, or returns a non-image payload in a flow that
+        requires image output.
         """
-        response = state.latest_response or {}
-        tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
-        for index, tool_message in enumerate(tool_messages):
-            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+        for tool_message in tool_messages:
             if len(
-                self.task_manager.tool_executor.build_skill_doc_messages(
-                    tool_message,
-                    tool_call_info,
-                    self.task_manager.skill_catalog,
+                self.task_manager.tool_executor.extract_followup_messages_from_tool_response(
+                    tool_message.get("content")
                 )
             ) > 0:
                 return True
@@ -678,22 +672,17 @@ class NodeFactory:
         -------
         list[dict[str, object]]
             Follow-up messages derived from the most recent tool responses,
-            including skill-document messages, image-yield messages, and
+            including emitted follow-up messages, image-yield messages, and
             non-image warnings when required.
         """
-        response = state.latest_response or {}
-        tool_call_info_list = get_tool_call_info(response, index=None) or []
         tool_messages = state.latest_tool_messages
         followup_messages: list[dict[str, object]] = []
-        for index, tool_message in enumerate(tool_messages):
-            tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
+        for tool_message in tool_messages:
             followup_messages.extend(
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
-                    skill_catalog=self.task_manager.skill_catalog,
                     message_with_yielded_image=message_with_yielded_image,
                     allow_non_image_tool_responses=allow_non_image_tool_responses,
-                    tool_call_info=tool_call_info,
                 )
             )
         return followup_messages

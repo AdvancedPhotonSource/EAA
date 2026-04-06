@@ -281,7 +281,6 @@ class ImageRegistration(BaseTool):
         )
         if not skill_path.exists():
             raise FileNotFoundError(f"Registration skill file not found: {skill_path}")
-        skill_text = skill_path.read_text(encoding="utf-8")
 
         fig = self.build_registration_pair_figure(
             image_r,
@@ -301,7 +300,9 @@ class ImageRegistration(BaseTool):
             build=True,
         )
         skill_tool_name = "skill-image-registration"
-        registration_task.skill_catalog = [
+        if registration_task.skill_tool is None:
+            raise RuntimeError("Skill tool is unavailable on the registration task manager.")
+        registration_task.skill_tool.skill_catalog = [
             SkillMetadata(
                 name="image-registration",
                 description="Instructions for image registration.",
@@ -309,16 +310,8 @@ class ImageRegistration(BaseTool):
                 path=str(skill_path.parent),
             )
         ]
-        for message in registration_task.tool_executor.build_skill_doc_messages(
-            tool_response={
-                "content": {
-                    "path": str(skill_path.parent),
-                    "files": {"SKILL.md": skill_text},
-                }
-            },
-            tool_call_info={"function": {"name": skill_tool_name}},
-            skill_catalog=registration_task.skill_catalog,
-        ):
+        skill_payload = registration_task.skill_tool.load_skill("image-registration")
+        for message in skill_payload["messages"]:
             registration_task.update_message_history(
                 message,
                 update_context=True,

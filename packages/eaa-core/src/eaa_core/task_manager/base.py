@@ -17,7 +17,6 @@ from eaa_core.message_proc import (
     get_message_elements_as_text,
     print_message,
 )
-from eaa_core.skill import SkillMetadata, SkillTool, load_skills
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
@@ -30,6 +29,7 @@ from eaa_core.task_manager.state import (
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
 from eaa_core.tool.coding import BashCodingTool, PythonCodingTool
+from eaa_core.tool.skill import SkillLibraryTool
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ class BaseTaskManager:
         self.memory_config = memory_config
         self.tools = list(tools)
         self.skill_dirs = list(skill_dirs) if skill_dirs else []
-        self.skill_catalog: list[SkillMetadata] = []
+        self.skill_tool: Optional[SkillLibraryTool] = None
         self.use_webui = use_webui
         self.use_coding_tools = use_coding_tools
         self.run_codes_in_sandbox = run_codes_in_sandbox
@@ -441,7 +441,6 @@ class BaseTaskManager:
     def _collect_base_tools(self) -> list[BaseTool]:
         tools: list[BaseTool] = list(self.tools)
         self._merge_tools(tools, self._build_default_tools())
-        self._merge_tools(tools, self._build_skill_tools())
         return tools
 
     def _merge_tools(self, tools: list[BaseTool], new_tools: list[BaseTool]) -> None:
@@ -464,20 +463,18 @@ class BaseTaskManager:
 
     def _build_default_tools(self) -> list[BaseTool]:
         """Return default built-in tools."""
+        tools: list[BaseTool] = []
+        self.skill_tool = SkillLibraryTool(skill_dirs=self.skill_dirs)
+        tools.append(self.skill_tool)
         if not self.use_coding_tools:
-            return []
-        return [
-            PythonCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
-            BashCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
-        ]
-
-    def _build_skill_tools(self) -> list[BaseTool]:
-        """Discover skills and expose them as tools."""
-        if not self.skill_dirs:
-            self.skill_catalog = []
-            return []
-        self.skill_catalog = load_skills(self.skill_dirs)
-        return [SkillTool(skill) for skill in self.skill_catalog]
+            return tools
+        tools.extend(
+            [
+                PythonCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
+                BashCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
+            ]
+        )
+        return tools
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
         """Register one or more tools with the serial executor."""
@@ -687,8 +684,9 @@ class BaseTaskManager:
         )
 
     def launch_task_manager(self, task_request: str) -> None:
-        """Run a skill-driven subtask using the discovered skill tools."""
-        if not self.skill_catalog:
+        """Run a skill-driven subtask using the skill library tool."""
+        skill_catalog = self.skill_tool.skill_catalog if self.skill_tool is not None else []
+        if not skill_catalog:
             system_message = generate_openai_message(
                 content="No skills are available to run the subtask.",
                 role="system",
@@ -704,15 +702,16 @@ class BaseTaskManager:
                     "description": skill.description,
                     "path": skill.path,
                 }
-                for skill in self.skill_catalog
+                for skill in skill_catalog
             ],
             indent=2,
         )
         self.record_system_message(
             "The user requested to launch a sub-task manager for a specified task. "
-            "Select the correct skill, fetch its docs, create a Python script, and execute it. "
+            "Use `get_skill_catelog` if needed, then call `load_skill` for the selected skill, "
+            "create a Python script, and execute it. "
             "If critical setup information is missing, ask a single clarification question and include NEED HUMAN. "
-            f"Available skill tools:\n{skill_catalog_json}",
+            f"Available skills:\n{skill_catalog_json}",
             update_context=True,
         )
         self.record_system_message(
@@ -733,7 +732,7 @@ class BaseTaskManager:
             "* `/exit`: exit the current loop\n"
             "* `/chat`: enter chat mode\n"
             "* `/monitor <task description>`: enter monitoring mode\n"
-            "* `/subtask <task description>`: run a skill-driven subtask\n"
+            "* `/subtask <task description>`: run a skill-assisted subtask\n"
             "* `/skill`: display skills available to the agent\n"
             "* `/return`: return to upper level task\n"
         )
@@ -745,15 +744,16 @@ class BaseTaskManager:
         return text
 
     def display_available_skills(self) -> str:
-        """Display discovered skills."""
-        if not self.skill_catalog:
+        """Display skills available through the skill library tool."""
+        skill_catalog = self.skill_tool.skill_catalog if self.skill_tool is not None else []
+        if not skill_catalog:
             text = "No skills are available."
         else:
             text = "\n".join(
                 ["Skills available to the agent:"]
                 + [
                     f"{index}. {skill.name} ({skill.tool_name}) - {skill.description} [{skill.path}]"
-                    for index, skill in enumerate(self.skill_catalog, start=1)
+                    for index, skill in enumerate(skill_catalog, start=1)
                 ]
             )
         if self.use_webui:

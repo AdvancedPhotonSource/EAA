@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Sequence, Tuple
 
-from eaa_core.tool.base import BaseTool, tool
+from eaa_core.message_proc import generate_openai_message
 
 logger = logging.getLogger(__name__)
 MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\(([^)]+)\)")
@@ -21,42 +21,6 @@ class SkillMetadata:
     description: str
     tool_name: str
     path: str
-
-
-class SkillTool(BaseTool):
-    """Expose skill documentation as a tool."""
-
-    def __init__(
-        self,
-        metadata: SkillMetadata,
-        *,
-        max_doc_bytes: int = 200_000,
-        require_approval: bool = False,
-        **kwargs: Any,
-    ) -> None:
-        self.metadata = metadata
-        self.max_doc_bytes = max_doc_bytes
-        super().__init__(require_approval=require_approval, **kwargs)
-
-    def build(self, *args: Any, **kwargs: Any) -> None:
-        """Apply the externally visible tool name."""
-        self.tool_name_overrides = {"fetch_skill_docs": self.metadata.tool_name}
-
-    @tool(name="fetch_skill_docs")
-    def fetch_skill_docs(self) -> Dict[str, Any]:
-        """Return the documentation files for this skill."""
-        files, skipped, images_by_file = collect_skill_docs(
-            Path(self.metadata.path),
-            max_doc_bytes=self.max_doc_bytes,
-        )
-        return {
-            "name": self.metadata.name,
-            "description": self.metadata.description,
-            "path": self.metadata.path,
-            "files": files,
-            "images_by_file": images_by_file,
-            "skipped_files": skipped,
-        }
 
 
 def load_skills(skill_dirs: Sequence[str]) -> List[SkillMetadata]:
@@ -198,6 +162,28 @@ def ensure_unique_tool_name(tool_name: str, seen: set[str]) -> str:
         index += 1
 
 
+def resolve_skill_metadata(
+    skill_catalog: Sequence[SkillMetadata],
+    skill_name: str,
+) -> SkillMetadata | None:
+    """Resolve a skill by name, tool name, or filesystem path."""
+    normalized = skill_name.strip()
+    if len(normalized) == 0:
+        return None
+    for skill in skill_catalog:
+        if normalized in {skill.name, skill.tool_name, skill.path}:
+            return skill
+    normalized_lower = normalized.lower()
+    for skill in skill_catalog:
+        if normalized_lower in {
+            skill.name.lower(),
+            skill.tool_name.lower(),
+            skill.path.lower(),
+        }:
+            return skill
+    return None
+
+
 def collect_skill_docs(
     skill_dir: Path,
     *,
@@ -265,3 +251,43 @@ def split_markdown_into_message_sections(
             }
         )
     return sections
+
+
+def build_skill_messages(
+    files: Dict[str, str],
+    skill_root: Path | None = None,
+) -> List[Dict[str, Any]]:
+    """Build OpenAI message payloads from collected skill markdown files."""
+    messages: List[Dict[str, Any]] = []
+    for relative_path, file_content in files.items():
+        if not isinstance(relative_path, str) or not isinstance(file_content, str):
+            continue
+        markdown_path = skill_root / relative_path if skill_root is not None else None
+        for section in split_markdown_into_message_sections(
+            file_content,
+            markdown_path=markdown_path,
+        ):
+            if len(section["image_paths"]) == 0:
+                messages.append(generate_openai_message(content=section["text"], role="user"))
+                continue
+            try:
+                messages.append(
+                    generate_openai_message(
+                        content=section["text"],
+                        role="user",
+                        image_path=section["image_paths"][0],
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load skill image '%s': %s",
+                    section["image_paths"][0],
+                    exc,
+                )
+                messages.append(generate_openai_message(content=section["text"], role="user"))
+            for image_path in section["image_paths"][1:]:
+                try:
+                    messages.append(generate_openai_message(content="", role="user", image_path=image_path))
+                except Exception as exc:
+                    logger.warning("Failed to load skill image '%s': %s", image_path, exc)
+    return messages
