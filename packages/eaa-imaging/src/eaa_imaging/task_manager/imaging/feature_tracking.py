@@ -2,6 +2,7 @@ from typing import Literal, Optional
 
 from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
+from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.tool.base import BaseTool
 from eaa_core.util import get_image_path_from_text
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
@@ -180,59 +181,15 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             reference_image_path = get_image_path_from_text(user_image_input)
 
         if initial_prompt is None:
-            initial_prompt = (
-                f"You are given a reference image of a field of view (FOV) of a "
-                f"microscope. After that reference image was collected, the "
-                f"imaging system drifted, so the FOV at the same location is "
-                f"now at a different location. Use the tool to acquire "
-                f"images at different places to find that feature again, "
-                f"and bring it back to the same location of the field of view "
-                f"as the reference image. Try zooming out the field of view, "
-                f"and move around to find the feature, then zoom back in. "
-                f"The new image you acquire might be blurrier than the reference.\n\n"
-                f"- For your first attempt, start from the initial position of "
-                f"x = {initial_position[1]}, y = {initial_position[0]}, and "
-                f"use an initial field of view size of "
-                f"{initial_fov_size[1]} in x and {initial_fov_size[0]} in y.\n\n"
-                f"- After acquiring the first image, try zooming out and moving "
-                f"the FOV around by calling the acquisition tool with different "
-                f"locations and sizes/step sizes until the acquired image has "
-                f"substantial overlap with the reference image.\n\n"
-                f"- When the acquired image has substantial overlap with the "
-                f"reference, change the FOV size back to the initial size "
-                f"**while keeping the location of the FOV the same as your "
-                f"latest acquisition**.\n\n"
-                f"- Adjust the final field of view so that the final image you "
-                f"see is as aligned with the reference image as possible. "
-                f"If you have an image registration tool, use it to perform "
-                f"the precise alignment. However, only use you tool if you see "
-                f"**a large amount of overlap between the last acquired image "
-                f"and the reference**, otherwise registration will not be accurate. "
-                f"When calling the registration tool, always set `register_with` "
-                f'to `"reference"`. The tool does not need you to collect any '
-                f"reference or baseline images; they are already provided to the "
-                f"tool. The offset returned by the registration tool should be **subtracted** "
-                f"to the positions of the image acquisition tool. For example, "
-                f"if the last image is acquired at (y = 100, x = 100), and the "
-                f"if the registration tool returns an offset of (dy, dx), "
-                f"the next image should be acquired at (y = 100 - dy, x = 100 - dx).\n\n"
-                f"- After the last acquired image is aligned with the reference, "
-                f"report the coordinates of the field of view and include 'TERMINATE' "
-                f"in your response.\n\n"
-                f"Other notes:\n\n"
-                f"- Unless specifically noted, all coordinates are given in "
-                f"(y, x) order. When writing coordinates in your response, "
-                f"do not just write two numbers; instead, explicitly specify "
-                f"y/x axis and write them as (y = <y>, x = <x>).\n\n"
-                f"- Always explain your actions when calling a tool.\n\n"
-                f"- Make sure you only make one tool call at a time. Do not make "
-                f"multiple calls simultaneously.\n\n"
-                f"- Do NOT acquire images at the initial location over and over again! "
-                f"You do NOT need to acquire baseline images for registration. "
-                f"The registration tool, if available, already has the reference "
-                f"image.\n\n"
-                f"- When the acquired image looks well aligned with the reference, "
-                f"stop the process by adding 'TERMINATE' to your response."
+            initial_prompt = render_prompt_template(
+                "eaa_imaging.task_manager.prompts",
+                "feature_tracking.md",
+                {
+                    "INITIAL_X": initial_position[1],
+                    "INITIAL_Y": initial_position[0],
+                    "INITIAL_FOV_X": initial_fov_size[1],
+                    "INITIAL_FOV_Y": initial_fov_size[0],
+                },
             )
         elif any(value is not None for value in [initial_position, initial_fov_size, y_range, x_range]):
             raise ValueError(

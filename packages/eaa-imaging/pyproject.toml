@@ -45,4 +45,5 @@ namespaces = true
     "skills/*/SKILL.md",
     "skills/*/images/*",
     "skills/*/references/*.md",
+    "task_manager/prompts/*.md",
 ]

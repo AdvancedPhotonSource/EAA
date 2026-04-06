@@ -2,6 +2,7 @@ from typing import Optional
 
 from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
+from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.tool.base import BaseTool
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
 from eaa_imaging.task_manager.imaging.feature_tracking import initialize_feature_tracking_task_manager
@@ -109,39 +110,19 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         self.prerun_check()
 
         if initial_prompt is None:
-            initial_prompt = (
-                f"You are given a tool that acquires an image of a sub-region "
-                f"of a sample at given location and with given size (the field "
-                f"of view, or FOV). Each time you call the tool, you will see "
-                f"the image acquired. Use this tool to find a subregion that contains "
-                f"the following feature: {feature_description}. "
-                f"The feature should be centered in the field of view. Each time you "
-                f"see an acquired image, check if it is in the FOV; if not, move the "
-                f"FOV until you find it.\n"
-                f"Here are your detailed instructions:\n"
-                f"- At the beginning, use an FOV size of {fov_size} (height, width). "
-                f"You can change the FOV size during the process to see a larger area, "
-                f"but go back to this size when you find the feature and acquire a "
-                f"final image of it.\n"
-                f"- Start from position (y={y_range[0]}, x={x_range[0]}), and gradually "
-                f"move the FOV to find the feature. Positions should stay in the range of "
-                f"y={y_range[0]} to {y_range[1]} and x={x_range[0]} to {x_range[1]}. \n"
-                f"- Use a regular grid search pattern at the beginning. Use a step size of {step_size[0]} "
-                f"in the y direction and {step_size[1]} in the x direction. When you see the\n"
-                f"feature, you can move the FOV more arbitrarily to make it better centered.\n"
-                f"- When you find the feature, adjust the positions of the FOV to make the "
-                f"feature centered in the FOV. If the feature is off to the left, move "
-                f"the FOV to the left; if the feature is off to the top, move the FOV "
-                f"to the top.\n"
-                f"- Do not acquire images at the same or close location over and over again. "
-                f"If you find yourself calling the tool repeatedly at close locations, "
-                f"stop the process.\n"
-                f"- When you find the feature of interest, report the coordinates of the "
-                f"FOV.\n"
-                f"- Explain every tool call you make."
-                f"- When calling tools, make only one call at a time. Do not make "
-                f"another call before getting the response of a previous one. \n"
-                f"- When you finish the search or need user response, say 'TERMINATE'.\n"
+            initial_prompt = render_prompt_template(
+                "eaa_imaging.task_manager.prompts",
+                "roi_search.md",
+                {
+                    "FEATURE_DESCRIPTION": feature_description,
+                    "FOV_SIZE": fov_size,
+                    "Y_MIN": y_range[0],
+                    "Y_MAX": y_range[1],
+                    "X_MIN": x_range[0],
+                    "X_MAX": x_range[1],
+                    "STEP_SIZE_Y": step_size[0],
+                    "STEP_SIZE_X": step_size[1],
+                },
             )
         elif any(
             value is not None
