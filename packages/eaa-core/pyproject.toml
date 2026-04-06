@@ -52,4 +52,5 @@ namespaces = true
     "gui/webui_static/*",
     "skills/*/SKILL.md",
     "skills/*/references/*.md",
+    "task_manager/prompts/*.md",
 ]

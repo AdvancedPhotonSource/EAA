@@ -20,6 +20,7 @@ from eaa_core.message_proc import (
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
+from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
@@ -205,8 +206,6 @@ class BaseTaskManager:
         during construction.
     """
 
-    assistant_system_message = ""
-
     def __init__(
         self,
         llm_config: LLMConfig = None,
@@ -244,6 +243,8 @@ class BaseTaskManager:
         self.model = None
         self.agent = TaskManagerAgentAdapter(self)
         self.node_factory = NodeFactory(self)
+        if not getattr(self, "assistant_system_message", None):
+            self.assistant_system_message = self.get_default_system_prompt()
         self.chat_graph = None
         self.feedback_loop_graph = None
         self.task_graph = None
@@ -254,6 +255,14 @@ class BaseTaskManager:
             raise ValueError("`use_webui` requires `session_db_path` to be set.")
         if build:
             self.build()
+
+    def get_default_system_prompt(self) -> str:
+        """Return the default system prompt for the task manager."""
+        return render_prompt_template(
+            "eaa_core.task_manager.prompts",
+            "system_base.md",
+            {},
+        )
 
     @property
     def context(self) -> list[dict[str, Any]]:
