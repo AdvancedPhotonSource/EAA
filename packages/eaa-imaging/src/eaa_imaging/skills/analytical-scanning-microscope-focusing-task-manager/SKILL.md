@@ -1,6 +1,6 @@
 ---
 name: analytical-scanning-microscope-focusing-task-manager
-description: Analytical focusing workflow that mixes registration, feature tracking, and Bayesian optimization.
+description: This document describes how to launch an analytical focusing task manager that mixes registration, feature tracking, and Bayesian optimization.
 ---
 
 # Analytical Scanning Microscope Focusing Task Manager

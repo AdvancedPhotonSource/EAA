@@ -1,6 +1,6 @@
 ---
 name: scanning-microscope-focusing-task-manager
-description: LLM-guided focusing workflow that alternates line scans, parameter updates, and imaging.
+description: This document describes how to launch an LLM-guided focusing task manager that alternates line scans, parameter updates, and imaging.
 ---
 
 # Scanning Microscope Focusing Task Manager
