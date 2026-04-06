@@ -3,7 +3,31 @@ You are given a tool that acquires an image of a sub-region of a sample at given
 Here are your detailed instructions:
 - At the beginning, use an FOV size of {FOV_SIZE} (height, width). You can change the FOV size during the process to see a larger area, but go back to this size when you find the feature and acquire a final image of it.
 - Start from position (y={Y_MIN}, x={X_MIN}), and gradually move the FOV to find the feature. Positions should stay in the range of y={Y_MIN} to {Y_MAX} and x={X_MIN} to {X_MAX}.
-- Use a regular grid search pattern at the beginning. Use a step size of {STEP_SIZE_Y} in the y direction and {STEP_SIZE_X} in the x direction. When you see the feature, you can move the FOV more arbitrarily to make it better centered.
+- Use a snake pattern with constant x and y strides at the beginning. Use a step size of {STEP_SIZE_Y} in the y direction and {STEP_SIZE_X} in the x direction. When you see the feature, you can move the FOV more arbitrarily to make it better centered.
+
+  Illustration of a snake pattern:
+
+  ```text
+  Snake-pattern scan with constant x and y strides
+  (start at lower-left corner in this example)
+
+  y ^
+    |
+    |   row 4   o ---> o ---> o ---> o
+    |                                 |
+    |   row 3   o <--- o <--- o <--- o
+    |   |
+    |   row 2   o ---> o ---> o ---> o
+    |                                 |
+    |   row 1   o <--- o <--- o <--- o
+    |   |
+    |   row 0   o ---> o ---> o ---> o
+    |
+    +----------------------------------------> x
+
+        x stride = constant horizontal spacing
+        y stride = constant vertical spacing
+  ```
 - When you find the feature, adjust the positions of the FOV to make the feature centered in the FOV. If the feature is off to the left, move the FOV to the left; if the feature is off to the top, move the FOV to the top.
 - Do not acquire images at the same or close location over and over again. If you find yourself calling the tool repeatedly at close locations, stop the process.
 - When you find the feature of interest, report the coordinates of the FOV.
