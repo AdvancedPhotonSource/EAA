@@ -1,5 +1,4 @@
 import pytest
-import os
 
 
 def pytest_addoption(parser):

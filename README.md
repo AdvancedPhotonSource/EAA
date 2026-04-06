@@ -234,8 +234,6 @@ and loads the selected skill docs on demand. In an interactive chat session
 you can:
 
 - run `/skill` to list the loaded skills
-- run `/subtask <task description>` to let the agent choose a skill, load its
-  docs, and launch a skill-assisted subtask flow
 
 If you want to copy the bundled skills out of the package tree, use:
 

@@ -17,7 +17,7 @@ At load time, EAA:
 - assigns each skill a tool name like ``skill-feature-tracking-task-manager``
 - exposes a catalog tool plus a loader tool for fetching skill docs on demand
 
-This lets the agent pull in focused instructions for a subtask without baking
+This lets the agent pull in focused instructions for a workflow without baking
 every workflow into one prompt or one task-manager class.
 
 Skills folder
@@ -52,7 +52,7 @@ How to use skills in EAA
 
 1. Point the task manager at one or more skill directories with ``skill_dirs``.
 2. Build the task manager normally.
-3. Use the interactive chat commands to inspect or launch skills.
+3. Use the interactive chat commands or tool-calling flows to inspect skills.
 
 Example:
 
@@ -69,22 +69,9 @@ Example:
 Once loaded, the base chat loop supports:
 
 - ``/skill`` to display the discovered skills
-- ``/subtask <task description>`` to let the agent choose a skill, load its
-  docs, and run a skill-assisted subtask flow
 
-What happens during ``/subtask``
---------------------------------
-
-When you launch a subtask, the task manager:
-
-- records the available skill catalog in context
-- exposes the current task-manager metadata to the model
-- runs the feedback-loop graph with instructions to select the right skill
-- lets the model call ``get_skill_catelog`` and ``load_skill`` as needed
-- injects the loaded skill docs back into conversation messages for the subtask
-
-This means skills are currently best understood as documented agent playbooks
-that can be injected on demand.
+Skills are currently best understood as documented agent playbooks that can be
+loaded on demand through the skill library tool.
 
 Installing bundled skills elsewhere
 -----------------------------------

@@ -340,9 +340,6 @@ class NodeFactory:
           ``/monitor <task>``
               Sets ``state.monitor_requested`` and stores the task
               description in ``state.monitor_task_description``.
-          ``/subtask <task>``
-              Sets ``state.subtask_requested`` and stores the task
-              description in ``state.subtask_task_description``.
           ``/skill`` and ``/help``
               Perform side effects only and keep waiting for input.
 
@@ -412,11 +409,6 @@ class NodeFactory:
                     state.await_user_input = False
                     return state.model_dump()
                 continue
-            if command_lower == "/subtask":
-                state.subtask_requested = True
-                state.subtask_task_description = remainder.strip()
-                state.await_user_input = False
-                return state.model_dump()
             if command_lower == "/skill" and remainder == "":
                 self.task_manager.display_available_skills()
                 continue
@@ -446,12 +438,11 @@ class NodeFactory:
         Returns
         -------
         str
-            ``END`` when the input node requested exit, return, monitoring, or
-            subtask handoff; otherwise ``"call_model"``.
+            ``END`` when the input node requested exit, return, or monitoring;
+            otherwise ``"call_model"``.
         """
         if (
             state.monitor_requested
-            or state.subtask_requested
             or state.exit_requested
             or state.return_requested
         ):

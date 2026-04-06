@@ -118,8 +118,6 @@ def build_compatible_checkpoint_state(
             termination_behavior="user",
             monitor_requested=bool(state_data.get("monitor_requested", False)),
             monitor_task_description=str(state_data.get("monitor_task_description", "") or ""),
-            subtask_requested=bool(state_data.get("subtask_requested", False)),
-            subtask_task_description=str(state_data.get("subtask_task_description", "") or ""),
             exit_requested=False,
             return_requested=False,
         )
@@ -299,7 +297,7 @@ class BaseTaskManager:
         self.model = build_chat_model(self.llm_config)
 
     def build_tools(self, *args, **kwargs):
-        """Register local and skill-provided tools."""
+        """Register local tools and built-in helper tools."""
         self.tool_executor.register_tools(self._collect_base_tools())
 
     def build_memory_store(self) -> None:
@@ -657,74 +655,6 @@ class BaseTaskManager:
             return response, outgoing_message
         return response
 
-    def get_manager_metadata_summary(self) -> str:
-        """Return a JSON summary of the task manager configuration."""
-        llm_summary = repr(self.llm_config)
-        llm_import_path = None
-        if self.llm_config is not None:
-            llm_class = self.llm_config.__class__
-            llm_import_path = f"{llm_class.__module__}.{llm_class.__name__}"
-        tool_info = []
-        for tool in self._collect_base_tools():
-            tool_class = tool.__class__
-            tool_info.append(
-                {
-                    "class_name": tool_class.__name__,
-                    "import_path": f"{tool_class.__module__}.{tool_class.__name__}",
-                }
-            )
-        return json.dumps(
-            {
-                "llm_config": llm_summary,
-                "llm_config_import_path": llm_import_path,
-                "tools": tool_info,
-            },
-            indent=2,
-            default=str,
-        )
-
-    def launch_task_manager(self, task_request: str) -> None:
-        """Run a skill-driven subtask using the skill library tool."""
-        skill_catalog = self.skill_tool.skill_catalog if self.skill_tool is not None else []
-        if not skill_catalog:
-            system_message = generate_openai_message(
-                content="No skills are available to run the subtask.",
-                role="system",
-            )
-            self.update_message_history(system_message, update_context=True, update_full_history=True)
-            print_message(system_message)
-            return
-        skill_catalog_json = json.dumps(
-            [
-                {
-                    "name": skill.name,
-                    "tool_name": skill.tool_name,
-                    "description": skill.description,
-                    "path": skill.path,
-                }
-                for skill in skill_catalog
-            ],
-            indent=2,
-        )
-        self.record_system_message(
-            "The user requested to launch a sub-task manager for a specified task. "
-            "Use `get_skill_catelog` if needed, then call `load_skill` for the selected skill, "
-            "create a Python script, and execute it. "
-            "If critical setup information is missing, ask a single clarification question and include NEED HUMAN. "
-            f"Available skills:\n{skill_catalog_json}",
-            update_context=True,
-        )
-        self.record_system_message(
-            "Current task manager metadata (llm config + tools):\n"
-            f"{self.get_manager_metadata_summary()}",
-            update_context=True,
-        )
-        self.run_feedback_loop(
-            initial_prompt=task_request.strip() or "(no additional description provided)",
-            termination_behavior="return",
-            allow_multiple_tool_calls=True,
-        )
-
     def display_command_help(self) -> str:
         """Display the available interactive commands."""
         text = (
@@ -732,7 +662,6 @@ class BaseTaskManager:
             "* `/exit`: exit the current loop\n"
             "* `/chat`: enter chat mode\n"
             "* `/monitor <task description>`: enter monitoring mode\n"
-            "* `/subtask <task description>`: run a skill-assisted subtask\n"
             "* `/skill`: display skills available to the agent\n"
             "* `/return`: return to upper level task\n"
         )
@@ -1158,8 +1087,6 @@ class BaseTaskManager:
         self.state = ChatGraphState.model_validate(final_state)
         if self.state.monitor_requested:
             self.enter_monitoring_mode(self.state.monitor_task_description)
-        elif self.state.subtask_requested:
-            self.launch_task_manager(self.state.subtask_task_description)
 
     def run_conversation_from_checkpoint(
         self,
@@ -1221,8 +1148,6 @@ class BaseTaskManager:
         self.state = ChatGraphState.model_validate(final_state)
         if self.state.monitor_requested:
             self.enter_monitoring_mode(self.state.monitor_task_description)
-        elif self.state.subtask_requested:
-            self.launch_task_manager(self.state.subtask_task_description)
 
     def run_feedback_loop(
         self,

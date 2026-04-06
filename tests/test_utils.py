@@ -2,7 +2,6 @@ import random
 import os
 import datetime
 import logging
-from typing import Union
 
 import numpy as np
 import pytest

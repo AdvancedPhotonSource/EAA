@@ -89,8 +89,6 @@ class ChatGraphState(TaskManagerState):
     bootstrap_message: Optional[Any] = None
     monitor_requested: bool = False
     monitor_task_description: str = ""
-    subtask_requested: bool = False
-    subtask_task_description: str = ""
     exit_requested: bool = False
     return_requested: bool = False
 

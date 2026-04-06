@@ -226,29 +226,6 @@ def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch)
     assert captured["state"].messages == []
     assert captured["state"].full_history == []
 
-
-def test_run_conversation_subtask_command_hands_off_to_task_manager(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
-    task_manager.chat_graph = task_manager.build_chat_graph()
-
-    captured: dict[str, Any] = {}
-
-    def fake_launch_task_manager(task_request: str):
-        captured["task_request"] = task_request
-        captured["state"] = task_manager.state
-
-    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/subtask align the scan")
-    monkeypatch.setattr(task_manager, "launch_task_manager", fake_launch_task_manager)
-
-    task_manager.run_conversation(termination_behavior="user")
-
-    assert captured["task_request"] == "align the scan"
-    assert isinstance(captured["state"], ChatGraphState)
-    assert captured["state"].subtask_requested is True
-    assert captured["state"].messages == []
-    assert captured["state"].full_history == []
-
-
 def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     checkpoint_base = tmp_path / "session.sqlite"
 
