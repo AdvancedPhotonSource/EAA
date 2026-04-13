@@ -698,26 +698,49 @@ class NodeFactory:
         state. Chat states always use the default image follow-up wording and
         may optionally omit image messages from the active context when
         ``state.store_all_images_in_context`` is ``False``.
+
+        Exceptions raised while materializing follow-up messages, such as
+        failures to read an ``img_path`` returned by a tool, are converted into
+        a plain user message and appended to the transcript so the workflow can
+        continue and the model can react to the failure.
         """
-        if isinstance(state, FeedbackLoopState):
+        try:
+            if isinstance(state, FeedbackLoopState):
+                followup_messages = self.build_tool_followup_messages(
+                    state,
+                    message_with_yielded_image=state.message_with_yielded_image,
+                    allow_non_image_tool_responses=state.allow_non_image_tool_responses,
+                )
+                self.apply_followup_messages_for_state(state, followup_messages)
+                return state.model_dump()
             followup_messages = self.build_tool_followup_messages(
                 state,
-                message_with_yielded_image=state.message_with_yielded_image,
-                allow_non_image_tool_responses=state.allow_non_image_tool_responses,
+                message_with_yielded_image="Here is the image the tool returned.",
+                allow_non_image_tool_responses=True,
             )
-            self.apply_followup_messages_for_state(state, followup_messages)
+            self.apply_followup_messages_for_state(
+                state,
+                followup_messages,
+                store_all_images_in_context=state.store_all_images_in_context,
+            )
             return state.model_dump()
-        followup_messages = self.build_tool_followup_messages(
-            state,
-            message_with_yielded_image="Here is the image the tool returned.",
-            allow_non_image_tool_responses=True,
-        )
-        self.apply_followup_messages_for_state(
-            state,
-            followup_messages,
-            store_all_images_in_context=state.store_all_images_in_context,
-        )
-        return state.model_dump()
+        except Exception as exc:
+            error_message = generate_openai_message(
+                content=(
+                    "An error occurred while processing the tool follow-up output: "
+                    f"{exc}. The tool may have returned an invalid image path or payload."
+                ),
+                role="user",
+            )
+            if not self.task_manager.use_webui:
+                print_message(error_message)
+            self.update_message_history_for_state(
+                state,
+                error_message,
+                update_context=True,
+                update_full_history=True,
+            )
+            return state.model_dump()
 
     def route_after_tool_execution(self, state: TaskManagerState) -> str:
         """Route execution after tools have completed.

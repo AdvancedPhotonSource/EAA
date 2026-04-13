@@ -661,6 +661,38 @@ def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
     assert captured["store_all_images_in_context"] is True
 
 
+def test_image_followup_converts_followup_exceptions_into_messages(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+
+    def fake_build_tool_followup_messages(*args, **kwargs):
+        raise FileNotFoundError("missing.png")
+
+    monkeypatch.setattr(
+        task_manager.node_factory,
+        "build_tool_followup_messages",
+        fake_build_tool_followup_messages,
+    )
+
+    state = TaskManagerState(
+        messages=[
+            {"role": "assistant", "content": "call tool", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": '{"img_path": "missing.png"}', "tool_call_id": "1"},
+        ],
+        full_history=[
+            {"role": "assistant", "content": "call tool", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": '{"img_path": "missing.png"}', "tool_call_id": "1"},
+        ],
+    )
+
+    result = task_manager.node_factory.image_followup(state)
+
+    assert result == state.model_dump()
+    assert state.messages[-1]["role"] == "user"
+    assert "processing the tool follow-up output" in state.messages[-1]["content"]
+    assert "missing.png" in state.messages[-1]["content"]
+    assert state.full_history[-1] == state.messages[-1]
+
+
 def test_memory_llm_config_overrides_embedding_client_connection(monkeypatch):
     captured = {}
 
