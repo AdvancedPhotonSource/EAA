@@ -35,7 +35,7 @@ class SkillLibraryTool(BaseTool):
         self.skill_catalog = load_skills(self.skill_dirs)
         return list(self.skill_catalog)
 
-    @tool(name="get_skill_catelog")
+    @tool(name="get_skill_catalog")
     def get_skill_catalog(self) -> List[Dict[str, str]]:
         """Return the available skill catalog."""
         return [
