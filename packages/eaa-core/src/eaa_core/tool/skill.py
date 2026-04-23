@@ -42,7 +42,6 @@ class SkillLibraryTool(BaseTool):
             {
                 "name": skill.name,
                 "description": skill.description,
-                "tool_name": skill.tool_name,
                 "path": skill.path,
             }
             for skill in self.skill_catalog
@@ -50,7 +49,7 @@ class SkillLibraryTool(BaseTool):
 
     @tool(name="load_skill")
     def load_skill(self, skill_name: str) -> Dict[str, Any]:
-        """Load a skill by name, tool name, or path and return built messages."""
+        """Load a skill by name or path and return built messages."""
         metadata = resolve_skill_metadata(self.skill_catalog, skill_name)
         if metadata is None:
             raise ValueError(f"Unknown skill requested: {skill_name}")
@@ -65,7 +64,6 @@ class SkillLibraryTool(BaseTool):
         return {
             "name": metadata.name,
             "description": metadata.description,
-            "tool_name": metadata.tool_name,
             "path": metadata.path,
             "files": files,
             "messages": messages,

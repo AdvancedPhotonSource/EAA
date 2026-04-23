@@ -690,7 +690,7 @@ class BaseTaskManager:
             text = "\n".join(
                 ["Skills available to the agent:"]
                 + [
-                    f"{index}. {skill.name} ({skill.tool_name}) - {skill.description} [{skill.path}]"
+                    f"{index}. {skill.name} - {skill.description} [{skill.path}]"
                     for index, skill in enumerate(skill_catalog, start=1)
                 ]
             )

@@ -14,7 +14,6 @@ At load time, EAA:
 - makes the skill library tool available to the agent
 - scans the configured skill directories for ``SKILL.md``
 - extracts basic metadata such as the skill name and description
-- assigns each skill a tool name like ``skill-feature-tracking-task-manager``
 - exposes a catalog tool plus a loader tool for fetching skill docs on demand
 
 This lets the agent pull in focused instructions for a workflow without baking
@@ -43,7 +42,6 @@ The current loader behavior is:
 - otherwise, EAA recursively searches below that directory for ``SKILL.md``
 - markdown files are collected and returned to the agent as documentation
 - image references inside markdown are resolved relative to the markdown file
-- duplicate tool names are automatically disambiguated
 
 Only markdown files are collected as skill docs by the built-in loader.
 

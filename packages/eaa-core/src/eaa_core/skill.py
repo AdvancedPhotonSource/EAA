@@ -19,14 +19,12 @@ class SkillMetadata:
 
     name: str
     description: str
-    tool_name: str
     path: str
 
 
 def load_skills(skill_dirs: Sequence[str]) -> List[SkillMetadata]:
     """Discover skills under the configured directories."""
     skills: List[SkillMetadata] = []
-    seen_tool_names: set[str] = set()
     for base_dir in skill_dirs:
         base_path = Path(base_dir)
         if not base_path.exists():
@@ -40,14 +38,6 @@ def load_skills(skill_dirs: Sequence[str]) -> List[SkillMetadata]:
             metadata = parse_skill_metadata(skill_path)
             if metadata is None:
                 continue
-            tool_name = ensure_unique_tool_name(metadata.tool_name, seen_tool_names)
-            if tool_name != metadata.tool_name:
-                metadata = SkillMetadata(
-                    name=metadata.name,
-                    description=metadata.description,
-                    tool_name=tool_name,
-                    path=metadata.path,
-                )
             skills.append(metadata)
     return skills
 
@@ -75,7 +65,6 @@ def parse_skill_metadata(skill_dir: Path) -> SkillMetadata | None:
     return SkillMetadata(
         name=name,
         description=description,
-        tool_name=make_tool_name(name),
         path=str(skill_dir),
     )
 
@@ -141,43 +130,21 @@ def extract_first_paragraph(lines: List[str], start_index: int) -> str:
     return " ".join(paragraph)
 
 
-def make_tool_name(name: str) -> str:
-    """Convert a skill name to a tool-safe slug."""
-    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip().lower())
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return f"skill-{slug or 'skill'}"
-
-
-def ensure_unique_tool_name(tool_name: str, seen: set[str]) -> str:
-    """Ensure that discovered skill tool names are unique."""
-    if tool_name not in seen:
-        seen.add(tool_name)
-        return tool_name
-    index = 2
-    while True:
-        candidate = f"{tool_name}-{index}"
-        if candidate not in seen:
-            seen.add(candidate)
-            return candidate
-        index += 1
-
-
 def resolve_skill_metadata(
     skill_catalog: Sequence[SkillMetadata],
     skill_name: str,
 ) -> SkillMetadata | None:
-    """Resolve a skill by name, tool name, or filesystem path."""
+    """Resolve a skill by name or filesystem path."""
     normalized = skill_name.strip()
     if len(normalized) == 0:
         return None
     for skill in skill_catalog:
-        if normalized in {skill.name, skill.tool_name, skill.path}:
+        if normalized in {skill.name, skill.path}:
             return skill
     normalized_lower = normalized.lower()
     for skill in skill_catalog:
         if normalized_lower in {
             skill.name.lower(),
-            skill.tool_name.lower(),
             skill.path.lower(),
         }:
             return skill

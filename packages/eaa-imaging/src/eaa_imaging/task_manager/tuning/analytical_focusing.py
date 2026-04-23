@@ -672,14 +672,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             use_coding_tools=False,
             build=True,
         )
-        skill_tool_name = "skill-check-line-scan"
         if checker_task_manager.skill_tool is None:
             raise RuntimeError("Skill tool is unavailable on the checker task manager.")
         checker_task_manager.skill_tool.skill_catalog = [
             SkillMetadata(
                 name="check-line-scan",
                 description="Instructions for checking a line scan.",
-                tool_name=skill_tool_name,
                 path=str(skill_path.parent),
             )
         ]

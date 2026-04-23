@@ -299,14 +299,12 @@ class ImageRegistration(BaseTool):
             use_coding_tools=False,
             build=True,
         )
-        skill_tool_name = "skill-image-registration"
         if registration_task.skill_tool is None:
             raise RuntimeError("Skill tool is unavailable on the registration task manager.")
         registration_task.skill_tool.skill_catalog = [
             SkillMetadata(
                 name="image-registration",
                 description="Instructions for image registration.",
-                tool_name=skill_tool_name,
                 path=str(skill_path.parent),
             )
         ]
