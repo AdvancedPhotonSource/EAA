@@ -17,6 +17,7 @@ from eaa_core.message_proc import (
     get_message_elements_as_text,
     print_message,
 )
+from eaa_core.skill import load_skills
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
@@ -261,8 +262,22 @@ class BaseTaskManager:
         return render_prompt_template(
             "eaa_core.task_manager.prompts",
             "system_base.md",
-            {},
+            {
+                "available_skills_text": self.format_available_skills_for_prompt(),
+            },
         )
+
+    def format_available_skills_for_prompt(self) -> str:
+        """Return the available-skill summary injected into the system prompt."""
+        skill_catalog = load_skills(self.skill_dirs)
+        if not skill_catalog:
+            return "No skills are currently available."
+        lines = ["Available skills:"]
+        lines.extend(
+            f"- {skill.name}: {skill.description}"
+            for skill in skill_catalog
+        )
+        return "\n".join(lines)
 
     @property
     def context(self) -> list[dict[str, Any]]:
