@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Sequence
+from typing import Any, Dict, Literal, Optional, Sequence, TypeVar
 import json
 import logging
 import sqlite3
@@ -36,6 +36,7 @@ from eaa_core.tool.skill import SkillLibraryTool
 logger = logging.getLogger(__name__)
 
 GraphName = Literal["chat_graph", "feedback_loop_graph", "task_graph"]
+StateT = TypeVar("StateT", bound=TaskManagerState)
 
 
 def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
@@ -291,6 +292,7 @@ class BaseTaskManager:
         graph_name: Optional[GraphName] = None,
     ) -> None:
         """Set the active state and update the matching state holder.
+        Also update common state with the state.
 
         Parameters
         ----------
@@ -345,7 +347,7 @@ class BaseTaskManager:
             "store_all_images_in_context": self.common_state.store_all_images_in_context,
         }
 
-    def sync_state_from_common(self, state: TaskManagerState) -> TaskManagerState:
+    def sync_state_from_common(self, state: StateT) -> StateT:
         """Return ``state`` with common fields copied from ``common_state``."""
         return state.model_copy(update=self.common_state_payload())
 
