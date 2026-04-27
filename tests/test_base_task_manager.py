@@ -27,6 +27,126 @@ class CheckpointableTaskManager(BaseTaskManager):
         return graph_builder.compile(checkpointer=checkpointer)
 
 
+class FeedbackStateTaskManager(BaseTaskManager):
+    """Test helper with a task graph backed by feedback-loop state."""
+
+    def build_task_graph(self, checkpointer: Any = None) -> Any:
+        """Build a task graph that preserves feedback-specific fields."""
+        graph_builder = StateGraph(FeedbackLoopState)
+
+        def mark_chat_requested(state: FeedbackLoopState) -> dict[str, bool]:
+            """Mark the feedback-style task graph as ready for chat handoff."""
+            return {"chat_requested": True}
+
+        graph_builder.add_node("mark_chat_requested", mark_chat_requested)
+        graph_builder.add_edge(START, "mark_chat_requested")
+        return graph_builder.compile(checkpointer=checkpointer)
+
+
+class TaskChatRequestState(TaskManagerState):
+    """Task graph state that can request a chat handoff."""
+
+    chat_requested: bool = False
+
+
+class TaskChatRequestTaskManager(BaseTaskManager):
+    """Test helper with a task-specific chat handoff state."""
+
+    def build_task_graph(self, checkpointer: Any = None) -> Any:
+        """Build a task graph that requests chat handoff."""
+        graph_builder = StateGraph(TaskChatRequestState)
+
+        def mark_chat_requested(state: TaskChatRequestState) -> dict[str, bool]:
+            """Mark the task graph state as ready for chat handoff."""
+            return {"chat_requested": True}
+
+        graph_builder.add_node("mark_chat_requested", mark_chat_requested)
+        graph_builder.add_edge(START, "mark_chat_requested")
+        return graph_builder.compile(checkpointer=checkpointer)
+
+
+def test_common_state_owns_context_and_tracks_active_state():
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    message = {"role": "user", "content": "hello"}
+
+    task_manager.update_message_history(message)
+
+    assert task_manager.context == [message]
+    assert task_manager.full_history == [message]
+    assert task_manager.common_state.messages == [message]
+    assert task_manager.active_state.messages == [message]
+    assert task_manager.active_state.messages is not task_manager.common_state.messages
+
+    chat_state = ChatGraphState(messages=[{"role": "assistant", "content": "hi"}])
+    task_manager.set_active_state(chat_state, "chat_graph")
+
+    assert task_manager.active_state is task_manager.chat_state
+    assert task_manager.common_state.messages == [{"role": "assistant", "content": "hi"}]
+    assert task_manager.active_state.messages is not task_manager.common_state.messages
+
+
+def test_task_graph_can_own_feedback_loop_state(monkeypatch):
+    task_manager = FeedbackStateTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    task_manager.task_graph = task_manager.build_task_graph()
+    task_manager.set_active_state(
+        FeedbackLoopState(initial_prompt="task prompt", termination_behavior="return"),
+        "task_graph",
+    )
+
+    captured = {"count": 0}
+
+    def fake_handoff_to_chat(*args, **kwargs):
+        captured["count"] += 1
+
+    monkeypatch.setattr(task_manager, "handoff_to_chat", fake_handoff_to_chat)
+
+    task_manager.run()
+
+    assert isinstance(task_manager.task_state, FeedbackLoopState)
+    assert task_manager.task_state.chat_requested is True
+    assert task_manager.active_state is task_manager.task_state
+    assert captured["count"] == 1
+
+
+def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
+    task_manager = TaskChatRequestTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+    )
+    task_manager.task_graph = task_manager.build_task_graph()
+    task_manager.set_active_state(
+        TaskChatRequestState(
+            messages=[{"role": "user", "content": "task context"}],
+            full_history=[{"role": "user", "content": "task context"}],
+            round_index=3,
+        ),
+        "task_graph",
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_conversation(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        captured["active_state"] = task_manager.active_state
+
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
+
+    task_manager.run()
+
+    assert isinstance(captured["active_state"], ChatGraphState)
+    assert captured["active_state"].messages == [{"role": "user", "content": "task context"}]
+    assert captured["active_state"].round_index == 3
+    assert captured["kwargs"] == {
+        "store_all_images_in_context": True,
+        "termination_behavior": "user",
+    }
+
+
 def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch):
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
@@ -180,9 +300,9 @@ def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
     def fake_run_conversation(*args, **kwargs):
         captured["count"] += 1
         captured["kwargs"] = kwargs
-        captured["state"] = task_manager.state
-        captured["messages"] = list(task_manager.state.messages)
-        captured["full_history"] = list(task_manager.state.full_history)
+        captured["state"] = task_manager.active_state
+        captured["messages"] = list(task_manager.active_state.messages)
+        captured["full_history"] = list(task_manager.active_state.full_history)
 
     monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/chat")
@@ -213,7 +333,7 @@ def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch)
 
     def fake_enter_monitoring_mode(task_description: str):
         captured["task_description"] = task_description
-        captured["state"] = task_manager.state
+        captured["state"] = task_manager.active_state
 
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/monitor check beam drift")
     monkeypatch.setattr(task_manager, "enter_monitoring_mode", fake_enter_monitoring_mode)
@@ -488,7 +608,10 @@ def test_run_task_graph_can_resume_from_override_checkpoint_path(tmp_path):
 
     initial_state = TaskManagerState(messages=[{"role": "user", "content": "start"}])
     final_state = checkpointed_graph.invoke(initial_state, config=checkpoint_config)
-    first_manager.state = TaskManagerState.model_validate(final_state)
+    first_manager.set_active_state(
+        TaskManagerState.model_validate(final_state),
+        "task_graph",
+    )
 
     resumed_manager = CheckpointableTaskManager(
         build=False,
@@ -497,7 +620,7 @@ def test_run_task_graph_can_resume_from_override_checkpoint_path(tmp_path):
     )
     resumed_manager.run_from_checkpoint(checkpoint_db_path=str(checkpoint_base))
 
-    assert resumed_manager.state.await_user_input is True
+    assert resumed_manager.active_state.await_user_input is True
     assert checkpoint_base.exists()
 
 
@@ -530,13 +653,16 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
         bootstrap_message="hello",
         await_user_input=False,
     )
-    task_manager.state = initial_state
+    task_manager.set_active_state(initial_state, "chat_graph")
     final_state = checkpointed_graph.invoke(
         initial_state,
         config=checkpoint_config,
         context=task_manager.memory_manager.get_runtime_context(),
     )
-    task_manager.state = ChatGraphState.model_validate(final_state)
+    task_manager.set_active_state(
+        ChatGraphState.model_validate(final_state),
+        "chat_graph",
+    )
 
     assert checkpoint_config["configurable"]["thread_id"] == "chat_graph"
     assert shared_db.exists()

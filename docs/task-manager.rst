@@ -100,7 +100,7 @@ it and implement ``run()`` or ``run_from_checkpoint()`` around it.
                self.task_graph = graph
                graph_kwargs["config"] = checkpoint_config
            final_state = graph.invoke(initial_state, **graph_kwargs)
-           self.state = CustomState.model_validate(final_state)
+           self.set_active_state(CustomState.model_validate(final_state), "task_graph")
 
 Status note:
    The repository currently does not ship built-in task-manager subclasses that

@@ -35,6 +35,8 @@ from eaa_core.tool.skill import SkillLibraryTool
 
 logger = logging.getLogger(__name__)
 
+GraphName = Literal["chat_graph", "feedback_loop_graph", "task_graph"]
+
 
 def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
     """Return the LangGraph config used for a checkpoint file."""
@@ -46,7 +48,7 @@ def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
 
 
 def get_checkpoint_state_model(
-    graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+    graph_name: GraphName,
 ) -> type[TaskManagerState]:
     """Return the state model for a checkpointed graph."""
     if graph_name == "chat_graph":
@@ -73,7 +75,7 @@ def load_latest_checkpoint_state_from_connection(
 
 
 def build_compatible_checkpoint_state(
-    graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+    graph_name: GraphName,
     incoming_state: TaskManagerState | dict[str, Any],
 ) -> Optional[TaskManagerState]:
     """Translate a checkpoint state into the target graph's compatible state.
@@ -223,7 +225,11 @@ class BaseTaskManager:
         **kwargs,
     ):
         """Initialize the task manager."""
-        self.state = TaskManagerState()
+        self.common_state = TaskManagerState()
+        self.chat_state = ChatGraphState()
+        self.feedback_state = FeedbackLoopState()
+        self.task_state = TaskManagerState()
+        self.active_state: TaskManagerState = self.task_state
         self.llm_config = llm_config
         if isinstance(memory_config, dict):
             memory_config = MemoryManagerConfig.from_dict(memory_config)
@@ -279,25 +285,91 @@ class BaseTaskManager:
         )
         return "\n".join(lines)
 
+    def set_active_state(
+        self,
+        state: TaskManagerState,
+        graph_name: Optional[GraphName] = None,
+    ) -> None:
+        """Set the active state and update the matching state holder.
+
+        Parameters
+        ----------
+        state : TaskManagerState
+            State instance to make active.
+        graph_name : Optional[GraphName], optional
+            Graph slot that owns the state. When omitted, the slot is inferred
+            from the concrete state model for backwards compatibility.
+        """
+        if not isinstance(state, TaskManagerState):
+            state = TaskManagerState.model_validate(state)
+        if graph_name is None:
+            graph_name = self.infer_graph_name_for_state(state)
+        if graph_name == "chat_graph":
+            self.chat_state = ChatGraphState.model_validate(state.model_dump())
+            self.active_state = self.chat_state
+        elif graph_name == "feedback_loop_graph":
+            self.feedback_state = FeedbackLoopState.model_validate(state.model_dump())
+            self.active_state = self.feedback_state
+        elif graph_name == "task_graph":
+            self.task_state = state
+            self.active_state = self.task_state
+        else:
+            raise ValueError(f"Unsupported active graph name: {graph_name}.")
+        self.sync_common_state_from_state(self.active_state)
+
+    def infer_graph_name_for_state(self, state: TaskManagerState) -> GraphName:
+        """Infer a graph slot from a state model."""
+        if isinstance(state, ChatGraphState):
+            return "chat_graph"
+        if isinstance(state, FeedbackLoopState):
+            return "feedback_loop_graph"
+        return "task_graph"
+
+    def sync_common_state_from_state(self, state: TaskManagerState) -> None:
+        """Copy common fields from a graph state into ``common_state``."""
+        self.common_state = TaskManagerState(
+            messages=list(state.messages),
+            full_history=list(state.full_history),
+            await_user_input=state.await_user_input,
+            round_index=state.round_index,
+            store_all_images_in_context=state.store_all_images_in_context,
+        )
+
+    def common_state_payload(self) -> dict[str, Any]:
+        """Return common fields copied into graph-specific state models."""
+        return {
+            "messages": list(self.common_state.messages),
+            "full_history": list(self.common_state.full_history),
+            "await_user_input": self.common_state.await_user_input,
+            "round_index": self.common_state.round_index,
+            "store_all_images_in_context": self.common_state.store_all_images_in_context,
+        }
+
+    def sync_state_from_common(self, state: TaskManagerState) -> TaskManagerState:
+        """Return ``state`` with common fields copied from ``common_state``."""
+        return state.model_copy(update=self.common_state_payload())
+
     @property
     def context(self) -> list[dict[str, Any]]:
-        """Return the active conversation context."""
-        return self.state.messages
+        """Return the canonical active conversation context."""
+        return self.common_state.messages
 
     @context.setter
     def context(self, value: list[dict[str, Any]]) -> None:
-        """Replace the active conversation context."""
-        self.state.messages = value
+        """Replace the canonical active conversation context."""
+        self.common_state.messages = list(value)
+        self.active_state.messages = list(value)
 
     @property
     def full_history(self) -> list[dict[str, Any]]:
-        """Return the full transcript."""
-        return self.state.full_history
+        """Return the canonical full transcript."""
+        return self.common_state.full_history
 
     @full_history.setter
     def full_history(self, value: list[dict[str, Any]]) -> None:
-        """Replace the full transcript."""
-        self.state.full_history = value
+        """Replace the canonical full transcript."""
+        self.common_state.full_history = list(value)
+        self.active_state.full_history = list(value)
 
     def build(self, *args, **kwargs):
         """Build persistence, model, tools, and graphs."""
@@ -336,7 +408,7 @@ class BaseTaskManager:
         self,
         store_all_images_in_context: bool = True,
     ) -> None:
-        """Exit a feedback workflow into chat mode.
+        """Exit the active workflow into chat mode.
 
         Parameters
         ----------
@@ -344,17 +416,18 @@ class BaseTaskManager:
             Whether image follow-up messages should remain in active chat
             context after the handoff.
         """
-        feedback_state = self.state
-        if not isinstance(feedback_state, FeedbackLoopState):
-            raise TypeError("Chat handoff requires `self.state` to be a `FeedbackLoopState`.")
-        self.state = ChatGraphState(
-            messages=list(feedback_state.messages),
-            full_history=list(feedback_state.full_history),
-            round_index=feedback_state.round_index,
-            termination_behavior="user",
-            store_all_images_in_context=store_all_images_in_context,
-            bootstrap_message=None,
-            await_user_input=True,
+        source_state = self.active_state
+        self.set_active_state(
+            ChatGraphState(
+                messages=list(source_state.messages),
+                full_history=list(source_state.full_history),
+                round_index=source_state.round_index,
+                termination_behavior="user",
+                store_all_images_in_context=store_all_images_in_context,
+                bootstrap_message=None,
+                await_user_input=True,
+            ),
+            "chat_graph",
         )
         self.run_conversation(
             store_all_images_in_context=store_all_images_in_context,
@@ -550,9 +623,11 @@ class BaseTaskManager:
             Whether to append the message to the explicit WebUI display table.
         """
         if update_context:
-            self.context.append(message)
+            self.common_state.messages.append(message)
+            self.active_state.messages.append(message)
         if update_full_history:
-            self.full_history.append(message)
+            self.common_state.full_history.append(message)
+            self.active_state.full_history.append(message)
         if write_to_webui and self.session_db_path is not None:
             self.persistence.append_message(message)
 
@@ -796,7 +871,7 @@ class BaseTaskManager:
         for index in range(len(expanded_expected) - len(actual_sequence) + 1):
             if expanded_expected[index : index + len(actual_sequence)] == actual_sequence:
                 return
-        self.context.append(
+        self.update_message_history(
             generate_openai_message(
                 content=(
                     f"The tool call sequence {actual_sequence} is not as expected. "
@@ -804,7 +879,9 @@ class BaseTaskManager:
                     "If this is intended to address an exception, ignore this message."
                 ),
                 role="user",
-            )
+            ),
+            update_context=True,
+            update_full_history=False,
         )
 
     def prerun_check(self, *args, **kwargs) -> bool:
@@ -830,7 +907,8 @@ class BaseTaskManager:
             graph_kwargs["config"] = checkpoint_config
         if graph is None:
             raise ValueError("The task manager does not define a runnable task graph.")
-        initial_state = self.state
+        initial_state = self.sync_state_from_common(self.task_state)
+        self.set_active_state(initial_state, "task_graph")
         try:
             final_state = graph.invoke(initial_state, **graph_kwargs)
         except KeyboardInterrupt:
@@ -860,8 +938,8 @@ class BaseTaskManager:
         state_model = type(initial_state)
         if not issubclass(state_model, TaskManagerState):
             state_model = TaskManagerState
-        self.state = state_model.model_validate(final_state)
-        if isinstance(self.state, FeedbackLoopState) and self.state.chat_requested:
+        self.set_active_state(state_model.model_validate(final_state), "task_graph")
+        if bool(getattr(self.task_state, "chat_requested", False)):
             self.handoff_to_chat()
 
     def run_from_checkpoint(self, checkpoint_db_path: Optional[str] = None) -> None:
@@ -893,7 +971,7 @@ class BaseTaskManager:
                 f"No task-graph checkpoint found in shared checkpoint DB "
                 f"{resolved_checkpoint_path}."
             )
-        self.state = loaded_state
+        self.set_active_state(loaded_state, "task_graph")
         self.task_graph = graph
         if graph is None or checkpoint_config is None:
             raise ValueError("The task manager does not define a checkpointable task graph.")
@@ -902,8 +980,8 @@ class BaseTaskManager:
         state_model = type(loaded_state)
         if not issubclass(state_model, TaskManagerState):
             state_model = TaskManagerState
-        self.state = state_model.model_validate(final_state)
-        if isinstance(self.state, FeedbackLoopState) and self.state.chat_requested:
+        self.set_active_state(state_model.model_validate(final_state), "task_graph")
+        if bool(getattr(self.task_state, "chat_requested", False)):
             self.handoff_to_chat()
 
     def _message_contains_image(self, message: dict[str, Any]) -> bool:
@@ -1062,15 +1140,15 @@ class BaseTaskManager:
         None
         """
         initial_state = ChatGraphState(
-            messages=list(self.context),
-            full_history=list(self.full_history),
-            round_index=self.state.round_index,
+            messages=list(self.common_state.messages),
+            full_history=list(self.common_state.full_history),
+            round_index=self.common_state.round_index,
             termination_behavior=termination_behavior or "user",
             store_all_images_in_context=store_all_images_in_context,
             bootstrap_message=message,
             await_user_input=message is None,
         )
-        self.state = initial_state
+        self.set_active_state(initial_state, "chat_graph")
         graph = self.chat_graph
         graph_kwargs: dict[str, Any] = {
             "context": self.memory_manager.get_runtime_context(),
@@ -1108,9 +1186,9 @@ class BaseTaskManager:
                     termination_behavior=termination_behavior,
                 )
             return
-        self.state = ChatGraphState.model_validate(final_state)
-        if self.state.monitor_requested:
-            self.enter_monitoring_mode(self.state.monitor_task_description)
+        self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
+        if self.chat_state.monitor_requested:
+            self.enter_monitoring_mode(self.chat_state.monitor_task_description)
 
     def run_conversation_from_checkpoint(
         self,
@@ -1159,7 +1237,7 @@ class BaseTaskManager:
             resumed_state.return_requested = False
             resumed_state.bootstrap_message = None
             resumed_state.await_user_input = True
-        self.state = resumed_state
+        self.set_active_state(resumed_state, "chat_graph")
         self.chat_graph = graph
         graph_input: Optional[ChatGraphState] = None
         if restart_from_state:
@@ -1169,9 +1247,9 @@ class BaseTaskManager:
             config=checkpoint_config,
             context=self.memory_manager.get_runtime_context(),
         )
-        self.state = ChatGraphState.model_validate(final_state)
-        if self.state.monitor_requested:
-            self.enter_monitoring_mode(self.state.monitor_task_description)
+        self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
+        if self.chat_state.monitor_requested:
+            self.enter_monitoring_mode(self.chat_state.monitor_task_description)
 
     def run_feedback_loop(
         self,
@@ -1228,8 +1306,8 @@ class BaseTaskManager:
         if termination_behavior not in ["ask", "return"]:
             raise ValueError("`termination_behavior` must be either 'ask' or 'return'.")
         initial_state = FeedbackLoopState(
-            messages=list(self.context),
-            full_history=list(self.full_history),
+            messages=list(self.common_state.messages),
+            full_history=list(self.common_state.full_history),
             round_index=0,
             await_user_input=False,
             initial_prompt=initial_prompt,
@@ -1245,7 +1323,7 @@ class BaseTaskManager:
             termination_behavior=termination_behavior,
             max_arounds_reached_behavior=max_arounds_reached_behavior,
         )
-        self.state = initial_state
+        self.set_active_state(initial_state, "feedback_loop_graph")
         graph = self.feedback_loop_graph
         graph_kwargs: dict[str, Any] = {}
         if self.session_db_path is not None:
@@ -1278,8 +1356,11 @@ class BaseTaskManager:
                     termination_behavior="user",
                 )
             return
-        self.state = FeedbackLoopState.model_validate(final_state)
-        if self.state.chat_requested:
+        self.set_active_state(
+            FeedbackLoopState.model_validate(final_state),
+            "feedback_loop_graph",
+        )
+        if self.feedback_state.chat_requested:
             self.handoff_to_chat()
 
     def run_feedback_loop_from_checkpoint(
@@ -1328,7 +1409,7 @@ class BaseTaskManager:
             resumed_state.exit_requested = False
             resumed_state.return_requested = False
             resumed_state.await_user_input = True
-        self.state = resumed_state
+        self.set_active_state(resumed_state, "feedback_loop_graph")
         self.feedback_loop_graph = graph
         if restart_from_human_gate:
             checkpoint_config = graph.update_state(
@@ -1337,6 +1418,9 @@ class BaseTaskManager:
                 as_node="handle_human_gate",
             )
         final_state = graph.invoke(None, config=checkpoint_config)
-        self.state = FeedbackLoopState.model_validate(final_state)
-        if self.state.chat_requested:
+        self.set_active_state(
+            FeedbackLoopState.model_validate(final_state),
+            "feedback_loop_graph",
+        )
+        if self.feedback_state.chat_requested:
             self.handoff_to_chat()

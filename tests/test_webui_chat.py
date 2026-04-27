@@ -68,7 +68,10 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
         config=checkpoint_config,
         context=task_manager.memory_manager.get_runtime_context(),
     )
-    task_manager.state = ChatGraphState.model_validate(final_state)
+    task_manager.set_active_state(
+        ChatGraphState.model_validate(final_state),
+        "chat_graph",
+    )
 
     set_message_db_path(str(shared_db))
     messages = _query_messages()

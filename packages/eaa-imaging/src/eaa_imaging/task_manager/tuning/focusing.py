@@ -721,27 +721,33 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         )
         self.active_reference_image_path = reference_image_path
         
-        self.state = FeedbackLoopState(
-            messages=list(self.context),
-            full_history=list(self.full_history),
-            round_index=0,
-            await_user_input=False,
-            initial_prompt=initial_prompt,
-            initial_image_path=reference_image_path,
-            message_with_yielded_image="Here is the image the tool returned.",
-            max_rounds=max_iters,
-            n_first_images_to_keep_in_context=1,
-            n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
-            allow_non_image_tool_responses=True,
-            allow_multiple_tool_calls=False,
-            expected_tool_call_sequence=[
-                "scan_line",
-                "set_parameters",
-                "acquire_image",
-            ],
-            expected_tool_call_sequence_tolerance=1,
-            termination_behavior=kwargs.pop("termination_behavior", "ask"),
-            max_arounds_reached_behavior=kwargs.pop("max_arounds_reached_behavior", "return"),
+        self.set_active_state(
+            FeedbackLoopState(
+                messages=list(self.context),
+                full_history=list(self.full_history),
+                round_index=0,
+                await_user_input=False,
+                initial_prompt=initial_prompt,
+                initial_image_path=reference_image_path,
+                message_with_yielded_image="Here is the image the tool returned.",
+                max_rounds=max_iters,
+                n_first_images_to_keep_in_context=1,
+                n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
+                allow_non_image_tool_responses=True,
+                allow_multiple_tool_calls=False,
+                expected_tool_call_sequence=[
+                    "scan_line",
+                    "set_parameters",
+                    "acquire_image",
+                ],
+                expected_tool_call_sequence_tolerance=1,
+                termination_behavior=kwargs.pop("termination_behavior", "ask"),
+                max_arounds_reached_behavior=kwargs.pop(
+                    "max_arounds_reached_behavior",
+                    "return",
+                ),
+            ),
+            "task_graph",
         )
         super().run()
 
@@ -815,7 +821,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             resumed_state.exit_requested = False
             resumed_state.return_requested = False
             resumed_state.await_user_input = True
-        self.state = resumed_state
+        self.set_active_state(resumed_state, "task_graph")
         self.task_graph = graph
         if restart_from_human_gate:
             checkpoint_config = graph.update_state(
@@ -824,6 +830,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 as_node="handle_human_gate",
             )
         final_state = graph.invoke(None, config=checkpoint_config)
-        self.state = FeedbackLoopState.model_validate(final_state)
-        if self.state.chat_requested:
+        self.set_active_state(
+            FeedbackLoopState.model_validate(final_state),
+            "task_graph",
+        )
+        if isinstance(self.task_state, FeedbackLoopState) and self.task_state.chat_requested:
             self.handoff_to_chat()
