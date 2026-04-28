@@ -179,6 +179,38 @@ def extract_message_text(message: Dict[str, Any]) -> str:
     return ""
 
 
+def get_message_preview(
+    message: Dict[str, Any],
+    max_characters: int = 100,
+) -> str:
+    """Return a compact text preview for an OpenAI-style message.
+
+    Parameters
+    ----------
+    message : dict
+        Message payload to preview.
+    max_characters : int, default=100
+        Maximum number of text characters to include before any image
+        placeholder.
+
+    Returns
+    -------
+    str
+        Text preview truncated to ``max_characters``. Image payloads are shown
+        as ``<image>`` placeholders.
+    """
+    if max_characters < 0:
+        raise ValueError("`max_characters` must be non-negative.")
+    elements = get_message_elements_as_text(message)
+    content = elements["content"].strip()
+    preview = content[:max_characters] if content else ""
+    if elements["image"] is not None:
+        return f"{preview}\n<image>" if preview else "<image>"
+    if preview == "":
+        return "<empty>"
+    return preview
+
+
 def get_message_elements(message: Dict[str, Any]) -> Dict[str, Any]:
     """Return structured message elements."""
     image = []
@@ -267,8 +299,24 @@ def purge_context_images(
     return new_context
 
 
-def complete_unresponded_tool_calls(context: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-    """Append placeholder tool responses for dangling assistant tool calls."""
+def complete_unresponded_tool_calls(
+    context: list[Dict[str, Any]],
+    placeholder_content: str = "<Incomplete tool response>",
+) -> list[Dict[str, Any]]:
+    """Append placeholder tool responses for dangling assistant tool calls.
+
+    Parameters
+    ----------
+    context : list[Dict[str, Any]]
+        Message context to complete in place.
+    placeholder_content : str, default="<Incomplete tool response>"
+        Content used for generated placeholder tool responses.
+
+    Returns
+    -------
+    list[Dict[str, Any]]
+        The input context with placeholder tool responses appended.
+    """
     tool_call_ids = []
     responded = []
     for message in context:
@@ -284,7 +332,7 @@ def complete_unresponded_tool_calls(context: list[Dict[str, Any]]) -> list[Dict[
         if not value:
             context.append(
                 generate_openai_message(
-                    content="<Incomplete tool response>",
+                    content=placeholder_content,
                     role="tool",
                     tool_call_id=tool_call_ids[index],
                 )

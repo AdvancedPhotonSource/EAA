@@ -324,3 +324,55 @@ def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
 
 def test_feature_tracking_task_manager_no_longer_owns_fov_search():
     assert not hasattr(FeatureTrackingTaskManager, "run_fov_search")
+
+
+def test_multi_agent_roi_search_keyboard_interrupt_resumes_same_graph(monkeypatch):
+    task_manager = MultiAgentROISearchTaskManager(
+        build=False,
+        use_coding_tools=False,
+        image_acquisition_tool=DummyAcquireImageTool(),
+        session_db_path=None,
+    )
+    invoke_calls = {"count": 0}
+
+    class DummyGraph:
+        def invoke(self, state, **kwargs):
+            invoke_calls["count"] += 1
+            if invoke_calls["count"] == 1:
+                raise KeyboardInterrupt()
+            return MultiAgentROISearchState(
+                messages=list(state.messages),
+                full_history=list(state.full_history),
+                task_prompt=state.task_prompt,
+                foi_present=True,
+                last_image_path="dummy.png",
+                fov_description="feature visible",
+            ).model_dump()
+
+    task_manager.task_graph = DummyGraph()
+    printed_roles = []
+
+    def fake_print_message(message, response_requested=None, return_string=False):
+        printed_roles.append(message["role"])
+        return None
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume ROI search")
+    monkeypatch.setattr(task_manager, "run_feedback_loop", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "eaa_core.task_manager.base.print_message",
+        fake_print_message,
+    )
+
+    task_manager.run(initial_prompt="Find a feature.", termination_behavior="ask")
+
+    assert invoke_calls["count"] == 2
+    assert isinstance(task_manager.task_state, MultiAgentROISearchState)
+    assert task_manager.task_state.foi_present is True
+    assert [message["role"] for message in task_manager.full_history[-2:]] == [
+        "system",
+        "user",
+    ]
+    assert "current multi-agent ROI search was interrupted" in task_manager.full_history[-2]["content"]
+    assert "Warning: checkpoint recovery was unavailable" in task_manager.full_history[-2]["content"]
+    assert task_manager.full_history[-1]["content"] == "resume ROI search"
+    assert printed_roles == ["system", "user"]

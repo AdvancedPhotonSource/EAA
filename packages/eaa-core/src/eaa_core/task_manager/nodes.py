@@ -12,6 +12,7 @@ from eaa_core.message_proc import (
     print_message,
     purge_context_images,
 )
+from eaa_core.task_manager.commands import parse_user_input_command
 from eaa_core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
@@ -393,29 +394,25 @@ class NodeFactory:
                     "/help: show command help; /skill: list skills): "
                 )
             )
-            stripped = user_message.strip()
-            command, _, remainder = stripped.partition(" ")
-            command_lower = command.lower()
-            if command_lower == "/exit" and remainder == "":
+            command = parse_user_input_command(user_message)
+            if command.kind == "exit":
                 state.exit_requested = True
                 return state.model_dump()
-            if command_lower == "/return" and remainder == "":
+            if command.kind == "return":
                 state.return_requested = True
                 return state.model_dump()
-            if command_lower == "/monitor":
-                if remainder.strip():
-                    state.monitor_requested = True
-                    state.monitor_task_description = remainder.strip()
-                    state.await_user_input = False
-                    return state.model_dump()
-                continue
-            if command_lower == "/skill" and remainder == "":
+            if command.kind == "monitor":
+                state.monitor_requested = True
+                state.monitor_task_description = command.argument
+                state.await_user_input = False
+                return state.model_dump()
+            if command.kind == "skill":
                 self.task_manager.display_available_skills()
                 continue
-            if command_lower == "/help" and remainder == "":
+            if command.kind == "help":
                 self.task_manager.display_command_help()
                 continue
-            message = generate_openai_message(content=user_message, role="user")
+            message = generate_openai_message(content=command.text, role="user")
             if not self.task_manager.use_webui:
                 print_message(message)
             self.update_message_history_for_state(
@@ -851,15 +848,16 @@ class NodeFactory:
             ),
             display_prompt_in_webui=self.task_manager.use_webui,
         )
-        if message.lower() == "/exit":
+        command = parse_user_input_command(message)
+        if command.kind == "exit":
             state.exit_requested = True
             state.await_user_input = False
             return state.model_dump()
-        if message.lower() == "/chat":
+        if command.kind == "chat":
             state.await_user_input = False
             state.chat_requested = True
             return state.model_dump()
-        if message.lower() == "/help":
+        if command.kind == "help":
             state.await_user_input = True
             self.task_manager.display_command_help()
             return state.model_dump()

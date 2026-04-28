@@ -368,7 +368,26 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             graph_kwargs["config"] = checkpoint_config
         if graph is None:
             raise ValueError("The task manager does not define a runnable task graph.")
-        final_state = graph.invoke(initial_state, **graph_kwargs)
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=initial_state,
+            graph_kwargs=graph_kwargs,
+            graph_name="task_graph",
+            state_model=MultiAgentROISearchState,
+            interruption_message=(
+                "Keyboard interrupt detected. The current multi-agent ROI "
+                "search was interrupted."
+            ),
+        )
+        if invoke_result.command == "chat":
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
+            )
+            return
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         self.set_active_state(
             MultiAgentROISearchState.model_validate(final_state),
             "task_graph",
@@ -427,7 +446,26 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             resumed_state = MultiAgentROISearchState.model_validate(latest_state)
         self.set_active_state(resumed_state, "task_graph")
         self.task_graph = graph
-        final_state = graph.invoke(None, config=checkpoint_config)
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=None,
+            graph_kwargs={"config": checkpoint_config},
+            graph_name="task_graph",
+            state_model=MultiAgentROISearchState,
+            interruption_message=(
+                "Keyboard interrupt detected. The current multi-agent ROI "
+                "search was interrupted."
+            ),
+        )
+        if invoke_result.command == "chat":
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
+            )
+            return
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         self.set_active_state(
             MultiAgentROISearchState.model_validate(final_state),
             "task_graph",

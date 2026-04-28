@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Sequence
 import json
@@ -13,11 +14,14 @@ from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.llm.model import build_chat_model, invoke_chat_model
 from eaa_core.message_proc import (
+    complete_unresponded_tool_calls,
     generate_openai_message,
     get_message_elements_as_text,
+    get_message_preview,
     print_message,
 )
 from eaa_core.skill import load_skills
+from eaa_core.task_manager.commands import parse_user_input_command
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
@@ -36,6 +40,15 @@ from eaa_core.tool.skill import SkillLibraryTool
 logger = logging.getLogger(__name__)
 
 GraphName = Literal["chat_graph", "feedback_loop_graph", "task_graph"]
+GraphInvokeCommand = Literal["completed", "chat", "return", "exit"]
+
+
+@dataclass
+class GraphInvokeResult:
+    """Result of a graph invocation with interruption command handling."""
+
+    final_state: Any = None
+    command: GraphInvokeCommand = "completed"
 
 
 def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
@@ -352,6 +365,225 @@ class BaseTaskManager:
     def full_history(self, value: list[dict[str, Any]]) -> None:
         """Replace the canonical full transcript."""
         self.active_state.full_history = list(value)
+
+    def recover_active_state_from_checkpoint(
+        self,
+        graph: Any,
+        checkpoint_config: Optional[dict[str, Any]],
+        graph_name: GraphName,
+        state_model: type[TaskManagerState],
+    ) -> bool:
+        """Restore active state from the latest checkpoint snapshot.
+
+        Parameters
+        ----------
+        graph : Any
+            Compiled LangGraph instance used for the interrupted run.
+        checkpoint_config : Optional[dict[str, Any]]
+            Checkpoint configuration containing the graph thread id.
+        graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+            Graph slot that owns the recovered state.
+        state_model : type[TaskManagerState]
+            State model used to validate the checkpoint payload.
+
+        Returns
+        -------
+        bool
+            ``True`` when a checkpoint snapshot was recovered, otherwise
+            ``False``.
+        """
+        if graph is None or checkpoint_config is None:
+            return False
+        snapshot = graph.get_state(checkpoint_config)
+        if (
+            snapshot.created_at is None
+            or snapshot.values is None
+            or len(snapshot.values) == 0
+        ):
+            return False
+        self.set_active_state(
+            state_model.model_validate(snapshot.values),
+            graph_name,
+        )
+        return True
+
+    def format_interruption_message_content(
+        self,
+        base_message: str,
+        checkpoint_recovered: bool,
+    ) -> str:
+        """Build a user-facing interruption message with state recovery details.
+
+        Parameters
+        ----------
+        base_message : str
+            First sentence describing the interrupted graph.
+        checkpoint_recovered : bool
+            Whether active state was restored from a checkpoint before
+            composing the message.
+
+        Returns
+        -------
+        str
+            Message content including the latest recovered message preview.
+        """
+        lines = [base_message]
+        if not checkpoint_recovered:
+            lines.append(
+                "Warning: checkpoint recovery was unavailable, so the restored "
+                "conversation may miss messages produced during the interrupted graph run."
+            )
+        latest_message = self.active_state.get_latest_message()
+        if latest_message is not None:
+            preview = get_message_preview(latest_message, max_characters=100)
+            lines.append(f"Last recovered message: {preview}")
+        lines.append("You can now provide new instructions.")
+        return "\n".join(lines)
+
+    def append_interruption_resume_input(
+        self,
+        base_message: str,
+        checkpoint_recovered: bool,
+    ) -> GraphInvokeCommand:
+        """Record an interruption notice and handle user resume input.
+
+        Parameters
+        ----------
+        base_message : str
+            First sentence describing the interrupted graph.
+        checkpoint_recovered : bool
+            Whether active state was restored from a checkpoint before
+            composing the notice.
+        Returns
+        -------
+        GraphInvokeCommand
+            ``"completed"`` when user text was appended and the graph should
+            resume. Other values are slash commands for the caller to handle.
+        """
+        self.resolve_unmatched_tool_calls_for_interruption()
+        interrupt_message = generate_openai_message(
+            content=self.format_interruption_message_content(
+                base_message,
+                checkpoint_recovered=checkpoint_recovered,
+            ),
+            role="system",
+        )
+        if not self.use_webui:
+            print_message(interrupt_message)
+        self.update_message_history(
+            interrupt_message,
+            update_context=True,
+            update_full_history=True,
+        )
+        while True:
+            user_input = self.get_user_input(
+                prompt="Enter instructions to resume the interrupted graph: ",
+                display_prompt_in_webui=self.use_webui,
+            )
+            command = parse_user_input_command(user_input)
+            if command.kind == "help":
+                self.display_command_help()
+                continue
+            if command.kind == "skill":
+                self.display_available_skills()
+                continue
+            if command.kind in {"exit", "return", "chat"}:
+                return command.kind
+            if command.kind == "monitor":
+                self.record_system_message(
+                    "The `/monitor` command is only supported from chat mode.",
+                    update_context=True,
+                    write_to_webui=True,
+                )
+                continue
+            user_message = generate_openai_message(content=command.text, role="user")
+            if not self.use_webui:
+                print_message(user_message)
+            self.update_message_history(
+                user_message,
+                update_context=True,
+                update_full_history=True,
+            )
+            self.active_state.await_user_input = False
+            return "completed"
+
+    def resolve_unmatched_tool_calls_for_interruption(self) -> None:
+        """Append synthetic tool responses for interrupted tool calls."""
+        original_context_length = len(self.active_state.messages)
+        complete_unresponded_tool_calls(
+            self.active_state.messages,
+            placeholder_content=(
+                "The tool call was interrupted before it completed. "
+                "No tool result is available. Please call the tool again if it is still needed."
+            ),
+        )
+        self.active_state.full_history.extend(
+            self.active_state.messages[original_context_length:]
+        )
+
+    def invoke_graph_with_interruption_recovery(
+        self,
+        graph: Any,
+        graph_input: Optional[TaskManagerState],
+        graph_kwargs: dict[str, Any],
+        graph_name: GraphName,
+        state_model: type[TaskManagerState],
+        interruption_message: str,
+    ) -> GraphInvokeResult:
+        """Invoke a graph and resume it in place after Ctrl-C interruptions.
+
+        Parameters
+        ----------
+        graph : Any
+            Compiled LangGraph instance to invoke.
+        graph_input : Optional[TaskManagerState]
+            Initial graph input. Use ``None`` when resuming from checkpoint
+            state.
+        graph_kwargs : dict[str, Any]
+            Keyword arguments passed to ``graph.invoke``.
+        graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+            Graph slot that owns the recovered state.
+        state_model : type[TaskManagerState]
+            State model used to validate checkpoint payloads.
+        interruption_message : str
+            First sentence of the interruption notice.
+
+        Returns
+        -------
+        Any
+            Graph invocation result, including any slash command that stopped
+            the resume loop.
+        """
+        active_input = graph_input
+        active_kwargs = dict(graph_kwargs)
+        while True:
+            try:
+                return GraphInvokeResult(
+                    final_state=graph.invoke(active_input, **active_kwargs),
+                    command="completed",
+                )
+            except KeyboardInterrupt:
+                checkpoint_config = active_kwargs.get("config")
+                checkpoint_recovered = self.recover_active_state_from_checkpoint(
+                    graph=graph,
+                    checkpoint_config=checkpoint_config,
+                    graph_name=graph_name,
+                    state_model=state_model,
+                )
+                command = self.append_interruption_resume_input(
+                    interruption_message,
+                    checkpoint_recovered=checkpoint_recovered,
+                )
+                if command != "completed":
+                    return GraphInvokeResult(command=command)
+                if checkpoint_config is None:
+                    active_input = self.active_state
+                    continue
+                graph.update_state(
+                    checkpoint_config,
+                    self.active_state.model_dump(),
+                )
+                active_input = None
 
     def build(self, *args, **kwargs):
         """Build persistence, model, tools, and graphs."""
@@ -860,32 +1092,23 @@ class BaseTaskManager:
         initial_state = self.task_state
         initial_state.copy_messages_and_history_from_state(self.active_state)
         self.set_active_state(initial_state, "task_graph")
-        try:
-            final_state = graph.invoke(initial_state, **graph_kwargs)
-        except KeyboardInterrupt:
-            interrupt_message = generate_openai_message(
-                content=(
-                    "Keyboard interrupt detected. The current task was interrupted. "
-                    "You can now provide new instructions."
-                ),
-                role="system",
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=initial_state,
+            graph_kwargs=graph_kwargs,
+            graph_name="task_graph",
+            state_model=type(initial_state),
+            interruption_message="Keyboard interrupt detected. The current task was interrupted.",
+        )
+        if invoke_result.command == "chat":
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
             )
-            if not self.use_webui:
-                print_message(interrupt_message)
-            self.update_message_history(
-                interrupt_message,
-                update_context=True,
-                update_full_history=True,
-            )
-            if (
-                isinstance(initial_state, FeedbackLoopState)
-                and initial_state.termination_behavior == "ask"
-            ):
-                self.run_conversation(
-                    store_all_images_in_context=True,
-                    termination_behavior="user",
-                )
             return
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         state_model = type(initial_state)
         if not issubclass(state_model, TaskManagerState):
             state_model = TaskManagerState
@@ -930,10 +1153,26 @@ class BaseTaskManager:
         if graph is None or checkpoint_config is None:
             raise ValueError("The task manager does not define a checkpointable task graph.")
         graph_input = loaded_state if fallback_loaded else None
-        final_state = graph.invoke(graph_input, config=checkpoint_config)
         state_model = type(loaded_state)
         if not issubclass(state_model, TaskManagerState):
             state_model = TaskManagerState
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=graph_input,
+            graph_kwargs={"config": checkpoint_config},
+            graph_name="task_graph",
+            state_model=state_model,
+            interruption_message="Keyboard interrupt detected. The current task was interrupted.",
+        )
+        if invoke_result.command == "chat":
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
+            )
+            return
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         self.set_active_state(state_model.model_validate(final_state), "task_graph")
         if bool(getattr(self.task_state, "chat_requested", False)):
             self.run_conversation(
@@ -1121,33 +1360,17 @@ class BaseTaskManager:
             )
             self.chat_graph = graph
             graph_kwargs["config"] = checkpoint_config
-        try:
-            final_state = graph.invoke(
-                initial_state,
-                **graph_kwargs,
-            )
-        except KeyboardInterrupt:
-            interrupt_message = generate_openai_message(
-                content=(
-                    "Keyboard interrupt detected. The current chat run was interrupted. "
-                    "You can now provide new instructions."
-                ),
-                role="system",
-            )
-            if not self.use_webui:
-                print_message(interrupt_message)
-            self.update_message_history(
-                interrupt_message,
-                update_context=True,
-                update_full_history=True,
-            )
-            if (termination_behavior or "user") == "user":
-                self.run_conversation(
-                    store_all_images_in_context=store_all_images_in_context,
-                    termination_behavior=termination_behavior,
-                    inherit_activate_state_messages=inherit_activate_state_messages,
-                )
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=initial_state,
+            graph_kwargs=graph_kwargs,
+            graph_name="chat_graph",
+            state_model=ChatGraphState,
+            interruption_message="Keyboard interrupt detected. The current chat run was interrupted.",
+        )
+        if invoke_result.command != "completed":
             return
+        final_state = invoke_result.final_state
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
         if self.chat_state.monitor_requested:
             self.enter_monitoring_mode(self.chat_state.monitor_task_description)
@@ -1204,11 +1427,20 @@ class BaseTaskManager:
         graph_input: Optional[ChatGraphState] = None
         if restart_from_state:
             graph_input = resumed_state
-        final_state = graph.invoke(
-            graph_input,
-            config=checkpoint_config,
-            context=self.memory_manager.get_runtime_context(),
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=graph_input,
+            graph_kwargs={
+                "config": checkpoint_config,
+                "context": self.memory_manager.get_runtime_context(),
+            },
+            graph_name="chat_graph",
+            state_model=ChatGraphState,
+            interruption_message="Keyboard interrupt detected. The current chat run was interrupted.",
         )
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
         if self.chat_state.monitor_requested:
             self.enter_monitoring_mode(self.chat_state.monitor_task_description)
@@ -1299,29 +1531,23 @@ class BaseTaskManager:
             )
             self.feedback_loop_graph = graph
             graph_kwargs["config"] = checkpoint_config
-        try:
-            final_state = graph.invoke(initial_state, **graph_kwargs)
-        except KeyboardInterrupt:
-            interrupt_message = generate_openai_message(
-                content=(
-                    "Keyboard interrupt detected. The current feedback loop was interrupted. "
-                    "You can now provide new instructions."
-                ),
-                role="system",
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=initial_state,
+            graph_kwargs=graph_kwargs,
+            graph_name="feedback_loop_graph",
+            state_model=FeedbackLoopState,
+            interruption_message="Keyboard interrupt detected. The current feedback loop was interrupted.",
+        )
+        if invoke_result.command == "chat":
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
             )
-            if not self.use_webui:
-                print_message(interrupt_message)
-            self.update_message_history(
-                interrupt_message,
-                update_context=True,
-                update_full_history=True,
-            )
-            if termination_behavior == "ask":
-                self.run_conversation(
-                    store_all_images_in_context=True,
-                    termination_behavior="user",
-                )
             return
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         self.set_active_state(
             FeedbackLoopState.model_validate(final_state),
             "feedback_loop_graph",
@@ -1386,7 +1612,23 @@ class BaseTaskManager:
                 resumed_state.model_dump(),
                 as_node="handle_human_gate",
             )
-        final_state = graph.invoke(None, config=checkpoint_config)
+        invoke_result = self.invoke_graph_with_interruption_recovery(
+            graph=graph,
+            graph_input=None,
+            graph_kwargs={"config": checkpoint_config},
+            graph_name="feedback_loop_graph",
+            state_model=FeedbackLoopState,
+            interruption_message="Keyboard interrupt detected. The current feedback loop was interrupted.",
+        )
+        if invoke_result.command == "chat":
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
+            )
+            return
+        if invoke_result.command != "completed":
+            return
+        final_state = invoke_result.final_state
         self.set_active_state(
             FeedbackLoopState.model_validate(final_state),
             "feedback_loop_graph",

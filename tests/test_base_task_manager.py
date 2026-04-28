@@ -27,6 +27,33 @@ class CheckpointableTaskManager(BaseTaskManager):
         return graph_builder.compile(checkpointer=checkpointer)
 
 
+class InterruptibleCheckpointTaskManager(BaseTaskManager):
+    """Test helper whose task graph interrupts twice before completing."""
+
+    def __init__(self, *args, **kwargs):
+        self.invoke_count = 0
+        super().__init__(*args, **kwargs)
+
+    def build_task_graph(self, checkpointer: Any = None) -> Any:
+        """Build a task graph with interruptible node execution."""
+        graph_builder = StateGraph(TaskManagerState)
+
+        def interrupt_twice(state: TaskManagerState) -> dict[str, Any]:
+            """Raise keyboard interrupts on the first two invocations."""
+            self.invoke_count += 1
+            if self.invoke_count <= 2:
+                raise KeyboardInterrupt()
+            return {
+                "messages": list(state.messages),
+                "full_history": list(state.full_history),
+                "await_user_input": True,
+            }
+
+        graph_builder.add_node("interrupt_twice", interrupt_twice)
+        graph_builder.add_edge(START, "interrupt_twice")
+        return graph_builder.compile(checkpointer=checkpointer)
+
+
 class FeedbackStateTaskManager(BaseTaskManager):
     """Test helper with a task graph backed by feedback-loop state."""
 
@@ -225,7 +252,7 @@ def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch)
     assert seen["type_name"] == "FeedbackLoopState"
 
 
-def test_run_conversation_keyboard_interrupt_reenters_chat(monkeypatch):
+def test_run_conversation_keyboard_interrupt_resumes_same_graph(monkeypatch):
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
 
@@ -247,16 +274,117 @@ def test_run_conversation_keyboard_interrupt_reenters_chat(monkeypatch):
         return None
 
     monkeypatch.setattr("eaa_core.task_manager.base.print_message", fake_print_message)
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume chat")
 
     task_manager.run_conversation(message="hello", termination_behavior="user")
 
     assert invoke_calls["count"] == 2
-    assert task_manager.full_history[-1]["role"] == "system"
-    assert "Keyboard interrupt detected" in task_manager.full_history[-1]["content"]
-    assert printed_roles == ["system"]
+    assert [message["role"] for message in task_manager.full_history[-2:]] == [
+        "system",
+        "user",
+    ]
+    assert "Keyboard interrupt detected" in task_manager.full_history[-2]["content"]
+    assert "Warning: checkpoint recovery was unavailable" in task_manager.full_history[-2]["content"]
+    assert task_manager.full_history[-1]["content"] == "resume chat"
+    assert printed_roles == ["system", "user"]
 
 
-def test_run_feedback_loop_keyboard_interrupt_enters_chat_mode(monkeypatch):
+def test_run_feedback_loop_keyboard_interrupt_resumes_same_graph(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager.model = object()
+    invoke_calls = {"count": 0}
+
+    class DummyGraph:
+        def invoke(self, state, **kwargs):
+            invoke_calls["count"] += 1
+            if invoke_calls["count"] == 1:
+                raise KeyboardInterrupt()
+            return state.model_dump()
+
+    task_manager.feedback_loop_graph = DummyGraph()
+
+    printed_roles = []
+
+    def fake_print_message(message, response_requested=None, return_string=False):
+        printed_roles.append(message["role"])
+        return None
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume feedback")
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", fake_print_message)
+
+    task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
+
+    assert invoke_calls["count"] == 2
+    assert [message["role"] for message in task_manager.full_history[-2:]] == [
+        "system",
+        "user",
+    ]
+    assert "Keyboard interrupt detected" in task_manager.full_history[-2]["content"]
+    assert "Warning: checkpoint recovery was unavailable" in task_manager.full_history[-2]["content"]
+    assert task_manager.full_history[-1]["content"] == "resume feedback"
+    assert printed_roles == ["system", "user"]
+
+
+def test_interruption_resume_adds_fake_tool_response_for_unmatched_tool_call(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager.set_active_state(
+        TaskManagerState(
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "acquire_image",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                }
+            ],
+            full_history=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "acquire_image",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                }
+            ],
+        ),
+        "task_graph",
+    )
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume")
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", lambda *args, **kwargs: None)
+
+    command = task_manager.append_interruption_resume_input(
+        "Keyboard interrupt detected.",
+        checkpoint_recovered=False,
+    )
+
+    assert command == "completed"
+    assert [message["role"] for message in task_manager.context] == [
+        "assistant",
+        "tool",
+        "system",
+        "user",
+    ]
+    assert task_manager.context[1]["tool_call_id"] == "call_1"
+    assert "Please call the tool again" in task_manager.context[1]["content"]
+
+
+def test_run_feedback_loop_keyboard_interrupt_chat_command_enters_chat(monkeypatch):
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()
 
@@ -265,31 +393,113 @@ def test_run_feedback_loop_keyboard_interrupt_enters_chat_mode(monkeypatch):
             raise KeyboardInterrupt()
 
     task_manager.feedback_loop_graph = DummyGraph()
-
-    calls = {"count": 0, "kwargs": None}
-    printed_roles = []
+    chat_calls = {"count": 0, "kwargs": None}
 
     def fake_run_conversation(*args, **kwargs):
-        calls["count"] += 1
-        calls["kwargs"] = kwargs
+        chat_calls["count"] += 1
+        chat_calls["kwargs"] = kwargs
 
-    def fake_print_message(message, response_requested=None, return_string=False):
-        printed_roles.append(message["role"])
-        return None
-
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/chat")
     monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
-    monkeypatch.setattr("eaa_core.task_manager.base.print_message", fake_print_message)
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", lambda *args, **kwargs: None)
 
     task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
 
-    assert calls["count"] == 1
-    assert calls["kwargs"] == {
+    assert chat_calls["count"] == 1
+    assert chat_calls["kwargs"] == {
         "store_all_images_in_context": True,
         "termination_behavior": "user",
     }
     assert task_manager.full_history[-1]["role"] == "system"
-    assert "Keyboard interrupt detected" in task_manager.full_history[-1]["content"]
-    assert printed_roles == ["system"]
+
+
+def test_interruption_message_preview_uses_checkpoint_state_and_image_placeholder(tmp_path):
+    checkpoint_base = tmp_path / "interrupt_preview.sqlite"
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
+        "chat_graph",
+        load_state=False,
+    )
+    recovered_text = "x" * 120
+    recovered_state = ChatGraphState(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": recovered_text},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                ],
+            }
+        ],
+        full_history=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": recovered_text},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                ],
+            }
+        ],
+    )
+    graph.update_state(
+        checkpoint_config,
+        recovered_state.model_dump(),
+        as_node="await_or_ingest_user_input",
+    )
+
+    recovered = task_manager.recover_active_state_from_checkpoint(
+        graph=graph,
+        checkpoint_config=checkpoint_config,
+        graph_name="chat_graph",
+        state_model=ChatGraphState,
+    )
+    content = task_manager.format_interruption_message_content(
+        "Keyboard interrupt detected.",
+        checkpoint_recovered=recovered,
+    )
+
+    assert recovered is True
+    assert "Warning: checkpoint recovery was unavailable" not in content
+    assert f"Last recovered message: {'x' * 100}" in content
+    assert "<image>" in content
+    assert "data:image/png" not in content
+
+
+def test_checkpointed_interruption_recovery_survives_multiple_interruptions(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "multi_interrupt.sqlite"
+    task_manager = InterruptibleCheckpointTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=str(checkpoint_base),
+    )
+    task_manager.task_graph = task_manager.build_task_graph()
+    task_manager.set_active_state(
+        TaskManagerState(
+            messages=[{"role": "user", "content": "seed"}],
+            full_history=[{"role": "user", "content": "seed"}],
+        ),
+        "task_graph",
+    )
+    resume_inputs = iter(["resume one", "resume two"])
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: next(resume_inputs))
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", lambda *args, **kwargs: None)
+
+    task_manager.run()
+
+    system_messages = [
+        message["content"]
+        for message in task_manager.full_history
+        if message["role"] == "system"
+    ]
+    assert len(system_messages) == 2
+    assert "Warning: checkpoint recovery was unavailable" not in system_messages[1]
+    assert task_manager.full_history[-1]["content"] == "resume two"
+    assert task_manager.invoke_count == 3
 
 
 def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
