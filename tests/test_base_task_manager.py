@@ -65,7 +65,7 @@ class TaskChatRequestTaskManager(BaseTaskManager):
         return graph_builder.compile(checkpointer=checkpointer)
 
 
-def test_common_state_owns_context_and_tracks_active_state():
+def test_active_state_owns_context_and_history():
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     message = {"role": "user", "content": "hello"}
 
@@ -73,16 +73,14 @@ def test_common_state_owns_context_and_tracks_active_state():
 
     assert task_manager.context == [message]
     assert task_manager.full_history == [message]
-    assert task_manager.common_state.messages == [message]
     assert task_manager.active_state.messages == [message]
-    assert task_manager.active_state.messages is not task_manager.common_state.messages
 
     chat_state = ChatGraphState(messages=[{"role": "assistant", "content": "hi"}])
     task_manager.set_active_state(chat_state, "chat_graph")
 
     assert task_manager.active_state is task_manager.chat_state
-    assert task_manager.common_state.messages == [{"role": "assistant", "content": "hi"}]
-    assert task_manager.active_state.messages is not task_manager.common_state.messages
+    assert task_manager.context == [{"role": "assistant", "content": "hi"}]
+    assert not hasattr(task_manager, "common_state")
 
 
 def test_task_graph_can_own_feedback_loop_state(monkeypatch):
@@ -99,10 +97,12 @@ def test_task_graph_can_own_feedback_loop_state(monkeypatch):
 
     captured = {"count": 0}
 
-    def fake_handoff_to_chat(*args, **kwargs):
+    def fake_run_conversation(*args, **kwargs):
         captured["count"] += 1
+        captured["kwargs"] = kwargs
+        captured["active_state"] = task_manager.active_state
 
-    monkeypatch.setattr(task_manager, "handoff_to_chat", fake_handoff_to_chat)
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
     task_manager.run()
 
@@ -110,6 +110,11 @@ def test_task_graph_can_own_feedback_loop_state(monkeypatch):
     assert task_manager.task_state.chat_requested is True
     assert task_manager.active_state is task_manager.task_state
     assert captured["count"] == 1
+    assert captured["active_state"] is task_manager.task_state
+    assert captured["kwargs"] == {
+        "store_all_images_in_context": True,
+        "termination_behavior": "user",
+    }
 
 
 def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
@@ -138,7 +143,7 @@ def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
 
     task_manager.run()
 
-    assert isinstance(captured["active_state"], ChatGraphState)
+    assert isinstance(captured["active_state"], TaskChatRequestState)
     assert captured["active_state"].messages == [{"role": "user", "content": "task context"}]
     assert captured["active_state"].round_index == 3
     assert captured["kwargs"] == {
@@ -315,8 +320,8 @@ def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
         "store_all_images_in_context": True,
         "termination_behavior": "user",
     }
-    assert isinstance(captured["state"], ChatGraphState)
-    assert captured["state"].await_user_input is True
+    assert isinstance(captured["state"], FeedbackLoopState)
+    assert captured["state"].chat_requested is True
     assert [message["role"] for message in captured["messages"]] == ["user", "assistant"]
     assert [message["content"] for message in captured["messages"]] == [
         "test prompt",

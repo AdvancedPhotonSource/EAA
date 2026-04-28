@@ -15,6 +15,21 @@ class TaskManagerState(BaseModel):
     round_index: int = 0
     store_all_images_in_context: bool = True
 
+    def copy_messages_and_history_from_state(
+        self,
+        state: "TaskManagerState",
+    ) -> None:
+        """Copy transcript fields from another task-manager state.
+
+        Parameters
+        ----------
+        state : TaskManagerState
+            Source state whose active model context and full transcript should
+            be copied into this state.
+        """
+        self.messages = list(state.messages)
+        self.full_history = list(state.full_history)
+
     def get_latest_message(self, role: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Return the most recent message, optionally filtered by role."""
         for message in reversed(self.messages):

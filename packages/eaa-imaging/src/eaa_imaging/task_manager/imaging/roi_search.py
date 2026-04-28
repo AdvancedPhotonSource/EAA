@@ -350,12 +350,11 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             initial_prompt=initial_prompt,
             additional_prompt=additional_prompt,
         )
-        initial_state = self.sync_state_from_common(
-            MultiAgentROISearchState(
-                task_prompt=task_prompt,
-                max_search_rounds=max_search_rounds,
-            )
+        initial_state = MultiAgentROISearchState(
+            task_prompt=task_prompt,
+            max_search_rounds=max_search_rounds,
         )
+        initial_state.copy_messages_and_history_from_state(self.active_state)
         self.set_active_state(initial_state, "task_graph")
 
         graph = self.task_graph

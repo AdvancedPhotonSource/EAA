@@ -835,4 +835,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             "task_graph",
         )
         if isinstance(self.task_state, FeedbackLoopState) and self.task_state.chat_requested:
-            self.handoff_to_chat()
+            self.run_conversation(
+                store_all_images_in_context=True,
+                termination_behavior="user",
+            )
