@@ -208,9 +208,9 @@ class BlueSkyAcquireImage(AcquireImage):
                 )
                 wait_for_file(img_path, duration=5)
 
-                self.update_image_buffers(img_arr, psize=stepsize_x)
+                array_path = self.update_image_buffers(img_arr, psize=stepsize_x)
                 if img_path:
-                    return {"img_path": img_path}
+                    return {"img_path": img_path, "array_path": array_path, "psize": stepsize_x}
                 logger.error(f"Failed to save images for {current_mda_file}")
                 return {"result": f"Failed to save images for {current_mda_file}"}
             logger.error(f"Failed to process {current_mda_file}")

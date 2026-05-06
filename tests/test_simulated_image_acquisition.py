@@ -90,6 +90,33 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
 
         assert isinstance(result, dict)
         assert isinstance(result.get("img_path"), str)
+        assert isinstance(result.get("array_path"), str)
+        assert os.path.exists(result["array_path"])
+
+    def test_simulated_image_saves_npy_artifacts_and_collects_unreferenced_files(self):
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+
+        tool = SimulatedAcquireImage(whole_image, return_message=True)
+        tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
+        first_info = tool.get_current_image_info()
+        tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
+        second_info = tool.get_current_image_info()
+        tool.acquire_image(y_center=232, x_center=232, size_y=64, size_x=64)
+        third_info = tool.get_current_image_info()
+        tool.acquire_image(y_center=234, x_center=234, size_y=64, size_x=64)
+
+        assert os.path.exists(first_info["array_path"])
+        assert not os.path.exists(second_info["array_path"])
+        assert os.path.exists(third_info["array_path"])
+        assert os.path.exists(tool.get_current_image_info()["array_path"])
+        assert os.path.exists(tool.get_previous_image_info()["array_path"])
+        assert os.path.exists(tool.get_initial_image_info()["array_path"])
         
         
 if __name__ == '__main__':

@@ -1,4 +1,5 @@
-from typing import Annotated, Dict, List, Any
+from pathlib import Path
+from typing import Annotated, Dict, List, Any, Literal
 import logging
 import os
 
@@ -39,6 +40,10 @@ class AcquireImage(BaseTool):
         self.psize_0 = None
         self.psize_km1 = None
         self.psize_k = None
+        self.image_0_path: str | None = None
+        self.image_km1_path: str | None = None
+        self.image_k_path: str | None = None
+        self.image_array_artifact_dir = Path(".tmp") / "acquisition_arrays"
         
         self.image_acquisition_call_history: List[Dict[str, Any]] = []
         self.line_scan_call_history: List[Dict[str, Any]] = []
@@ -81,7 +86,98 @@ class AcquireImage(BaseTool):
             "angle": angle,
         })
 
-    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1):
+    def save_image_array_artifact(self, image: np.ndarray) -> str:
+        """Save an acquired image array to a managed ``.npy`` artifact.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            Image array to save.
+
+        Returns
+        -------
+        str
+            Absolute path to the saved ``.npy`` file.
+        """
+        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"image_{self.counter_acquire_image}_{get_timestamp()}.npy"
+        path = artifact_dir / filename
+        np.save(path, image)
+        return str(path)
+
+    def collect_referenced_image_array_paths(self) -> set[Path]:
+        """Return currently referenced image array artifact paths.
+
+        Returns
+        -------
+        set[pathlib.Path]
+            Absolute paths referenced by image buffers.
+        """
+        paths = {
+            self.image_0_path,
+            self.image_km1_path,
+            self.image_k_path,
+        }
+        return {Path(path).expanduser().resolve() for path in paths if path is not None}
+
+    def garbage_collect_image_array_artifacts(self) -> None:
+        """Delete unreferenced managed ``.npy`` image artifacts immediately."""
+        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
+        if not artifact_dir.exists():
+            return
+        live_paths = self.collect_referenced_image_array_paths()
+        for path in artifact_dir.glob("*.npy"):
+            resolved = path.resolve()
+            if resolved not in live_paths:
+                try:
+                    resolved.unlink()
+                except FileNotFoundError:
+                    continue
+
+    def get_image_buffer_info_by_name(
+        self,
+        buffer_name: Literal["image_0", "image_km1", "image_k"],
+    ) -> dict[str, Any]:
+        """Return path, pixel size, and shape metadata for an image buffer.
+
+        Parameters
+        ----------
+        buffer_name : {"image_0", "image_km1", "image_k"}
+            Name of the image buffer to query.
+
+        Returns
+        -------
+        dict[str, Any]
+            Metadata for the requested buffer.
+        """
+        image = getattr(self, buffer_name)
+        path = getattr(self, f"{buffer_name}_path")
+        psize = getattr(self, f"psize_{buffer_name.split('_', 1)[1]}")
+        return {
+            "buffer_name": buffer_name,
+            "array_path": path,
+            "psize": psize,
+            "shape": None if image is None else list(image.shape),
+            "dtype": None if image is None else str(image.dtype),
+        }
+
+    @tool(name="get_current_image_info")
+    def get_current_image_info(self) -> dict[str, Any]:
+        """Return path and pixel-size metadata for the current image buffer."""
+        return self.get_image_buffer_info_by_name("image_k")
+
+    @tool(name="get_previous_image_info")
+    def get_previous_image_info(self) -> dict[str, Any]:
+        """Return path and pixel-size metadata for the previous image buffer."""
+        return self.get_image_buffer_info_by_name("image_km1")
+
+    @tool(name="get_initial_image_info")
+    def get_initial_image_info(self) -> dict[str, Any]:
+        """Return path and pixel-size metadata for the initial image buffer."""
+        return self.get_image_buffer_info_by_name("image_0")
+
+    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1) -> str:
         """Update the image buffers.
         
         Parameters
@@ -90,14 +186,25 @@ class AcquireImage(BaseTool):
             The new image.
         psize : float, optional
             The pixel size (or scan step) of the new image.
+
+        Returns
+        -------
+        str
+            Absolute path to the saved image array artifact.
         """
+        new_image_path = self.save_image_array_artifact(new_image)
         if self.image_0 is None:
             self.image_0 = new_image
+            self.image_0_path = new_image_path
             self.psize_0 = psize
         self.image_km1 = self.image_k
+        self.image_km1_path = self.image_k_path
         self.psize_km1 = self.psize_k
         self.image_k = new_image
+        self.image_k_path = new_image_path
         self.psize_k = psize
+        self.garbage_collect_image_array_artifacts()
+        return new_image_path
 
     @tool(name="acquire_image")
     def acquire_image(self, *args, **kwargs):
@@ -423,7 +530,7 @@ class SimulatedAcquireImage(AcquireImage):
         arr_shape = (len(y), len(x))
         arr = self._sample(yy.ravel(), xx.ravel(), shape=arr_shape).reshape(arr_shape)
 
-        self.update_image_buffers(arr, psize=scan_step)
+        array_path = self.update_image_buffers(arr, psize=scan_step)
             
         if self.return_message:
             filename = f"image_{y_center}_{x_center}_{size_y}_{size_x}_{get_timestamp()}.png"
@@ -439,7 +546,7 @@ class SimulatedAcquireImage(AcquireImage):
             if self.add_line_scan_candidates_to_image:
                 fig = self.add_line_scan_candidates(fig)
             image_path = self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
-            return {"img_path": image_path}
+            return {"img_path": image_path, "array_path": array_path, "psize": scan_step}
         else:
             return arr
 
