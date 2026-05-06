@@ -7,6 +7,7 @@ from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
 
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
+from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface
 from eaa_imaging.tool.imaging.registration import ImageRegistration
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
 from eaa_imaging.image_proc import check_feature_presence_llm
@@ -55,6 +56,7 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
         if llm_config is None:
             raise ValueError("llm_config must be provided for feature presence detection.")
         
+        image_acquisition_tool = ensure_acquisition_tool_interface(image_acquisition_tool)
         self.image_acquisition_tool = image_acquisition_tool
         self.image_registration_tool = self.create_image_registration_tool(image_acquisition_tool)
         

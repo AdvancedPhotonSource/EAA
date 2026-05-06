@@ -7,6 +7,7 @@ from eaa_core.tool.base import BaseTool
 from eaa_core.util import get_image_path_from_text
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
+from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface
 from eaa_imaging.tool.imaging.registration import ImageRegistration
 
 
@@ -50,6 +51,7 @@ def initialize_feature_tracking_task_manager(
     """
     if image_acquisition_tool is None:
         raise ValueError("image_acquisition_tool must be provided.")
+    image_acquisition_tool = ensure_acquisition_tool_interface(image_acquisition_tool)
 
     task_manager.image_acquisition_tool = image_acquisition_tool
     task_manager.registration_tool = image_registration_tool

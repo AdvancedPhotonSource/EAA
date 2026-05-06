@@ -55,6 +55,7 @@ def test_mcp_tool_registers_remote_tools_and_normalizes_json_results(tmp_path):
     try:
         schemas = mcp_tool.get_all_schema()
         assert schemas[0]["function"]["name"] == "remote_image"
+        assert mcp_tool.remote_image() == {"img_path": "remote.png"}
 
         executor = SerialToolExecutor()
         executor.register_tools(mcp_tool)

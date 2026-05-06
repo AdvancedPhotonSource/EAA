@@ -11,6 +11,7 @@ from eaa_core.tool.base import BaseTool
 
 from eaa_core.task_manager.tuning.bo import BayesianOptimizationTaskManager
 from eaa_imaging.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
+from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface
 from eaa_core.tool.optimization import BayesianOptimizationTool
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ class MicroscopyOpticsTuningBOTaskManager(
                 "`parameter_setting_tool`."
             )
         
+        image_acquisition_tool = ensure_acquisition_tool_interface(image_acquisition_tool)
         self.image_acquisition_tool = image_acquisition_tool
         self.parameter_setting_tool = parameter_setting_tool
         self.image_acquisition_kwargs = image_acquisition_kwargs

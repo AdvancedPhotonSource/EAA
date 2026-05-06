@@ -17,6 +17,7 @@ from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.tool.base import BaseTool
 
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
+from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface
 from eaa_imaging.tool.imaging.aps_mic.test_target_landmark_fitting import (
     TestPatternLandmarkFitting,
 )
@@ -164,6 +165,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
         
+        acquisition_tool = ensure_acquisition_tool_interface(acquisition_tool)
         self.acquisition_tool = acquisition_tool
         if optimization_tool is None:
             self.optimization_tool = self.create_bo_tool(parameter_ranges)

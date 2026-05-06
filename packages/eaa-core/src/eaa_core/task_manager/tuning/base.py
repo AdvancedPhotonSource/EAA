@@ -5,6 +5,7 @@ from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.tool.base import BaseTool
+from eaa_core.tool.mcp_adapter import ensure_parameter_setting_tool_interface
 
 from eaa_core.tool.param_tuning import SetParameters
 
@@ -56,15 +57,19 @@ class BaseParameterTuningTaskManager(BaseTaskManager):
         if param_setting_tool is None:
             raise ValueError("param_setting_tool must be provided.")
         
-        self.param_setting_tool: SetParameters = param_setting_tool
         self.initial_parameters: dict[str, float] = initial_parameters
         self.parameter_names = list(initial_parameters.keys())
         self.parameter_ranges = parameter_ranges
+        self.param_setting_tool: SetParameters = ensure_parameter_setting_tool_interface(
+            param_setting_tool,
+            parameter_names=self.parameter_names,
+            parameter_ranges=parameter_ranges,
+        )
         
         super().__init__(
             llm_config=llm_config,
             memory_config=memory_config,
-            tools=[param_setting_tool, *additional_tools],
+            tools=[self.param_setting_tool, *additional_tools],
             session_db_path=session_db_path,
             build=build,
             *args, **kwargs

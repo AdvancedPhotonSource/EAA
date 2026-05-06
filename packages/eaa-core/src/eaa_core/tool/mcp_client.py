@@ -316,14 +316,17 @@ class MCPTool(BaseTool):
         exposed_tools = []
         for remote_tool in remote_tools:
             input_schema = dict(remote_tool.inputSchema or {})
+            function = self._make_tool_callable(
+                remote_tool.name,
+                input_schema=input_schema,
+                description=remote_tool.description or "",
+            )
+            if not hasattr(self, remote_tool.name):
+                setattr(self, remote_tool.name, function)
             exposed_tools.append(
                 ExposedToolSpec(
                     name=remote_tool.name,
-                    function=self._make_tool_callable(
-                        remote_tool.name,
-                        input_schema=input_schema,
-                        description=remote_tool.description or "",
-                    ),
+                    function=function,
                     require_approval=self.require_approval,
                     schema=self._build_openai_schema_from_mcp_tool(remote_tool),
                 )
