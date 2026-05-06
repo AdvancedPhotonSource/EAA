@@ -35,7 +35,7 @@ class ImageRegistration(BaseTool):
     @check
     def __init__(
         self,
-        image_acquisition_tool: AcquireImage,
+        image_acquisition_tool: Optional[AcquireImage] = None,
         llm_config: Optional[LLMConfig] = None,
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
@@ -55,10 +55,10 @@ class ImageRegistration(BaseTool):
 
         Parameters
         ----------
-        image_acquisition_tool : AcquireImage
-            The image acquisition tool object. Do not use a copy of the object;
-            pass the exact object that is used by the task manager so that the
-            registration tool can access the latest acquired image.
+        image_acquisition_tool : AcquireImage, optional
+            Optional acquisition tool used for backward-compatible
+            ``get_offset`` calls. New callers should prefer path-based
+            registration methods and pass image ``.npy`` paths explicitly.
         reference_image : np.ndarray, optional
             The reference image to register the latest image with.
         reference_pixel_size : float, optional
@@ -108,6 +108,25 @@ class ImageRegistration(BaseTool):
         """
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
+
+    def set_reference_image_from_path(
+        self,
+        reference_image_path: str,
+        reference_pixel_size: float = 1.0,
+    ) -> None:
+        """Set the reference image from a NumPy ``.npy`` file.
+
+        Parameters
+        ----------
+        reference_image_path : str
+            Path to the reference image array.
+        reference_pixel_size : float, optional
+            Pixel size of the reference image.
+        """
+        self.set_reference_image(
+            np.load(reference_image_path),
+            reference_pixel_size=reference_pixel_size,
+        )
     
     def process_image(self, image: np.ndarray) -> np.ndarray:
         """
@@ -162,10 +181,56 @@ class ImageRegistration(BaseTool):
             registration_algorithm_kwargs=self.registration_algorithm_kwargs
         )
 
+    @tool(name="get_offset_from_paths")
+    def get_offset_from_paths(
+        self,
+        current_image_path: Annotated[str, "Path to the current image .npy file."],
+        reference_image_path: Annotated[str, "Path to the reference image .npy file."],
+        current_pixel_size: Annotated[float, "Pixel size of the current image."] = 1.0,
+        reference_pixel_size: Annotated[float, "Pixel size of the reference image."] = 1.0,
+    ) -> Annotated[
+        List[float],
+        "The translational offset [dy, dx] to apply to the current image "
+        "so it aligns with the reference image.",
+    ]:
+        """Register two image arrays loaded from ``.npy`` paths.
+
+        Parameters
+        ----------
+        current_image_path : str
+            Path to the current/test image array.
+        reference_image_path : str
+            Path to the reference image array.
+        current_pixel_size : float, optional
+            Pixel size of the current/test image.
+        reference_pixel_size : float, optional
+            Pixel size of the reference image.
+
+        Returns
+        -------
+        list[float]
+            Translational offset ``[dy, dx]`` in physical units.
+        """
+        current_image = self.process_image(np.load(current_image_path))
+        reference_image = self.process_image(np.load(reference_image_path))
+        offset = self.register_images(
+            current_image,
+            reference_image,
+            float(current_pixel_size),
+            float(reference_pixel_size),
+            registration_algorithm_kwargs=self.registration_algorithm_kwargs,
+        )
+        return np.array(offset, dtype=float).tolist()
+
     def get_registration_inputs(
         self,
         register_with: Literal["previous", "first", "reference"],
     ) -> tuple[np.ndarray, np.ndarray, float, float]:
+        if self.image_acquisition_tool is None:
+            raise ValueError(
+                "`image_acquisition_tool` is not set. Use `get_offset_from_paths` "
+                "or provide an acquisition tool for backward-compatible buffered registration."
+            )
         image_t = self.process_image(self.image_acquisition_tool.image_k)
         psize_t = self.image_acquisition_tool.psize_k
 
