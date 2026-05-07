@@ -146,9 +146,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             calibration. If False, the loop only performs parameter setting,
             line scan, and optimization updates/suggestions.
         registration_tools : list[RegistrationToolType], optional
-            Registration tools to use for drift estimation. Each tool must
-            provide ``get_offset(target=...)`` returning the shift to apply to
-            the current image so it aligns with the selected reference image.
+            Registration tools to use for drift estimation. ``ImageRegistration``
+            tools are called with explicit image array paths. Other registration
+            tools must provide ``get_offset(target=...)`` returning the shift to
+            apply to the current image so it aligns with the selected reference
+            image.
             Supported tool classes are :class:`ImageRegistration`,
             :class:`TestPatternLandmarkFitting`, and :class:`NNRegistration`.
             The caller is responsible for instantiating these tools with the
@@ -208,16 +210,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 "because a 2D image must be acquired before the tool can run."
             )
         for registration_tool in self.registration_tools:
-            if not hasattr(registration_tool, "get_offset"):
+            if not isinstance(registration_tool, ImageRegistration) and not hasattr(registration_tool, "get_offset"):
                 raise ValueError(
-                    "Each registration tool must provide a `get_offset(target=...)` method, "
+                    "Each non-ImageRegistration tool must provide a `get_offset(target=...)` method, "
                     f"got {type(registration_tool).__name__}."
                 )
-            if hasattr(registration_tool, "image_acquisition_tool") and getattr(
-                registration_tool,
-                "image_acquisition_tool",
-            ) is None:
-                registration_tool.image_acquisition_tool = acquisition_tool
             if isinstance(registration_tool, ImageRegistration):
                 registration_tool.llm_config = llm_config
                 registration_tool.memory_config = memory_config
@@ -852,9 +849,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         Parameters
         ----------
         registration_tool : RegistrationToolType
-            Registration tool that provides ``get_offset(target=...)``, where
-            the returned offset is the shift to apply to the current/test image
-            so it aligns with the selected reference image.
+            Registration tool used for drift correction. ``ImageRegistration``
+            receives explicit current/reference image paths from the acquisition
+            tool. Other registration tools provide ``get_offset(target=...)``.
         target : Literal["previous", "initial"], optional
             The reference image to register against.
             "previous": register the current image against the immediately
@@ -886,10 +883,35 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             for dir in ["y", "x"]
         ]).astype(float)
 
-        alignment_offset = np.array(
-            registration_tool.get_offset(target=target),
-            dtype=float,
-        )
+        if isinstance(registration_tool, ImageRegistration):
+            current_info = self.acquisition_tool.get_current_image_info()
+            reference_info = (
+                self.acquisition_tool.get_previous_image_info()
+                if target == "previous"
+                else self.acquisition_tool.get_initial_image_info()
+            )
+            for image_info, image_role in (
+                (current_info, "current"),
+                (reference_info, target),
+            ):
+                if image_info["array_path"] is None:
+                    raise RegistrationFailed(
+                        f"No .npy array path is available for the {image_role} image."
+                    )
+            alignment_offset = np.array(
+                registration_tool.get_offset_from_paths(
+                    current_image_path=current_info["array_path"],
+                    reference_image_path=reference_info["array_path"],
+                    current_pixel_size=current_info["psize"],
+                    reference_pixel_size=reference_info["psize"],
+                ),
+                dtype=float,
+            )
+        else:
+            alignment_offset = np.array(
+                registration_tool.get_offset(target=target),
+                dtype=float,
+            )
         self.record_registration_tool_result(registration_tool, target, alignment_offset)
 
         # Image registration offset is the offset by which the moving image should be rolled to match

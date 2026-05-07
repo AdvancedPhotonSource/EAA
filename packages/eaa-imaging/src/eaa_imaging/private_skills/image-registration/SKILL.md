@@ -24,8 +24,8 @@ Example:
   report `0.3, -0.1`.
 
 Before responding with the final shift:
-- Use the `apply_and_view_offset` tool to verify your proposed offset.
-- Provide `register_with="previous"`, `fractional_offset_y`, and `fractional_offset_x`.
+- Use the `apply_and_view_offset_from_paths` tool to verify your proposed offset.
+- Provide `current_image_path`, `reference_image_path`, `fractional_offset_y`, and `fractional_offset_x`.
 - You will see two images plotted side-by-side: the left will be the reference/previous image, and the right will be the current image shifted by the specified amount. Check if they are aligned. Refine the offset if needed.
 - You may call this tool multiple times until alignment is satisfactory.
 

@@ -11,6 +11,12 @@ import test_utils as tutils
 
 
 class TestImageRegistrationTool(tutils.BaseTester):
+    @staticmethod
+    def get_previous_current_image_info(acquisition_tool):
+        """Return path metadata for the previous and current acquisitions."""
+        previous_info = acquisition_tool.get_previous_image_info()
+        current_info = acquisition_tool.get_current_image_info()
+        return previous_info, current_info
 
     def test_image_registration(self):
         np.random.seed(123)
@@ -24,7 +30,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
         )
         
         acquisition_tool = SimulatedAcquireImage(whole_image, return_message=False)
-        registration_tool = ImageRegistration(acquisition_tool)
+        registration_tool = ImageRegistration()
         
         acquisition_tool.acquire_image(
             y_center=184, x_center=184, size_y=128, size_x=128
@@ -33,7 +39,15 @@ class TestImageRegistrationTool(tutils.BaseTester):
             y_center=164, x_center=164, size_y=128, size_x=128
         )
 
-        offset = registration_tool.get_offset(target="previous")
+        previous_info, current_info = self.get_previous_current_image_info(
+            acquisition_tool
+        )
+        offset = registration_tool.get_offset_from_paths(
+            current_image_path=current_info["array_path"],
+            reference_image_path=previous_info["array_path"],
+            current_pixel_size=current_info["psize"],
+            reference_pixel_size=previous_info["psize"],
+        )
 
         if self.debug:
             print("Offset: ", offset)
@@ -60,7 +74,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
         )
         
         acquisition_tool = SimulatedAcquireImage(whole_image, return_message=False)
-        registration_tool = ImageRegistration(acquisition_tool, image_coordinates_origin="top_left")
+        registration_tool = ImageRegistration(image_coordinates_origin="top_left")
         
         acquisition_tool.acquire_image(
             y_center=184, x_center=184, size_y=128, size_x=128
@@ -69,7 +83,15 @@ class TestImageRegistrationTool(tutils.BaseTester):
             y_center=175, x_center=175, size_y=150, size_x=150
         )
 
-        offset = registration_tool.get_offset(target="previous")
+        previous_info, current_info = self.get_previous_current_image_info(
+            acquisition_tool
+        )
+        offset = registration_tool.get_offset_from_paths(
+            current_image_path=current_info["array_path"],
+            reference_image_path=previous_info["array_path"],
+            current_pixel_size=current_info["psize"],
+            reference_pixel_size=previous_info["psize"],
+        )
         
         if self.debug:
             print("Offset: ", offset)
@@ -97,7 +119,6 @@ class TestImageRegistrationTool(tutils.BaseTester):
 
         acquisition_tool = SimulatedAcquireImage(whole_image, return_message=False)
         registration_tool = ImageRegistration(
-            acquisition_tool,
             registration_method="mutual_information",
         )
 
@@ -108,7 +129,15 @@ class TestImageRegistrationTool(tutils.BaseTester):
             y_center=164, x_center=164, size_y=128, size_x=128
         )
 
-        offset = registration_tool.get_offset(target="previous")
+        previous_info, current_info = self.get_previous_current_image_info(
+            acquisition_tool
+        )
+        offset = registration_tool.get_offset_from_paths(
+            current_image_path=current_info["array_path"],
+            reference_image_path=previous_info["array_path"],
+            current_pixel_size=current_info["psize"],
+            reference_pixel_size=previous_info["psize"],
+        )
 
         if self.debug:
             print("Offset (mutual information): ", offset)

@@ -14,7 +14,6 @@ from eaa_core.skill import SkillMetadata
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.tool.base import BaseTool, check, tool
 
-from eaa_imaging.tool.imaging.acquisition import AcquireImage
 from eaa_imaging.image_proc import (
     error_minimization_registration,
     phase_cross_correlation,
@@ -25,17 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 class ImageRegistration(BaseTool):
-    """
-    A tool that registers the latest image collected by the
-    image acquisition tool and a reference image.
-    """
+    """Register image arrays supplied explicitly by callers."""
 
     name: str = "image_registration"
 
     @check
     def __init__(
         self,
-        image_acquisition_tool: Optional[AcquireImage] = None,
         llm_config: Optional[LLMConfig] = None,
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
@@ -55,10 +50,6 @@ class ImageRegistration(BaseTool):
 
         Parameters
         ----------
-        image_acquisition_tool : AcquireImage, optional
-            Optional acquisition tool used for backward-compatible
-            ``get_offset`` calls. New callers should prefer path-based
-            registration methods and pass image ``.npy`` paths explicitly.
         reference_image : np.ndarray, optional
             The reference image to register the latest image with.
         reference_pixel_size : float, optional
@@ -89,7 +80,6 @@ class ImageRegistration(BaseTool):
         """
         super().__init__(*args, require_approval=require_approval, **kwargs)
 
-        self.image_acquisition_tool = image_acquisition_tool
         self.llm_config = llm_config
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
@@ -100,12 +90,11 @@ class ImageRegistration(BaseTool):
         self.log_scale = log_scale
 
     def set_reference_image(
-        self, reference_image: np.ndarray, 
-        reference_pixel_size: float = 1.0
-    ):
-        """
-        Set the reference image.
-        """
+        self,
+        reference_image: np.ndarray,
+        reference_pixel_size: float = 1.0,
+    ) -> None:
+        """Set the reference image."""
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
 
@@ -159,28 +148,6 @@ class ImageRegistration(BaseTool):
             return image
         return ndi.zoom(image, zoom=self.zoom, order=1, mode="nearest")
 
-    @tool(name="get_offset")
-    def get_offset(
-        self,
-        target: Annotated[
-            Literal["previous", "initial", "reference"],
-            "Reference image buffer against which the current image is compared.",
-        ] = "initial",
-    ) -> Annotated[
-        List[float],
-        "The translational offset [dy, dx] to apply to the latest image "
-        "so it aligns with the selected reference image.",
-    ]:
-        """Register the latest image collected by the image acquisition tool
-        and the reference image.
-        """
-        register_with = "previous" if target == "previous" else "first"
-        image_t, image_r, psize_t, psize_r = self.get_registration_inputs(register_with)
-        return self.register_images(
-            image_t, image_r, psize_t, psize_r,
-            registration_algorithm_kwargs=self.registration_algorithm_kwargs
-        )
-
     @tool(name="get_offset_from_paths")
     def get_offset_from_paths(
         self,
@@ -222,41 +189,11 @@ class ImageRegistration(BaseTool):
         )
         return np.array(offset, dtype=float).tolist()
 
-    def get_registration_inputs(
+    @tool(name="apply_and_view_offset_from_paths")
+    def apply_and_view_offset_from_paths(
         self,
-        register_with: Literal["previous", "first", "reference"],
-    ) -> tuple[np.ndarray, np.ndarray, float, float]:
-        if self.image_acquisition_tool is None:
-            raise ValueError(
-                "`image_acquisition_tool` is not set. Use `get_offset_from_paths` "
-                "or provide an acquisition tool for backward-compatible buffered registration."
-            )
-        image_t = self.process_image(self.image_acquisition_tool.image_k)
-        psize_t = self.image_acquisition_tool.psize_k
-
-        if register_with == "previous":
-            image_r = self.process_image(self.image_acquisition_tool.image_km1)
-            psize_r = self.image_acquisition_tool.psize_km1
-        elif register_with == "first":
-            image_r = self.process_image(self.image_acquisition_tool.image_0)
-            psize_r = self.image_acquisition_tool.psize_0
-        elif register_with == "reference":
-            if self.reference_image is None:
-                raise ValueError("Reference image is not set.")
-            image_r = self.process_image(self.reference_image)
-            psize_r = self.reference_pixel_size
-        else:
-            raise ValueError(f"Invalid value for register_with: {register_with}")
-        return image_t, image_r, float(psize_t), float(psize_r)
-
-    @tool(name="apply_and_view_offset")
-    def apply_and_view_offset(
-        self,
-        register_with: Annotated[
-            Literal["previous", "first", "reference"],
-            "The image to register the latest image with. "
-            "Can be 'previous', 'first', or 'reference'.",
-        ],
+        current_image_path: Annotated[str, "Path to the current image .npy file."],
+        reference_image_path: Annotated[str, "Path to the reference image .npy file."],
         fractional_offset_y: Annotated[
             float,
             "Fractional y-shift (down is positive) relative to image height.",
@@ -266,10 +203,9 @@ class ImageRegistration(BaseTool):
             "Fractional x-shift (right is positive) relative to image width.",
         ],
     ) -> Annotated[dict[str, str], "Tool payload containing `img_path` for the verification figure."]:
-        """Apply a fractional offset to the latest (moving) image and
-        view it side by side with the reference image.
-        """
-        image_t, image_r, _, _ = self.get_registration_inputs(register_with)
+        """Apply a fractional offset to a current image loaded from path."""
+        image_t = self.process_image(np.load(current_image_path))
+        image_r = self.process_image(np.load(reference_image_path))
         shift_pixels = np.array(
             [
                 fractional_offset_y * float(image_r.shape[0]),
@@ -357,6 +293,15 @@ class ImageRegistration(BaseTool):
             filename="llm_registration_pair.png",
             add_timestamp=True,
         )
+        image_path_stem = Path(image_path).with_suffix("")
+        current_image_path = image_path_stem.with_name(
+            f"{image_path_stem.name}_current.npy"
+        )
+        reference_image_path = image_path_stem.with_name(
+            f"{image_path_stem.name}_reference.npy"
+        )
+        np.save(current_image_path, image_t)
+        np.save(reference_image_path, image_r)
 
         registration_task = BaseTaskManager(
             llm_config=self.llm_config,
@@ -386,8 +331,9 @@ class ImageRegistration(BaseTool):
                     "Estimate the translational shift to apply to the current/test image "
                     "so it aligns with the previous/reference image, and return only "
                     "'<shift_y>, <shift_x>'. "
-                    "Before final answer, call apply_and_view_offset to verify your proposed offset. "
-                    "Use register_with='previous' for verification."
+                    "Before final answer, call apply_and_view_offset_from_paths to verify your proposed offset. "
+                    f"Use current_image_path={str(current_image_path)!r} and "
+                    f"reference_image_path={str(reference_image_path)!r} for verification."
                 ),
                 role="user",
                 image_path=image_path,

@@ -58,7 +58,7 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
         
         image_acquisition_tool = ensure_acquisition_tool_interface(image_acquisition_tool)
         self.image_acquisition_tool = image_acquisition_tool
-        self.image_registration_tool = self.create_image_registration_tool(image_acquisition_tool)
+        self.image_registration_tool = self.create_image_registration_tool()
         
         self.image_acquisition_tool_x_coordinate_args = image_acquisition_tool_x_coordinate_args
         self.image_acquisition_tool_y_coordinate_args = image_acquisition_tool_y_coordinate_args
@@ -72,9 +72,9 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
             *args, **kwargs
         )
         
-    def create_image_registration_tool(self, acquisition_tool: AcquireImage):
+    def create_image_registration_tool(self) -> ImageRegistration:
+        """Create the path-independent image registration tool."""
         image_registration_tool = ImageRegistration(
-            image_acquisition_tool=acquisition_tool,
             reference_image=None,
             reference_pixel_size=1.0,
             image_coordinates_origin="top_left",

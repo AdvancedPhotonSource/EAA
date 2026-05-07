@@ -51,9 +51,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             drift_factor=10,
         )
         if registration_tools is None:
-            registration_tools = [
-                ImageRegistration(image_acquisition_tool=acquisition_tool)
-            ]
+            registration_tools = [ImageRegistration()]
 
         task_manager = AnalyticalScanningMicroscopeFocusingTaskManager(
             param_setting_tool=param_setting_tool,

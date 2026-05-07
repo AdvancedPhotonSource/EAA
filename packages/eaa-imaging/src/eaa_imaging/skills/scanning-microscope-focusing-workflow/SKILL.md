@@ -94,7 +94,8 @@ Overall, the procedure consists of the following steps:
 
 6. Since the image has drifted, you need to adjust the positions where the next line scan is
    run. If you have an image registration tool, use it to register the new image with the previous image.
-   When calling the tool, use `register_with="previous"`. To apply the registration result to the
+   When calling the tool, pass the explicit `.npy` paths for the current and previous images.
+   To apply the registration result to the
    subsequent line scan, *add* the offset to the positions used for the previous line scan.
    Run a line scan with the updated positions. You will see the new line scan plot
    and the FWHM of the Gaussian fit. If you see any exceptions listed in 3, fix it and
