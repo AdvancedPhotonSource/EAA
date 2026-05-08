@@ -164,6 +164,34 @@ def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):
     assert ".eaa-markdown code:not(pre code)" in styles
     assert ".eaa-browser-image-preview" in styles
     assert ".eaa-message-details" in styles
+    assert ".eaa-tool-call-details" in styles
+
+
+def test_nicegui_webui_formats_tool_calls_from_payload(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+
+    tool_calls = webui.format_message_tool_calls(
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": "call_1: acquire_image\nArguments: {\"x\": 1}",
+        }
+    )
+
+    assert tool_calls == 'call_1: acquire_image\nArguments: {"x": 1}'
+
+
+def test_nicegui_webui_ignores_missing_tool_calls(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+
+    tool_calls = webui.format_message_tool_calls(
+        {
+            "role": "assistant",
+            "content": "no tools",
+        }
+    )
+
+    assert tool_calls == ""
 
 
 def test_nicegui_webui_image_html_uses_lazy_loading(tmp_path):

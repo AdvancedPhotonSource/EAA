@@ -340,9 +340,31 @@ class NiceGUIWebUIBase:
                 ui.label(self.format_role_label(role)).classes("eaa-role")
                 if content:
                     self.render_message_content(role, content)
+                self.render_message_tool_calls(message)
                 rendered_images = self.render_message_images(message)
                 self.maybe_add_approval_actions(message)
         return rendered_images
+
+    def render_message_tool_calls(self, message: dict[str, Any]) -> None:
+        """Render assistant tool calls attached to a transcript message.
+
+        Parameters
+        ----------
+        message : dict[str, Any]
+            WebUI-formatted message containing an optional ``tool_calls`` field.
+        """
+        from nicegui import ui
+
+        tool_calls = self.format_message_tool_calls(message)
+        if not tool_calls:
+            return
+        safe_tool_calls = html_module.escape(tool_calls)
+        ui.html(
+            "<details class=\"eaa-tool-call-details\" open>"
+            "<summary>Tool calls</summary>"
+            f"<pre>{safe_tool_calls}</pre>"
+            "</details>"
+        )
 
     def render_message_content(self, role: str, content: str) -> None:
         """Render message text, folding long user/tool content by default.
@@ -592,6 +614,26 @@ class NiceGUIWebUIBase:
             Markdown text.
         """
         return str(message.get("content") or "").strip()
+
+    def format_message_tool_calls(self, message: dict[str, Any]) -> str:
+        """Return display text for tool calls attached to a message.
+
+        Parameters
+        ----------
+        message : dict[str, Any]
+            WebUI-formatted message.
+
+        Returns
+        -------
+        str
+            Tool-call text, or an empty string when no calls are present.
+        """
+        tool_calls = message.get("tool_calls")
+        if tool_calls is None:
+            return ""
+        if isinstance(tool_calls, str):
+            return tool_calls.strip()
+        return str(tool_calls).strip()
 
     def format_role_label(self, role: str) -> str:
         """Return the display label for a message role.
@@ -974,6 +1016,27 @@ class NiceGUIWebUIBase:
             overflow-wrap: anywhere;
             background: #f3f4f6;
             border: 1px solid #e5e7eb;
+            border-radius: 6px;
+        }
+        .eaa-tool-call-details {
+            width: 100%;
+            font-size: 13px;
+        }
+        .eaa-tool-call-details summary {
+            color: #475467;
+            cursor: pointer;
+            font-weight: 650;
+            user-select: none;
+        }
+        .eaa-tool-call-details pre {
+            max-height: 20rem;
+            overflow: auto;
+            margin: 6px 0 0;
+            padding: 8px 10px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            background: #eef2f7;
+            border: 1px solid #d7dde8;
             border-radius: 6px;
         }
         .eaa-approval-actions {
