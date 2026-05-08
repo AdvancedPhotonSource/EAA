@@ -6,8 +6,8 @@ import os
 import re
 import typing
 from dataclasses import dataclass
-from types import FunctionType, MethodType
-from typing import Any, Callable, Dict, List, Optional, get_args, get_type_hints
+from types import FunctionType, MethodType, UnionType
+from typing import Any, Callable, Dict, List, Optional, get_type_hints
 
 import eaa_core.matplotlib_setup  # noqa: F401
 import matplotlib.pyplot as plt
@@ -35,11 +35,15 @@ class ExposedToolSpec:
 
     name: str
     function: Callable[..., Any]
-    require_approval: Optional[bool] = None
+    require_approval: Optional[bool | Callable[[Dict[str, Any]], bool]] = None
     schema: Optional[Dict[str, Any]] = None
 
 
-def tool(name: str):
+def tool(
+    name: str,
+    *,
+    require_approval: Optional[bool | str | Callable[[Dict[str, Any]], bool]] = None,
+):
     """Mark a method as an exposed tool."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -47,6 +51,7 @@ def tool(name: str):
             raise TypeError("@tool can only decorate callables.")
         setattr(func, "is_tool", True)
         setattr(func, "tool_name", name)
+        setattr(func, "tool_require_approval", require_approval)
         return func
 
     return decorator
@@ -150,10 +155,14 @@ class BaseTool:
                 bound = getattr(self, attr_name)
                 overrides = getattr(self, "tool_name_overrides", None)
                 name = overrides.get(attr_name) if overrides and attr_name in overrides else getattr(target, "tool_name", attr_name)
+                require_approval = getattr(target, "tool_require_approval", None)
+                if isinstance(require_approval, str):
+                    require_approval = getattr(self, require_approval)
                 discovered.append(
                     ExposedToolSpec(
                         name=name,
                         function=bound,
+                        require_approval=require_approval,
                     )
                 )
         return discovered
@@ -190,7 +199,7 @@ def check(init_method: Callable):
 def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any]:
     """Generate an OpenAI-compatible tool schema from a Python callable."""
     signature = inspect.signature(func)
-    type_hints = get_type_hints(func)
+    type_hints = get_type_hints(func, include_extras=True)
     doc = inspect.getdoc(func) or ""
     python_type_to_json = {
         str: "string",
@@ -202,12 +211,28 @@ def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any
         dict: "object",
     }
 
+    def unwrap_annotated(py_type):
+        origin = typing.get_origin(py_type)
+        if origin is typing.Annotated:
+            args = typing.get_args(py_type)
+            description = next((value for value in args[1:] if isinstance(value, str)), None)
+            return args[0], description
+        return py_type, None
+
     def resolve_json_type(py_type):
+        py_type, _description = unwrap_annotated(py_type)
         origin = typing.get_origin(py_type)
         args = typing.get_args(py_type)
+        if origin in {typing.Union, UnionType}:
+            non_none_args = [arg for arg in args if arg is not type(None)]
+            if len(non_none_args) == 1:
+                return resolve_json_type(non_none_args[0])
+            return {"anyOf": [resolve_json_type(arg) for arg in non_none_args]}
         if origin in {list, typing.List}:
-            item_type = python_type_to_json.get(args[0], "string") if args else "string"
-            return {"type": "array", "items": {"type": item_type}}
+            item_schema = resolve_json_type(args[0]) if args else {"type": "string"}
+            return {"type": "array", "items": item_schema}
+        if origin in {dict, typing.Dict}:
+            return {"type": "object"}
         return {"type": python_type_to_json.get(py_type, "string")}
 
     properties = {}
@@ -216,9 +241,13 @@ def generate_openai_tool_schema(tool_name: str, func: Callable) -> Dict[str, Any
         if name not in type_hints:
             continue
         description = f"{name} parameter"
-        if len(get_args(signature.parameters[name].annotation)) > 1:
-            description = get_args(signature.parameters[name].annotation)[1]
-        properties[name] = {**resolve_json_type(type_hints[name]), "description": description}
+        _base_type, annotated_description = unwrap_annotated(type_hints[name])
+        if annotated_description is not None:
+            description = annotated_description
+        properties[name] = {
+            **resolve_json_type(type_hints[name]),
+            "description": description,
+        }
         if param.default == inspect.Parameter.empty:
             required.append(name)
 

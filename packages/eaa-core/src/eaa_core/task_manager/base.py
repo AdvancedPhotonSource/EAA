@@ -35,6 +35,7 @@ from eaa_core.task_manager.state import (
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
 from eaa_core.tool.coding import BashCodingTool, PythonCodingTool
+from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
 from eaa_core.tool.skill import SkillLibraryTool
 
 logger = logging.getLogger(__name__)
@@ -749,8 +750,11 @@ class BaseTaskManager:
             return tools
         tools.extend(
             [
+                FileSystemTool(),
+                ImageRenderingTool(),
                 PythonCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
                 BashCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
+                UvTool(),
             ]
         )
         return tools

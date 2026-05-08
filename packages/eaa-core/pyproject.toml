@@ -18,6 +18,7 @@ dependencies = [
     "nicegui",
     "numpy",
     "openai",
+    "pillow",
     "tqdm",
     "fastmcp>=2.11.3",
     "langgraph-checkpoint-sqlite>=3.0.3",

@@ -97,16 +97,21 @@ class SerialToolExecutor:
             raise ValueError(f"Unknown tool requested: {tool_name}")
         spec = self.tool_specs[tool_name]
         arguments = self.parse_arguments(function.get("arguments"))
-        if spec.require_approval and self.approval_handler is not None:
-            approved = self.approval_handler(tool_name, arguments)
-            if not approved:
-                message = generate_openai_message(
-                    content=self.serialize_result({"error": "Tool execution was denied by the user."}),
-                    role="tool",
-                    tool_call_id=tool_call.get("id"),
-                )
-                return ToolExecutionResult(message=message)
         try:
+            approval_required = (
+                spec.require_approval(arguments)
+                if callable(spec.require_approval)
+                else spec.require_approval
+            )
+            if approval_required and self.approval_handler is not None:
+                approved = self.approval_handler(tool_name, arguments)
+                if not approved:
+                    message = generate_openai_message(
+                        content=self.serialize_result({"error": "Tool execution was denied by the user."}),
+                        role="tool",
+                        tool_call_id=tool_call.get("id"),
+                    )
+                    return ToolExecutionResult(message=message)
             result = spec.function(**arguments)
             content = self.serialize_result(result)
         except Exception as exc:
@@ -179,14 +184,14 @@ class SerialToolExecutor:
         if payload is not None:
             image_path = payload.get(TOOL_IMAGE_PATH_FIELD)
             if isinstance(image_path, list):
-                return [value for value in image_path if isinstance(value, str)]
-            if isinstance(image_path, str):
+                return [value for value in image_path if isinstance(value, str) and value.strip()]
+            if isinstance(image_path, str) and image_path.strip():
                 return [image_path]
             legacy_image_paths = payload.get("image_paths")
             if isinstance(legacy_image_paths, list):
-                return [value for value in legacy_image_paths if isinstance(value, str)]
+                return [value for value in legacy_image_paths if isinstance(value, str) and value.strip()]
             legacy_image_path = payload.get("image_path")
-            if isinstance(legacy_image_path, str):
+            if isinstance(legacy_image_path, str) and legacy_image_path.strip():
                 return [legacy_image_path]
             return []
         return []

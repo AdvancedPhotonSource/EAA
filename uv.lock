@@ -1697,6 +1697,7 @@ dependencies = [
     { name = "nicegui" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "pillow" },
     { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1733,6 +1734,7 @@ requires-dist = [
     { name = "nicegui" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "pillow" },
     { name = "pydata-sphinx-theme", marker = "extra == 'docs'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
