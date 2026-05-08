@@ -12,6 +12,7 @@ configuration surface, and extension points.
    llm-config
    task-manager
    tools
+   creating-async-safe-mcp-servers
    skills
    memory
    webui

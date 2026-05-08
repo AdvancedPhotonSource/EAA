@@ -74,7 +74,12 @@ Using external MCP servers
 EAA can also consume remote MCP tools through ``MCPTool`` in ``eaa_core.tool.mcp_client``.
 The wrapper connects to one or more MCP servers using a FastMCP-compatible
 configuration and exposes the remote tools through the normal ``BaseTool``
-interface.
+interface. 
+
+To create MCP tool servers that contro instruments at experiment endstations,
+we strongly recommend following the async-safe server pattern to avoid issues
+related to thread-safety and async even loop conflicts. Find more details in
+:doc:`creating-async-safe-mcp-servers`.
 
 .. code-block:: python
 
@@ -139,3 +144,7 @@ Notes:
 - arbitrary third-party MCP servers may still return non-EAA payloads, so the
   agent loop only treats results as image-bearing when an ``img_path`` is
   present
+- chat interactions and agent-selected tool calls do not require external MCP
+  servers to use EAA-specific tool names; only logic-driven task managers that
+  call tool methods directly need the adapter contracts documented in
+  :doc:`creating-async-safe-mcp-servers`
