@@ -5,8 +5,35 @@ from __future__ import annotations
 from typing import Any
 import json
 
+import numpy as np
+
 from eaa_core.tool.mcp_client import MCPTool
 from eaa_core.tool.param_tuning import SetParameters
+
+
+def make_json_serializable(value: Any) -> Any:
+    """Convert common NumPy values into JSON-serializable Python objects.
+
+    Parameters
+    ----------
+    value : Any
+        Value to normalize before sending it through MCP.
+
+    Returns
+    -------
+    Any
+        JSON-serializable value for arrays, NumPy scalars, mappings, and
+        sequences.
+    """
+    if isinstance(value, dict):
+        return {str(key): make_json_serializable(item) for key, item in value.items()}
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, list | tuple):
+        return [make_json_serializable(item) for item in value]
+    return value
 
 
 def call_named_tool(tool: Any, tool_name: str, arguments: dict[str, Any] | None = None) -> Any:
@@ -74,8 +101,13 @@ class MCPParameterSettingProxy(SetParameters):
 
     def set_parameters(self, parameters: list[float]) -> str:
         """Set parameters through the remote tool and update local history."""
-        result = call_named_tool(self.mcp_tool, "set_parameters", {"parameters": parameters})
-        self.update_parameter_history(parameters)
+        normalized_parameters = make_json_serializable(parameters)
+        result = call_named_tool(
+            self.mcp_tool,
+            "set_parameters",
+            {"parameters": normalized_parameters},
+        )
+        self.update_parameter_history(normalized_parameters)
         if isinstance(result, str):
             return result
         if isinstance(result, dict):
