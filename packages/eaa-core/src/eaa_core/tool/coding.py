@@ -290,16 +290,25 @@ class BashCodingTool(CodingTool):
     @tool(name="execute_bash_code")
     def execute_code(
         self,
-        code: str,
+        code: Annotated[str, "Bash source code to execute in a subprocess."],
         *,
-        timeout: Optional[float] = None,
-        cwd: Optional[str] = None,
-        input_text: Optional[str] = None,
+        timeout: Annotated[
+            Optional[float],
+            "Maximum seconds to wait for execution. Overrides the tool-level default; omit to use the default.",
+        ] = None,
+        cwd: Annotated[
+            Optional[str],
+            "Working directory for the subprocess. Overrides the tool-level default; omit to use the default.",
+        ] = None,
+        input_text: Annotated[
+            Optional[str],
+            "Text piped into the subprocess's stdin.",
+        ] = None,
     ) -> Dict[str, Any]:
         """Execute Bash code in a subprocess and capture the result."""
         if not isinstance(code, str):
             raise TypeError("code must be a string containing Bash source")
-        exec_timeout = timeout if timeout is not None else self._default_timeout
+        exec_timeout = float(timeout) if timeout is not None else self._default_timeout
         exec_cwd = cwd or self._working_directory
         env = os.environ.copy()
         env.update(self._environment)
