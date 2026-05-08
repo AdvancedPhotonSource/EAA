@@ -25,15 +25,30 @@ Then start the WebUI process:
 
 .. code-block:: python
 
-   from eaa_core.gui.chat import run_webui, set_message_db_path
+   from eaa_core.gui.nicegui import run_nicegui_webui
 
-   set_message_db_path("session.sqlite")
-   run_webui(host="127.0.0.1", port=8008)
+   run_nicegui_webui("session.sqlite", host="127.0.0.1", port=8008)
+
+To launch the NiceGUI WebUI without blocking the current Python process, use
+the subprocess launcher:
+
+.. code-block:: python
+
+   from eaa_core.gui.nicegui import launch_nicegui_webui_subprocess
+
+   process = launch_nicegui_webui_subprocess(
+       "session.sqlite",
+       host="127.0.0.1",
+       port=8008,
+   )
+
+   # Later, when the UI is no longer needed:
+   process.terminate()
 
 Communication mechanism
 -----------------------
 
-The browser-facing FastAPI server reads and writes a shared SQLite file. The
+The browser-facing NiceGUI process reads and writes a shared SQLite file. The
 main tables involved are:
 
 ``webui_messages``
@@ -57,11 +72,30 @@ Brief design introduction
 
 The current WebUI has a deliberately small design:
 
-- FastAPI backend in ``eaa_core.gui.chat``
-- static frontend assets in ``src/eaa/gui/webui_static/``
+- reusable SQLite relay helpers in ``eaa_core.gui.relay``
+- reusable NiceGUI base class in ``eaa_core.gui.nicegui``
 - polling-based message/status updates
 - clipboard image upload support
 - no tight coupling to a specific task-manager subclass
 
 This design keeps the UI process simple and lets the task manager remain the
 source of truth for workflow execution.
+
+Extending the NiceGUI WebUI
+---------------------------
+
+Task-specific packages can subclass ``NiceGUIWebUIBase`` and override layout
+hooks without changing the SQL relay contract:
+
+.. code-block:: python
+
+   from nicegui import ui
+   from eaa_core.gui.nicegui import NiceGUIWebUIBase
+
+
+   class FocusingWebUI(NiceGUIWebUIBase):
+       def build_before_messages(self) -> None:
+           ui.label("Focusing controls")
+
+
+   FocusingWebUI("session.sqlite").run(host="127.0.0.1", port=8008)

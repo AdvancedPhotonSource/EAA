@@ -4,6 +4,12 @@ from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState
 from eaa_core.gui.chat import _parse_images_field
 from eaa_core.gui.chat import _insert_user_message, _query_messages, set_message_db_path
+from eaa_core.gui.nicegui import (
+    NiceGUIWebUIBase,
+    build_parser,
+    launch_nicegui_webui_subprocess,
+)
+from eaa_core.gui.relay import SQLiteWebUIRelay
 
 
 def test_parse_images_field_single_data_url():
@@ -112,3 +118,160 @@ def test_query_messages_reads_explicit_webui_messages(tmp_path):
     assert len(messages) == 1
     assert messages[0]["role"] == "system"
     assert messages[0]["content"] == "display now"
+
+
+def test_sqlite_webui_relay_queues_user_input(tmp_path):
+    shared_db = tmp_path / "shared.sqlite"
+    relay = SQLiteWebUIRelay(str(shared_db))
+
+    relay.enqueue_user_input("queued through relay")
+
+    connection = sqlite3.connect(shared_db)
+    input_rows = connection.execute(
+        "SELECT content FROM webui_inputs ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    connection.close()
+
+    assert input_rows == ("queued through relay",)
+
+
+def test_nicegui_webui_base_uses_sqlite_relay(tmp_path):
+    shared_db = tmp_path / "shared.sqlite"
+    webui = NiceGUIWebUIBase(str(shared_db), title="Custom UI")
+
+    assert webui.title == "Custom UI"
+    assert isinstance(webui.relay, SQLiteWebUIRelay)
+    assert webui.relay.db_path == str(shared_db)
+
+
+def test_nicegui_webui_base_consumes_matching_pending_message(tmp_path):
+    shared_db = tmp_path / "shared.sqlite"
+    webui = NiceGUIWebUIBase(str(shared_db))
+    webui.pending_messages["pending-0"] = "hello"
+
+    consumed = webui.consume_pending_message({"role": "user", "content": "hello"})
+
+    assert consumed is True
+    assert webui.pending_messages == {}
+
+
+def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    styles = webui.styles()
+
+    assert ".eaa-input-panel" in styles
+    assert ".eaa-markdown pre" in styles
+    assert ".eaa-markdown code:not(pre code)" in styles
+    assert ".eaa-browser-image-preview" in styles
+    assert ".eaa-message-details" in styles
+
+
+def test_nicegui_webui_image_html_uses_lazy_loading(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    html = webui.image_html("/tmp/image.png?a=1&b=2", "example-image")
+
+    assert 'loading="lazy"' in html
+    assert 'decoding="async"' in html
+    assert 'data-eaa-full-src=' in html
+    assert "&amp;" in html
+
+
+def test_nicegui_webui_keyboard_shortcuts_script_is_bound_to_textarea(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    script = webui.keyboard_shortcuts_script()
+
+    assert "keydown" in script
+    assert "event.shiftKey" in script
+    assert "Enter" in script
+
+
+def test_sqlite_webui_relay_image_response_sets_cache_headers(tmp_path):
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"png-data")
+    relay = SQLiteWebUIRelay(str(tmp_path / "shared.sqlite"))
+
+    response = relay.image_response(str(image_path))
+
+    assert response.headers["cache-control"] == "public, max-age=3600"
+    assert response.headers["etag"]
+    assert response.headers["last-modified"]
+
+
+def test_nicegui_webui_parser_reads_launch_arguments():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "session.sqlite",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+            "--title",
+            "Beamline UI",
+            "--upload-dir",
+            "uploads",
+            "--poll-interval",
+            "0.5",
+        ]
+    )
+
+    assert args.session_db_path == "session.sqlite"
+    assert args.host == "0.0.0.0"
+    assert args.port == 9000
+    assert args.title == "Beamline UI"
+    assert args.upload_dir == "uploads"
+    assert args.poll_interval == 0.5
+
+
+def test_launch_nicegui_webui_subprocess_returns_popen(tmp_path, monkeypatch):
+    shared_db = tmp_path / "shared.sqlite"
+    popen_calls = []
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            self.command = command
+            self.kwargs = kwargs
+            popen_calls.append((command, kwargs))
+
+    monkeypatch.setattr("eaa_core.gui.nicegui.subprocess.Popen", FakePopen)
+
+    process = launch_nicegui_webui_subprocess(
+        str(shared_db),
+        host="0.0.0.0",
+        port=9000,
+        title="Beamline UI",
+        upload_dir="uploads",
+        poll_interval=0.5,
+        python_executable="/usr/bin/python",
+        cwd="/tmp",
+        env={"EAA_TEST": "1"},
+    )
+
+    assert isinstance(process, FakePopen)
+    assert popen_calls == [
+        (
+            [
+                "/usr/bin/python",
+                "-m",
+                "eaa_core.gui.nicegui",
+                str(shared_db),
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "9000",
+                "--title",
+                "Beamline UI",
+                "--upload-dir",
+                "uploads",
+                "--poll-interval",
+                "0.5",
+            ],
+            {
+                "cwd": "/tmp",
+                "env": {"EAA_TEST": "1"},
+                "stdout": None,
+                "stderr": None,
+            },
+        )
+    ]
