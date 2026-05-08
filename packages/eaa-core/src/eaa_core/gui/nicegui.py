@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import html as html_module
+import json
 import re
 import subprocess
 import sys
@@ -14,6 +15,14 @@ from eaa_core.gui.relay import SQLiteWebUIRelay, set_message_db_path
 
 IMAGE_TAG_PATTERN = re.compile(r"<img\s+([^>\s]+)>")
 APPROVAL_PATTERN = re.compile(r"Approve\?\s*\[y/N\]:", re.IGNORECASE)
+APPROVAL_ARGUMENTS_PATTERN = re.compile(
+    r"Arguments:\s*(?P<arguments>.*?)\nApprove\?\s*\[y/N\]:",
+    re.IGNORECASE | re.DOTALL,
+)
+APPROVAL_TOOL_PATTERN = re.compile(
+    r"Tool\s+'(?P<tool_name>[^']+)'\s+requires approval",
+    re.IGNORECASE,
+)
 
 
 class NiceGUIWebUIBase:
@@ -339,7 +348,10 @@ class NiceGUIWebUIBase:
             with ui.column().classes(f"eaa-message eaa-message-{role}"):
                 ui.label(self.format_role_label(role)).classes("eaa-role")
                 if content:
-                    self.render_message_content(role, content)
+                    if self.is_approval_message(message):
+                        self.render_approval_message_content(content)
+                    else:
+                        self.render_message_content(role, content)
                 self.render_message_tool_calls(message)
                 rendered_images = self.render_message_images(message)
                 self.maybe_add_approval_actions(message)
@@ -365,6 +377,41 @@ class NiceGUIWebUIBase:
             f"<pre>{safe_tool_calls}</pre>"
             "</details>"
         )
+
+    def render_approval_message_content(self, content: str) -> None:
+        """Render a tool-approval prompt with compact arguments and code blocks.
+
+        Parameters
+        ----------
+        content : str
+            Approval prompt text emitted by the task manager.
+        """
+        from nicegui import ui
+
+        approval = self.format_approval_message(content)
+        if approval is None:
+            self.render_message_content("system", content)
+            return
+
+        ui.markdown(approval["summary"], extras=list(self.markdown_extras)).classes(
+            "eaa-markdown"
+        )
+        safe_arguments = html_module.escape(approval["arguments_json"])
+        ui.html(
+            "<div class=\"eaa-approval-arguments\">"
+            "<div class=\"eaa-approval-section-title\">Arguments</div>"
+            f"<pre>{safe_arguments}</pre>"
+            "</div>"
+        )
+        for field in approval["extracted_fields"]:
+            safe_label = html_module.escape(field["label"])
+            safe_value = html_module.escape(field["value"])
+            ui.html(
+                "<div class=\"eaa-approval-extracted-field\">"
+                f"<div class=\"eaa-approval-section-title\">{safe_label}</div>"
+                f"<pre><code>{safe_value}</code></pre>"
+                "</div>"
+            )
 
     def render_message_content(self, role: str, content: str) -> None:
         """Render message text, folding long user/tool content by default.
@@ -614,6 +661,107 @@ class NiceGUIWebUIBase:
             Markdown text.
         """
         return str(message.get("content") or "").strip()
+
+    def is_approval_message(self, message: dict[str, Any]) -> bool:
+        """Return whether a message is a tool-approval system prompt.
+
+        Parameters
+        ----------
+        message : dict[str, Any]
+            WebUI-formatted message.
+
+        Returns
+        -------
+        bool
+            Whether the message should use approval-specific rendering.
+        """
+        return str(message.get("role") or "") == "system" and bool(
+            APPROVAL_PATTERN.search(str(message.get("content") or ""))
+        )
+
+    def format_approval_message(self, content: str) -> dict[str, Any] | None:
+        """Parse and format a tool-approval prompt for display.
+
+        Parameters
+        ----------
+        content : str
+            Prompt emitted by ``BaseTaskManager`` for tool approval.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Display fields for a parsed approval prompt, or ``None`` when the
+            prompt does not match the expected shape.
+        """
+        arguments_match = APPROVAL_ARGUMENTS_PATTERN.search(content)
+        if arguments_match is None:
+            return None
+        try:
+            arguments = json.loads(arguments_match.group("arguments"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(arguments, dict):
+            return None
+
+        scrubbed_arguments, extracted_fields = self.extract_approval_text_fields(
+            arguments
+        )
+        tool_match = APPROVAL_TOOL_PATTERN.search(content)
+        tool_name = tool_match.group("tool_name") if tool_match is not None else "tool"
+        return {
+            "summary": f"Tool `{tool_name}` requires approval before execution.",
+            "arguments_json": json.dumps(scrubbed_arguments, indent=2, default=str),
+            "extracted_fields": extracted_fields,
+        }
+
+    def extract_approval_text_fields(
+        self,
+        value: Any,
+        *,
+        path: str = "",
+    ) -> tuple[Any, list[dict[str, str]]]:
+        """Replace large text fields in approval arguments with placeholders.
+
+        Parameters
+        ----------
+        value : Any
+            Parsed JSON-compatible value.
+        path : str, default=""
+            Dot/bracket path to ``value`` in the original arguments.
+
+        Returns
+        -------
+        tuple[Any, list[dict[str, str]]]
+            Scrubbed value and extracted text fields for separate rendering.
+        """
+        extracted_fields: list[dict[str, str]] = []
+        if isinstance(value, dict):
+            scrubbed: dict[str, Any] = {}
+            for key, item in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if key.lower() in {"code", "content"} and isinstance(item, str):
+                    extracted_fields.append({"label": child_path, "value": item})
+                    scrubbed[key] = f"<{child_path} rendered below>"
+                    continue
+                scrubbed_item, child_fields = self.extract_approval_text_fields(
+                    item,
+                    path=child_path,
+                )
+                scrubbed[key] = scrubbed_item
+                extracted_fields.extend(child_fields)
+            return scrubbed, extracted_fields
+        if isinstance(value, list):
+            scrubbed_list: list[Any] = []
+            for index, item in enumerate(value):
+                child_path = f"{path}[{index}]" if path else f"[{index}]"
+                scrubbed_item, child_fields = self.extract_approval_text_fields(
+                    item,
+                    path=child_path,
+                )
+                scrubbed_list.append(scrubbed_item)
+                extracted_fields.extend(child_fields)
+            return scrubbed_list, extracted_fields
+        return value, extracted_fields
 
     def format_message_tool_calls(self, message: dict[str, Any]) -> str:
         """Return display text for tool calls attached to a message.
@@ -1045,6 +1193,38 @@ class NiceGUIWebUIBase:
         }
         .eaa-approval-button {
             min-width: 72px;
+        }
+        .eaa-approval-arguments,
+        .eaa-approval-extracted-field {
+            width: 100%;
+            gap: 4px;
+        }
+        .eaa-approval-section-title {
+            margin: 2px 0 4px;
+            color: #475467;
+            font-size: 12px;
+            font-weight: 650;
+            text-transform: uppercase;
+        }
+        .eaa-approval-arguments pre,
+        .eaa-approval-extracted-field pre {
+            max-height: 24rem;
+            overflow: auto;
+            margin: 0;
+            padding: 8px 10px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            background: #f8fafc;
+            border: 1px solid #d7dde8;
+            border-radius: 6px;
+        }
+        .eaa-approval-extracted-field pre {
+            background: #111827;
+            color: #f9fafb;
+        }
+        .eaa-approval-extracted-field code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            white-space: pre-wrap;
         }
         .eaa-image-dialog-card {
             display: flex;

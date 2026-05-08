@@ -165,6 +165,8 @@ def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):
     assert ".eaa-browser-image-preview" in styles
     assert ".eaa-message-details" in styles
     assert ".eaa-tool-call-details" in styles
+    assert ".eaa-approval-arguments" in styles
+    assert ".eaa-approval-extracted-field" in styles
 
 
 def test_nicegui_webui_formats_tool_calls_from_payload(tmp_path):
@@ -192,6 +194,53 @@ def test_nicegui_webui_ignores_missing_tool_calls(tmp_path):
     )
 
     assert tool_calls == ""
+
+
+def test_nicegui_webui_formats_approval_arguments_with_extracted_code(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    prompt = (
+        "Tool 'python' requires approval before execution.\n"
+        'Arguments: {"code": "print(1)\\nprint(2)", "timeout": 5}\n'
+        "Approve? [y/N]: "
+    )
+
+    formatted = webui.format_approval_message(prompt)
+
+    assert formatted is not None
+    assert formatted["summary"] == "Tool `python` requires approval before execution."
+    assert '"code": "<code rendered below>"' in formatted["arguments_json"]
+    assert '"timeout": 5' in formatted["arguments_json"]
+    assert formatted["extracted_fields"] == [
+        {"label": "code", "value": "print(1)\nprint(2)"}
+    ]
+
+
+def test_nicegui_webui_formats_nested_approval_content_fields(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    prompt = (
+        "Tool 'write_file' requires approval before execution.\n"
+        'Arguments: {"file_path": "a.py", "payload": {"content": "a\\nb"}}\n'
+        "Approve? [y/N]: "
+    )
+
+    formatted = webui.format_approval_message(prompt)
+
+    assert formatted is not None
+    assert '"content": "<payload.content rendered below>"' in formatted["arguments_json"]
+    assert formatted["extracted_fields"] == [
+        {"label": "payload.content", "value": "a\nb"}
+    ]
+
+
+def test_nicegui_webui_returns_none_for_unparseable_approval_arguments(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    prompt = (
+        "Tool 'python' requires approval before execution.\n"
+        "Arguments: not-json\n"
+        "Approve? [y/N]: "
+    )
+
+    assert webui.format_approval_message(prompt) is None
 
 
 def test_nicegui_webui_image_html_uses_lazy_loading(tmp_path):
