@@ -1,0 +1,47 @@
+# Example configuration for an EAA-compatible MCP server repository.
+# Copy this file into the server repo's configs/ directory and adapt the
+# facility-specific sections before connecting to real hardware.
+
+launcher:
+  worker_endpoint: "tcp://127.0.0.1:5555"
+  worker_startup_timeout_s: 10
+  request_timeout_ms: 30000
+
+worker:
+  bind: "tcp://127.0.0.1:5555"
+  simulation: true
+  safety:
+    require_operator_confirmation: true
+    allow_motion: false
+    allow_beam: false
+  artifacts:
+    output_dir: "./artifacts"
+    array_format: "npy"
+    overwrite_existing: false
+
+mcp:
+  worker_endpoint: "tcp://127.0.0.1:5555"
+  request_timeout_ms: 30000
+  host: "0.0.0.0"
+  port: 8050
+  path: "/mcp"
+
+tools:
+  acquire_image:
+    size_x: 128
+    size_y: 128
+    scan_step: 0.1
+    dwell_time_ms: 10
+    return_array: true
+    return_display_image: true
+  acquire_line_scan:
+    length: 10.0
+    angle: 0.0
+    scan_step: 0.1
+    dwell_time_ms: 10
+    return_gaussian_fit: true
+  set_parameters:
+    parameter_names:
+      - "x_center"
+      - "y_center"
+      - "focus"
