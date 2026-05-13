@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Imaging and microscopy task managers, tools, and adapters for EAA."
 requires-python = ">=3.11"
 dependencies = [
-    "eaa-core[bo]>=0.1.0",
+    "eaa-core>=0.1.0",
     "numpy",
     "pillow",
     "requests",
@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+bo = [
+    "eaa-core[bo]>=0.1.0",
+]
 aps_mic = [
     "bluesky",
     "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",

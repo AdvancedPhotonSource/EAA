@@ -12,6 +12,13 @@ dependencies = [
     "ruff",
 ]
 
+[project.optional-dependencies]
+bo = [
+    "eaa-core[bo]",
+    "eaa-imaging[bo]",
+    "eaa-spectroscopy[bo]",
+]
+
 [tool.uv]
 package = false
 

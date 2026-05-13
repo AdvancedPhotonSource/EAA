@@ -1749,7 +1749,7 @@ name = "eaa-imaging"
 version = "0.1.0"
 source = { editable = "packages/eaa-imaging" }
 dependencies = [
-    { name = "eaa-core", extra = ["bo"] },
+    { name = "eaa-core" },
     { name = "numpy" },
     { name = "pillow" },
     { name = "requests" },
@@ -1765,6 +1765,9 @@ aps-mic = [
     { name = "mic-instrument" },
     { name = "mic-vis" },
 ]
+bo = [
+    { name = "eaa-core", extra = ["bo"] },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -1773,7 +1776,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bluesky", marker = "extra == 'aps-mic'" },
-    { name = "eaa-core", extras = ["bo"], editable = "packages/eaa-core" },
+    { name = "eaa-core", editable = "packages/eaa-core" },
+    { name = "eaa-core", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-core" },
     { name = "h5py", marker = "extra == 'aps-mic'" },
     { name = "mic-instrument", marker = "extra == 'aps-mic'", git = "https://github.com/BCDA-APS/bluesky-mic.git" },
     { name = "mic-vis", marker = "extra == 'aps-mic'", git = "https://github.com/grace227/mic-vis" },
@@ -1786,19 +1790,22 @@ requires-dist = [
     { name = "scipy" },
     { name = "tifffile" },
 ]
-provides-extras = ["aps-mic", "dev"]
+provides-extras = ["bo", "aps-mic", "dev"]
 
 [[package]]
 name = "eaa-spectroscopy"
 version = "0.1.0"
 source = { editable = "packages/eaa-spectroscopy" }
 dependencies = [
-    { name = "eaa-core", extra = ["bo"] },
+    { name = "eaa-core" },
     { name = "numpy" },
     { name = "scipy" },
 ]
 
 [package.optional-dependencies]
+bo = [
+    { name = "eaa-core", extra = ["bo"] },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -1806,13 +1813,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "eaa-core", extras = ["bo"], editable = "packages/eaa-core" },
+    { name = "eaa-core", editable = "packages/eaa-core" },
+    { name = "eaa-core", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-core" },
     { name = "numpy" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scipy" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["bo", "dev"]
 
 [[package]]
 name = "eaa-workspace"
@@ -1826,14 +1834,25 @@ dependencies = [
     { name = "ruff" },
 ]
 
+[package.optional-dependencies]
+bo = [
+    { name = "eaa-core", extra = ["bo"] },
+    { name = "eaa-imaging", extra = ["bo"] },
+    { name = "eaa-spectroscopy", extra = ["bo"] },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "eaa-core", editable = "packages/eaa-core" },
+    { name = "eaa-core", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-core" },
     { name = "eaa-imaging", editable = "packages/eaa-imaging" },
+    { name = "eaa-imaging", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-imaging" },
     { name = "eaa-spectroscopy", editable = "packages/eaa-spectroscopy" },
+    { name = "eaa-spectroscopy", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-spectroscopy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
+provides-extras = ["bo"]
 
 [[package]]
 name = "ecdsa"

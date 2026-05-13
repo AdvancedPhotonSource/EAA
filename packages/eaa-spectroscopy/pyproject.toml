@@ -8,12 +8,15 @@ version = "0.1.0"
 description = "Spectroscopy tools and adaptive-sampling task managers for EAA."
 requires-python = ">=3.11"
 dependencies = [
-    "eaa-core[bo]>=0.1.0",
+    "eaa-core>=0.1.0",
     "numpy",
     "scipy",
 ]
 
 [project.optional-dependencies]
+bo = [
+    "eaa-core[bo]>=0.1.0",
+]
 dev = [
     "pytest",
     "ruff",

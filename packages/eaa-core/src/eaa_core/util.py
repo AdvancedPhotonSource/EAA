@@ -10,10 +10,24 @@ from math import inf
 from typing import Any, Literal, Optional
 
 import numpy as np
-import torch
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+
+def get_torch_module() -> Any | None:
+    """Return the PyTorch module when it is installed.
+
+    Returns
+    -------
+    Any | None
+        Imported ``torch`` module, or ``None`` when PyTorch is unavailable.
+    """
+    try:
+        import torch
+    except ImportError:
+        return None
+    return torch
 
 
 def to_tensor(x: Any) -> Any:
@@ -29,6 +43,9 @@ def to_tensor(x: Any) -> Any:
     Any
         Tensor-converted value for array-like inputs, otherwise the input.
     """
+    torch = get_torch_module()
+    if torch is None:
+        return x
     if isinstance(x, (np.ndarray, list, tuple)):
         if torch.cuda.is_available():
             return torch.tensor(x)
@@ -52,7 +69,8 @@ def to_numpy(x: Any) -> Any:
     Any
         NumPy-converted value for supported inputs, otherwise the input.
     """
-    if isinstance(x, torch.Tensor):
+    torch = get_torch_module()
+    if torch is not None and isinstance(x, torch.Tensor):
         return x.detach().cpu().numpy()
     if isinstance(x, (list, tuple)):
         return np.asarray(x)
