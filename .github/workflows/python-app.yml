@@ -77,7 +77,7 @@ jobs:
       - name: Sync dependencies
         run: |
           source .venv_pytest/bin/activate
-          uv sync --frozen --active
+          uv sync --frozen --active --extra bo --extra memory-chroma
 
       - name: List build environment
         run: |
