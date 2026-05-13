@@ -8,9 +8,7 @@ version = "0.1.0"
 description = "Core runtime, shared tooling, and generic task managers for EAA."
 requires-python = ">=3.11"
 dependencies = [
-    "chromadb",
     "langgraph",
-    "langchain-chroma>=1.1.0",
     "langchain-core",
     "langchain-openai",
     "fastapi",
@@ -35,6 +33,10 @@ bo = [
 docs = [
     "sphinx",
     "pydata-sphinx-theme",
+]
+memory_chroma = [
+    "chromadb",
+    "langchain-chroma>=1.1.0",
 ]
 dev = [
     "pytest",

@@ -18,6 +18,9 @@ bo = [
     "eaa-imaging[bo]",
     "eaa-spectroscopy[bo]",
 ]
+memory_chroma = [
+    "eaa-core[memory_chroma]",
+]
 
 [tool.uv]
 package = false

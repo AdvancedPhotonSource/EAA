@@ -1685,10 +1685,8 @@ name = "eaa-core"
 version = "0.1.0"
 source = { editable = "packages/eaa-core" }
 dependencies = [
-    { name = "chromadb" },
     { name = "fastapi" },
     { name = "fastmcp" },
-    { name = "langchain-chroma" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -1717,15 +1715,19 @@ docs = [
     { name = "pydata-sphinx-theme" },
     { name = "sphinx" },
 ]
+memory-chroma = [
+    { name = "chromadb" },
+    { name = "langchain-chroma" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "asksageclient", marker = "extra == 'asksage'", specifier = "==1.31" },
     { name = "botorch", marker = "extra == 'bo'" },
-    { name = "chromadb" },
+    { name = "chromadb", marker = "extra == 'memory-chroma'" },
     { name = "fastapi" },
     { name = "fastmcp", specifier = ">=2.11.3" },
-    { name = "langchain-chroma", specifier = ">=1.1.0" },
+    { name = "langchain-chroma", marker = "extra == 'memory-chroma'", specifier = ">=1.1.0" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -1742,7 +1744,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["asksage", "bo", "docs", "dev"]
+provides-extras = ["asksage", "bo", "docs", "memory-chroma", "dev"]
 
 [[package]]
 name = "eaa-imaging"
@@ -1840,11 +1842,15 @@ bo = [
     { name = "eaa-imaging", extra = ["bo"] },
     { name = "eaa-spectroscopy", extra = ["bo"] },
 ]
+memory-chroma = [
+    { name = "eaa-core", extra = ["memory-chroma"] },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "eaa-core", editable = "packages/eaa-core" },
     { name = "eaa-core", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-core" },
+    { name = "eaa-core", extras = ["memory-chroma"], marker = "extra == 'memory-chroma'", editable = "packages/eaa-core" },
     { name = "eaa-imaging", editable = "packages/eaa-imaging" },
     { name = "eaa-imaging", extras = ["bo"], marker = "extra == 'bo'", editable = "packages/eaa-imaging" },
     { name = "eaa-spectroscopy", editable = "packages/eaa-spectroscopy" },
@@ -1852,7 +1858,7 @@ requires-dist = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-provides-extras = ["bo"]
+provides-extras = ["bo", "memory-chroma"]
 
 [[package]]
 name = "ecdsa"
