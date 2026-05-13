@@ -37,12 +37,14 @@ class ExposedToolSpec:
     function: Callable[..., Any]
     require_approval: Optional[bool | Callable[[Dict[str, Any]], bool]] = None
     schema: Optional[Dict[str, Any]] = None
+    model_visible: bool = True
 
 
 def tool(
     name: str,
     *,
     require_approval: Optional[bool | str | Callable[[Dict[str, Any]], bool]] = None,
+    model_visible: bool = True,
 ):
     """Mark a method as an exposed tool."""
 
@@ -52,6 +54,7 @@ def tool(
         setattr(func, "is_tool", True)
         setattr(func, "tool_name", name)
         setattr(func, "tool_require_approval", require_approval)
+        setattr(func, "tool_model_visible", model_visible)
         return func
 
     return decorator
@@ -158,11 +161,13 @@ class BaseTool:
                 require_approval = getattr(target, "tool_require_approval", None)
                 if isinstance(require_approval, str):
                     require_approval = getattr(self, require_approval)
+                model_visible = getattr(target, "tool_model_visible", True)
                 discovered.append(
                     ExposedToolSpec(
                         name=name,
                         function=bound,
                         require_approval=require_approval,
+                        model_visible=model_visible,
                     )
                 )
         return discovered

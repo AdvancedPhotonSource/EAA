@@ -144,11 +144,45 @@ Imaging task managers wrap an ``MCPTool`` with ``MCPAcquireImageProxy``. For
 analytical focusing workflows, the remote MCP server should expose:
 
 ``acquire_image(...)``
-   Acquire a 2D image and return a JSON object. For workflows that need image
-   registration or local image buffers, include ``array_path`` pointing to a
-   ``.npy`` array readable by the EAA process. Include pixel-size metadata with
-   one of ``psize``, ``pixel_size``, ``scan_step``, or ``stepsize_x``. Include
-   ``img_path`` when a displayable image should be shown in the chat or WebUI.
+   Acquire a 2D image, update the server-side acquisition buffers, and return a
+   JSON object. Include pixel-size metadata with one of ``psize``,
+   ``pixel_size``, ``scan_step``, or ``stepsize_x``. Include ``img_path`` when
+   a displayable image should be shown in the chat or WebUI.
+
+``get_image_array_payload(buffer_name: str)``
+   Return a JSON-serializable payload for one buffered image. ``buffer_name``
+   must accept ``"current"``, ``"previous"``, and ``"initial"``. EAA decodes
+   this payload through ``MCPAcquireImageProxy.get_image_array(...)`` so
+   built-in and MCP-backed acquisition tools have the same task-manager API.
+   External servers should expose this as a normal FastMCP tool. EAA's MCP
+   client treats this name as an adapter-only method: analytical task-manager
+   code can call it over MCP, but it is omitted from model-facing tool schemas.
+   The payload must use this shape:
+
+   .. code-block:: json
+
+      {
+        "encoding": "numpy_base64",
+        "dtype": "float32",
+        "shape": [256, 256],
+        "data": "base64-encoded array bytes"
+      }
+
+   External MCP servers do not need to depend on EAA to produce this payload:
+
+   .. code-block:: python
+
+      import base64
+      import numpy as np
+
+      def encode_image_array_payload(image: np.ndarray) -> dict:
+          contiguous = np.ascontiguousarray(image)
+          return {
+              "encoding": "numpy_base64",
+              "dtype": str(contiguous.dtype),
+              "shape": list(contiguous.shape),
+              "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+          }
 
 ``acquire_line_scan(...)``
    Acquire a line scan and return a JSON object. Analytical focusing expects a
@@ -160,7 +194,7 @@ analytical focusing workflows, the remote MCP server should expose:
 ``set_attribute(name: str, value: object)`` or ``set_config(name: str, value: object)``
    Optional. If present, the proxy uses it to set
    ``line_scan_return_gaussian_fit=True`` when an analytical focusing manager
-   starts. Servers may instead always include the fit metadata needed by the
+   starts. Servers may also always include the fit metadata needed by the
    workflow.
 
 Default analytical focusing argument names are:
@@ -180,14 +214,25 @@ Image Artifacts
 ---------------
 
 ``img_path`` should point to a displayable image file such as PNG when the
-result should appear in chat or the WebUI. ``array_path`` should point to a
-``.npy`` array when EAA needs to load the numerical image for registration,
-buffer tracking, or analytical workflows.
+result should appear in chat or the WebUI. Numerical image arrays must be
+transferred through ``get_image_array_payload``.
 
-When the MCP server runs on a different machine, these paths must still be
-readable from the EAA process, for example through a shared filesystem or a
-deliberate artifact synchronization layer. A path local only to the instrument
-worker host is not enough for EAA-side registration.
+The MCP server should keep at least three image buffers:
+
+- ``initial``: the first 2D image acquired in the current run;
+- ``previous``: the image immediately before the current image;
+- ``current``: the most recent 2D image.
+
+These buffers may live in the instrument worker or the MCP frontend, but the
+frontend must be able to return them through ``get_image_array_payload``.
+
+LLM-visible image registration uses path-based tools. EAA acquisition tools and
+``MCPAcquireImageProxy`` expose ``dump_array(buffer_name: str)`` to save a
+buffered image array and return ``{"array_path": "..."}``. An agent can dump the
+``current`` and ``previous`` or ``initial`` buffers, then call the registration
+tool's ``get_offset_from_paths`` method with those paths. External MCP image
+acquisition servers provide the buffers through ``get_image_array_payload``; the
+EAA proxy provides the dumping helper on the EAA side.
 
 Worker Protocol
 ---------------

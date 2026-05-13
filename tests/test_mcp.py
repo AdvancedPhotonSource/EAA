@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Annotated, get_args, get_origin
 
+import pytest
+
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.mcp_client import MCPTool
 
@@ -140,6 +142,103 @@ def test_mcp_tool_preserves_remote_argument_signatures_and_schemas(tmp_path):
         assert schemas["add"]["function"]["parameters"]["required"] == ["a", "b"]
     finally:
         mcp_tool._run_coroutine(mcp_tool.disconnect())
+
+
+def test_mcp_tool_hides_external_image_array_payload_from_model_schemas(tmp_path):
+    script_path = tmp_path / "mcp_server.py"
+    repo_src = Path(__file__).resolve().parents[1] / "src"
+    script_path.write_text(
+        "\n".join(
+            [
+                "import sys",
+                f"sys.path.insert(0, {str(repo_src)!r})",
+                "from eaa_core.tool.base import BaseTool, tool",
+                "from eaa_core.tool.mcp_server import run_mcp_server_from_tools",
+                "",
+                "class ExternalAcquisitionTool(BaseTool):",
+                "    @tool(name='acquire_image')",
+                "    def acquire_image(self) -> dict:",
+                "        return {'psize': 1.0}",
+                "",
+                "    @tool(name='get_image_array_payload')",
+                "    def get_image_array_payload(self, buffer_name: str) -> dict:",
+                "        return {'encoding': 'numpy_base64', 'buffer_name': buffer_name}",
+                "",
+                "if __name__ == '__main__':",
+                "    run_mcp_server_from_tools(ExternalAcquisitionTool(), server_name='ExternalAcquisitionServer')",
+            ]
+        )
+    )
+
+    mcp_tool = MCPTool(
+        {
+            "mcpServers": {
+                "external_acquisition": {
+                    "command": sys.executable,
+                    "args": [str(script_path)],
+                }
+            }
+        }
+    )
+
+    try:
+        exposed = {spec.name: spec for spec in mcp_tool.exposed_tools}
+        assert exposed["get_image_array_payload"].model_visible is False
+        assert mcp_tool.get_image_array_payload(buffer_name="current") == {
+            "buffer_name": "current",
+            "encoding": "numpy_base64",
+        }
+        assert [
+            schema["function"]["name"]
+            for schema in mcp_tool.get_all_schema()
+        ] == ["acquire_image"]
+    finally:
+        mcp_tool._run_coroutine(mcp_tool.disconnect())
+
+
+def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():
+    from eaa_core.tool.base import BaseTool, tool
+    from eaa_core.tool.mcp_server import MCPToolServer
+
+    class HiddenPayloadTool(BaseTool):
+        @tool(name="visible")
+        def visible(self) -> str:
+            return "ok"
+
+        @tool(name="hidden_payload", model_visible=False)
+        def hidden_payload(self) -> dict:
+            return {"encoding": "numpy_base64"}
+
+    tool = HiddenPayloadTool()
+    server = MCPToolServer(tools=tool)
+    executor = SerialToolExecutor()
+    executor.register_tools(tool)
+
+    assert {spec.name for spec in tool.exposed_tools} == {
+        "visible",
+        "hidden_payload",
+    }
+    assert server.list_tools() == ["visible", "hidden_payload"]
+    assert tool.hidden_payload() == {"encoding": "numpy_base64"}
+    assert [
+        schema["function"]["name"]
+        for schema in server.get_tool_schemas()
+    ] == ["visible"]
+    assert [
+        schema["function"]["name"]
+        for schema in executor.list_tool_schemas()
+    ] == ["visible"]
+
+    with pytest.raises(ValueError, match="not available for model tool calls"):
+        executor.execute_tool_call(
+            {
+                "id": "call-hidden",
+                "function": {
+                    "name": "hidden_payload",
+                    "arguments": "{}",
+                },
+            }
+        )
 
 
 def test_calculator_example_main_builds_server_with_refactored_tool_specs(monkeypatch):

@@ -10,7 +10,11 @@ import numpy as np
 from eaa_core.tool.base import ExposedToolSpec, tool
 from eaa_core.tool.mcp_adapter import call_named_tool
 from eaa_core.tool.mcp_client import MCPTool
-from eaa_imaging.tool.imaging.acquisition import AcquireImage
+from eaa_imaging.tool.imaging.acquisition import (
+    AcquireImage,
+    ImageBufferAlias,
+    decode_image_array_payload,
+)
 
 
 class MCPAcquireImageProxy(AcquireImage):
@@ -51,9 +55,6 @@ class MCPAcquireImageProxy(AcquireImage):
             "psize_0",
             "psize_km1",
             "psize_k",
-            "image_0_path",
-            "image_km1_path",
-            "image_k_path",
             "image_acquisition_call_history",
             "line_scan_call_history",
             "_line_scan_return_gaussian_fit",
@@ -79,6 +80,7 @@ class MCPAcquireImageProxy(AcquireImage):
             "get_current_image_info": self.get_current_image_info,
             "get_previous_image_info": self.get_previous_image_info,
             "get_initial_image_info": self.get_initial_image_info,
+            "dump_array": self.dump_array,
         }
         specs: list[ExposedToolSpec] = []
         for name, remote_spec in remote_specs.items():
@@ -91,6 +93,11 @@ class MCPAcquireImageProxy(AcquireImage):
                     function=function,
                     require_approval=remote_spec.require_approval,
                     schema=remote_spec.schema,
+                    model_visible=(
+                        False
+                        if name == "get_image_array_payload"
+                        else remote_spec.model_visible
+                    ),
                 )
             )
         for spec in super().discover_tools():
@@ -125,16 +132,50 @@ class MCPAcquireImageProxy(AcquireImage):
                 return float(value)
         return 1.0
 
+    def get_image_array(self, buffer_name: ImageBufferAlias) -> np.ndarray:
+        """Return an image array from the proxy buffer or remote MCP server.
+
+        Parameters
+        ----------
+        buffer_name : ImageBufferAlias
+            Name or alias of the image buffer to fetch.
+
+        Returns
+        -------
+        numpy.ndarray
+            Decoded image array.
+        """
+        local_buffer_name = self.normalize_image_buffer_name(buffer_name)
+        local_image = getattr(self, local_buffer_name)
+        if local_image is not None:
+            return local_image
+        payload = call_named_tool(
+            self.mcp_tool,
+            "get_image_array_payload",
+            {"buffer_name": buffer_name},
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "MCP get_image_array_payload must return a dictionary payload."
+            )
+        return decode_image_array_payload(payload)
+
     def sync_image_buffers_from_result(
         self,
         result: dict[str, Any],
         kwargs: dict[str, Any],
     ) -> None:
-        """Load returned ``.npy`` image artifact and update local buffers."""
-        array_path = result.get("array_path")
-        if not isinstance(array_path, str):
+        """Decode returned image payload and update local buffers."""
+        payload = result.get("array_payload")
+        if not isinstance(payload, dict):
+            payload = call_named_tool(
+                self.mcp_tool,
+                "get_image_array_payload",
+                {"buffer_name": "current"},
+            )
+        if not isinstance(payload, dict):
             return
-        image = np.load(array_path)
+        image = decode_image_array_payload(payload)
         self.update_image_buffers(
             image,
             psize=self.resolve_pixel_size(result, kwargs),

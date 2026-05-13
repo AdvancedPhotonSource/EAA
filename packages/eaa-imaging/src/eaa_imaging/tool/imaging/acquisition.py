@@ -1,5 +1,5 @@
-from pathlib import Path
 from typing import Annotated, Dict, List, Any, Literal
+import base64
 import logging
 import os
 
@@ -15,6 +15,58 @@ import eaa_core.maths
 import eaa_imaging.image_proc as ip
 
 logger = logging.getLogger(__name__)
+
+
+ImageBufferName = Literal["image_0", "image_km1", "image_k"]
+ImageBufferAlias = Literal["initial", "previous", "current", "image_0", "image_km1", "image_k"]
+
+
+def encode_image_array_payload(image: np.ndarray) -> dict[str, Any]:
+    """Encode a NumPy image array as a JSON-serializable payload.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Image array to encode.
+
+    Returns
+    -------
+    dict[str, Any]
+        Payload containing base64-encoded array bytes.
+    """
+    contiguous = np.ascontiguousarray(image)
+    return {
+        "encoding": "numpy_base64",
+        "dtype": str(contiguous.dtype),
+        "shape": list(contiguous.shape),
+        "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+    }
+
+
+def decode_image_array_payload(payload: dict[str, Any]) -> np.ndarray:
+    """Decode an image array payload produced by ``encode_image_array_payload``.
+
+    Parameters
+    ----------
+    payload : dict[str, Any]
+        Encoded image array payload.
+
+    Returns
+    -------
+    numpy.ndarray
+        Decoded image array.
+    """
+    if payload.get("encoding") != "numpy_base64":
+        raise ValueError(f"Unsupported image array encoding: {payload.get('encoding')!r}.")
+    data = payload.get("data")
+    if not isinstance(data, str):
+        raise ValueError("Image array payload must contain base64 string field `data`.")
+    array_bytes = base64.b64decode(data.encode("ascii"))
+    dtype = payload.get("dtype")
+    shape = payload.get("shape")
+    if not isinstance(dtype, str) or not isinstance(shape, list):
+        raise ValueError("Image array payload must contain `dtype` and `shape` fields.")
+    return np.frombuffer(array_bytes, dtype=np.dtype(dtype)).reshape(shape).copy()
 
 
 class AcquireImage(BaseTool):
@@ -40,10 +92,6 @@ class AcquireImage(BaseTool):
         self.psize_0 = None
         self.psize_km1 = None
         self.psize_k = None
-        self.image_0_path: str | None = None
-        self.image_km1_path: str | None = None
-        self.image_k_path: str | None = None
-        self.image_array_artifact_dir = Path(".tmp") / "acquisition_arrays"
         
         self.image_acquisition_call_history: List[Dict[str, Any]] = []
         self.line_scan_call_history: List[Dict[str, Any]] = []
@@ -86,98 +134,131 @@ class AcquireImage(BaseTool):
             "angle": angle,
         })
 
-    def save_image_array_artifact(self, image: np.ndarray) -> str:
-        """Save an acquired image array to a managed ``.npy`` artifact.
-
-        Parameters
-        ----------
-        image : np.ndarray
-            Image array to save.
-
-        Returns
-        -------
-        str
-            Absolute path to the saved ``.npy`` file.
-        """
-        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"image_{self.counter_acquire_image}_{get_timestamp()}.npy"
-        path = artifact_dir / filename
-        np.save(path, image)
-        return str(path)
-
-    def collect_referenced_image_array_paths(self) -> set[Path]:
-        """Return currently referenced image array artifact paths.
-
-        Returns
-        -------
-        set[pathlib.Path]
-            Absolute paths referenced by image buffers.
-        """
-        paths = {
-            self.image_0_path,
-            self.image_km1_path,
-            self.image_k_path,
+    @staticmethod
+    def normalize_image_buffer_name(buffer_name: ImageBufferAlias) -> ImageBufferName:
+        """Normalize image buffer aliases to internal buffer names."""
+        aliases = {
+            "initial": "image_0",
+            "previous": "image_km1",
+            "current": "image_k",
+            "image_0": "image_0",
+            "image_km1": "image_km1",
+            "image_k": "image_k",
         }
-        return {Path(path).expanduser().resolve() for path in paths if path is not None}
-
-    def garbage_collect_image_array_artifacts(self) -> None:
-        """Delete unreferenced managed ``.npy`` image artifacts immediately."""
-        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
-        if not artifact_dir.exists():
-            return
-        live_paths = self.collect_referenced_image_array_paths()
-        for path in artifact_dir.glob("*.npy"):
-            resolved = path.resolve()
-            if resolved not in live_paths:
-                try:
-                    resolved.unlink()
-                except FileNotFoundError:
-                    continue
+        try:
+            return aliases[buffer_name]
+        except KeyError as exc:
+            raise ValueError(f"Unknown image buffer name: {buffer_name!r}.") from exc
 
     def get_image_buffer_info_by_name(
         self,
-        buffer_name: Literal["image_0", "image_km1", "image_k"],
+        buffer_name: ImageBufferAlias,
     ) -> dict[str, Any]:
-        """Return path, pixel size, and shape metadata for an image buffer.
+        """Return pixel size and shape metadata for an image buffer.
 
         Parameters
         ----------
-        buffer_name : {"image_0", "image_km1", "image_k"}
-            Name of the image buffer to query.
+        buffer_name : ImageBufferAlias
+            Name or alias of the image buffer to query.
 
         Returns
         -------
         dict[str, Any]
             Metadata for the requested buffer.
         """
+        buffer_name = self.normalize_image_buffer_name(buffer_name)
         image = getattr(self, buffer_name)
-        path = getattr(self, f"{buffer_name}_path")
         psize = getattr(self, f"psize_{buffer_name.split('_', 1)[1]}")
         return {
             "buffer_name": buffer_name,
-            "array_path": path,
             "psize": psize,
             "shape": None if image is None else list(image.shape),
             "dtype": None if image is None else str(image.dtype),
         }
 
+    def get_image_array(self, buffer_name: ImageBufferAlias) -> np.ndarray:
+        """Return an image array from the local acquisition buffer.
+
+        Parameters
+        ----------
+        buffer_name : ImageBufferAlias
+            Name or alias of the image buffer to fetch.
+
+        Returns
+        -------
+        numpy.ndarray
+            Image array stored in the requested buffer.
+        """
+        buffer_name = self.normalize_image_buffer_name(buffer_name)
+        image = getattr(self, buffer_name)
+        if image is None:
+            raise ValueError(f"Image buffer {buffer_name!r} is empty.")
+        return image
+
+    @tool(name="get_image_array_payload", model_visible=False)
+    def get_image_array_payload(
+        self,
+        buffer_name: Annotated[str, "Image buffer to fetch: current, previous, or initial."],
+    ) -> dict[str, Any]:
+        """Return an encoded image array payload for code and MCP proxy callers.
+
+        Parameters
+        ----------
+        buffer_name : str
+            Name or alias of the image buffer to fetch.
+
+        Returns
+        -------
+        dict[str, Any]
+            JSON-serializable encoded image array payload.
+        """
+        return encode_image_array_payload(self.get_image_array(buffer_name))
+
+    @tool(name="dump_array")
+    def dump_array(
+        self,
+        buffer_name: Annotated[str, "Image buffer to dump: current, previous, or initial."],
+    ) -> Annotated[dict[str, str], "Tool payload containing `array_path`."]:
+        """Save a buffered image array to disk for path-based tools.
+
+        Parameters
+        ----------
+        buffer_name : str
+            Name or alias of the image buffer to dump.
+
+        Returns
+        -------
+        dict[str, str]
+            Tool payload containing ``array_path``.
+        """
+        image = self.get_image_array(buffer_name)
+        normalized_name = self.normalize_image_buffer_name(buffer_name)
+        os.makedirs(".tmp", exist_ok=True)
+        path = os.path.abspath(
+            os.path.join(
+                ".tmp",
+                f"{normalized_name}_{get_timestamp()}.npy",
+            )
+        )
+        np.save(path, image, allow_pickle=False)
+        return {"array_path": path}
+
     @tool(name="get_current_image_info")
     def get_current_image_info(self) -> dict[str, Any]:
-        """Return path and pixel-size metadata for the current image buffer."""
+        """Return pixel-size and shape metadata for the current image buffer."""
         return self.get_image_buffer_info_by_name("image_k")
 
     @tool(name="get_previous_image_info")
     def get_previous_image_info(self) -> dict[str, Any]:
-        """Return path and pixel-size metadata for the previous image buffer."""
+        """Return pixel-size and shape metadata for the previous image buffer."""
         return self.get_image_buffer_info_by_name("image_km1")
 
     @tool(name="get_initial_image_info")
     def get_initial_image_info(self) -> dict[str, Any]:
-        """Return path and pixel-size metadata for the initial image buffer."""
+        """Return pixel-size and shape metadata for the initial image buffer."""
         return self.get_image_buffer_info_by_name("image_0")
 
-    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1) -> str:
+    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1) -> None:
         """Update the image buffers.
         
         Parameters
@@ -187,24 +268,14 @@ class AcquireImage(BaseTool):
         psize : float, optional
             The pixel size (or scan step) of the new image.
 
-        Returns
-        -------
-        str
-            Absolute path to the saved image array artifact.
         """
-        new_image_path = self.save_image_array_artifact(new_image)
         if self.image_0 is None:
             self.image_0 = new_image
-            self.image_0_path = new_image_path
             self.psize_0 = psize
         self.image_km1 = self.image_k
-        self.image_km1_path = self.image_k_path
         self.psize_km1 = self.psize_k
         self.image_k = new_image
-        self.image_k_path = new_image_path
         self.psize_k = psize
-        self.garbage_collect_image_array_artifacts()
-        return new_image_path
 
     @tool(name="acquire_image")
     def acquire_image(self, *args, **kwargs):
@@ -530,7 +601,7 @@ class SimulatedAcquireImage(AcquireImage):
         arr_shape = (len(y), len(x))
         arr = self._sample(yy.ravel(), xx.ravel(), shape=arr_shape).reshape(arr_shape)
 
-        array_path = self.update_image_buffers(arr, psize=scan_step)
+        self.update_image_buffers(arr, psize=scan_step)
             
         if self.return_message:
             filename = f"image_{y_center}_{x_center}_{size_y}_{size_x}_{get_timestamp()}.png"
@@ -546,7 +617,7 @@ class SimulatedAcquireImage(AcquireImage):
             if self.add_line_scan_candidates_to_image:
                 fig = self.add_line_scan_candidates(fig)
             image_path = self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
-            return {"img_path": image_path, "array_path": array_path, "psize": scan_step}
+            return {"img_path": image_path, "psize": scan_step}
         else:
             return arr
 

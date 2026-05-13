@@ -894,16 +894,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 (current_info, "current"),
                 (reference_info, target),
             ):
-                if image_info["array_path"] is None:
+                if image_info["psize"] is None:
                     raise RegistrationFailed(
-                        f"No .npy array path is available for the {image_role} image."
+                        f"No pixel size is available for the {image_role} image."
                     )
+            reference_buffer_name = "previous" if target == "previous" else "initial"
             alignment_offset = np.array(
-                registration_tool.get_offset_from_paths(
-                    current_image_path=current_info["array_path"],
-                    reference_image_path=reference_info["array_path"],
-                    current_pixel_size=current_info["psize"],
-                    reference_pixel_size=reference_info["psize"],
+                registration_tool.register_images(
+                    image_t=self.acquisition_tool.get_image_array("current"),
+                    image_r=self.acquisition_tool.get_image_array(reference_buffer_name),
+                    psize_t=current_info["psize"],
+                    psize_r=reference_info["psize"],
                 ),
                 dtype=float,
             )

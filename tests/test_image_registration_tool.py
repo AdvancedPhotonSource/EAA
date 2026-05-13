@@ -12,11 +12,16 @@ import test_utils as tutils
 
 class TestImageRegistrationTool(tutils.BaseTester):
     @staticmethod
-    def get_previous_current_image_info(acquisition_tool):
-        """Return path metadata for the previous and current acquisitions."""
+    def register_previous_current(acquisition_tool, registration_tool):
+        """Register previous and current acquisition buffers."""
         previous_info = acquisition_tool.get_previous_image_info()
         current_info = acquisition_tool.get_current_image_info()
-        return previous_info, current_info
+        return registration_tool.register_images(
+            image_t=acquisition_tool.get_image_array("current"),
+            image_r=acquisition_tool.get_image_array("previous"),
+            psize_t=current_info["psize"],
+            psize_r=previous_info["psize"],
+        )
 
     def test_image_registration(self):
         np.random.seed(123)
@@ -39,15 +44,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             y_center=164, x_center=164, size_y=128, size_x=128
         )
 
-        previous_info, current_info = self.get_previous_current_image_info(
-            acquisition_tool
-        )
-        offset = registration_tool.get_offset_from_paths(
-            current_image_path=current_info["array_path"],
-            reference_image_path=previous_info["array_path"],
-            current_pixel_size=current_info["psize"],
-            reference_pixel_size=previous_info["psize"],
-        )
+        offset = self.register_previous_current(acquisition_tool, registration_tool)
 
         if self.debug:
             print("Offset: ", offset)
@@ -83,15 +80,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             y_center=175, x_center=175, size_y=150, size_x=150
         )
 
-        previous_info, current_info = self.get_previous_current_image_info(
-            acquisition_tool
-        )
-        offset = registration_tool.get_offset_from_paths(
-            current_image_path=current_info["array_path"],
-            reference_image_path=previous_info["array_path"],
-            current_pixel_size=current_info["psize"],
-            reference_pixel_size=previous_info["psize"],
-        )
+        offset = self.register_previous_current(acquisition_tool, registration_tool)
         
         if self.debug:
             print("Offset: ", offset)
@@ -129,15 +118,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
             y_center=164, x_center=164, size_y=128, size_x=128
         )
 
-        previous_info, current_info = self.get_previous_current_image_info(
-            acquisition_tool
-        )
-        offset = registration_tool.get_offset_from_paths(
-            current_image_path=current_info["array_path"],
-            reference_image_path=previous_info["array_path"],
-            current_pixel_size=current_info["psize"],
-            reference_pixel_size=previous_info["psize"],
-        )
+        offset = self.register_previous_current(acquisition_tool, registration_tool)
 
         if self.debug:
             print("Offset (mutual information): ", offset)
@@ -152,7 +133,7 @@ class TestImageRegistrationTool(tutils.BaseTester):
         assert np.allclose(offset, [-20, -20], atol=1.0)
         return
 
-    def test_image_registration_from_npy_paths(self):
+    def test_image_registration_from_buffer_arrays(self):
         np.random.seed(123)
 
         whole_image = tifffile.imread(
@@ -169,15 +150,43 @@ class TestImageRegistrationTool(tutils.BaseTester):
         acquisition_tool.acquire_image(
             y_center=184, x_center=184, size_y=128, size_x=128
         )
-        previous_info = acquisition_tool.get_current_image_info()
+        acquisition_tool.acquire_image(
+            y_center=164, x_center=164, size_y=128, size_x=128
+        )
+
+        offset = self.register_previous_current(acquisition_tool, registration_tool)
+
+        assert np.allclose(offset, [-20, -20])
+        return
+
+    def test_image_registration_from_dumped_array_paths(self):
+        np.random.seed(123)
+
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+
+        acquisition_tool = SimulatedAcquireImage(whole_image, return_message=True)
+        registration_tool = ImageRegistration()
+
+        acquisition_tool.acquire_image(
+            y_center=184, x_center=184, size_y=128, size_x=128
+        )
         acquisition_tool.acquire_image(
             y_center=164, x_center=164, size_y=128, size_x=128
         )
         current_info = acquisition_tool.get_current_image_info()
+        previous_info = acquisition_tool.get_previous_image_info()
+        current_path = acquisition_tool.dump_array("current")["array_path"]
+        previous_path = acquisition_tool.dump_array("previous")["array_path"]
 
         offset = registration_tool.get_offset_from_paths(
-            current_image_path=current_info["array_path"],
-            reference_image_path=previous_info["array_path"],
+            current_image_path=current_path,
+            reference_image_path=previous_path,
             current_pixel_size=current_info["psize"],
             reference_pixel_size=previous_info["psize"],
         )

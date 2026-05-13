@@ -54,6 +54,7 @@ class SerialToolExecutor:
                         tool.require_approval if exposed.require_approval is None else exposed.require_approval
                     ),
                     schema=exposed.schema,
+                    model_visible=exposed.model_visible,
                 )
                 self.tool_specs[spec.name] = spec
 
@@ -62,6 +63,7 @@ class SerialToolExecutor:
         return [
             spec.schema or generate_openai_tool_schema(tool_name=name, func=spec.function)
             for name, spec in self.tool_specs.items()
+            if spec.model_visible
         ]
 
     def execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[ToolExecutionResult]:
@@ -96,6 +98,8 @@ class SerialToolExecutor:
         if tool_name not in self.tool_specs:
             raise ValueError(f"Unknown tool requested: {tool_name}")
         spec = self.tool_specs[tool_name]
+        if not spec.model_visible:
+            raise ValueError(f"Tool {tool_name!r} is not available for model tool calls.")
         arguments = self.parse_arguments(function.get("arguments"))
         try:
             approval_required = (

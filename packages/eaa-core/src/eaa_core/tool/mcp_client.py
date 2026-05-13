@@ -6,6 +6,8 @@ import fastmcp
 
 from eaa_core.tool.base import ExposedToolSpec, BaseTool
 
+MODEL_HIDDEN_REMOTE_TOOL_NAMES = {"get_image_array_payload"}
+
 
 class MCPTool(BaseTool):
     """Expose external MCP tools through the normal ``BaseTool`` interface."""
@@ -329,6 +331,7 @@ class MCPTool(BaseTool):
                     function=function,
                     require_approval=self.require_approval,
                     schema=self._build_openai_schema_from_mcp_tool(remote_tool),
+                    model_visible=remote_tool.name not in MODEL_HIDDEN_REMOTE_TOOL_NAMES,
                 )
             )
         return exposed_tools
@@ -341,7 +344,11 @@ class MCPTool(BaseTool):
         list[dict[str, Any]]
             Model-facing schemas for the remote MCP tools.
         """
-        return [spec.schema for spec in self.exposed_tools if spec.schema is not None]
+        return [
+            spec.schema
+            for spec in self.exposed_tools
+            if spec.schema is not None and spec.model_visible
+        ]
 
     def get_all_tool_names(self) -> list[str]:
         """Return the names of all remote tools.

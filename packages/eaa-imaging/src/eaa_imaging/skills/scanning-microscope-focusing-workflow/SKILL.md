@@ -94,7 +94,17 @@ Overall, the procedure consists of the following steps:
 
 6. Since the image has drifted, you need to adjust the positions where the next line scan is
    run. If you have an image registration tool, use it to register the new image with the previous image.
-   When calling the tool, pass the explicit `.npy` paths for the current and previous images.
+   If the image acquisition tool exposes `dump_array` and the image registration tool exposes
+   `get_offset_from_paths`, use this sequence:
+   - Call `dump_array` with `buffer_name="current"` to save the latest image array.
+   - Call `dump_array` with `buffer_name="previous"` to save the image array acquired just
+     before the latest image.
+   - Call `get_offset_from_paths` with the dumped current image path as `current_image_path`
+     and the dumped previous image path as `reference_image_path`. If pixel sizes are available
+     from image metadata or tool responses, pass them as `current_pixel_size` and
+     `reference_pixel_size`.
+   The registration tool returns an offset `[dy, dx]` to apply to the current image so it aligns
+   with the previous image.
    To apply the registration result to the
    subsequent line scan, *add* the offset to the positions used for the previous line scan.
    Run a line scan with the updated positions. You will see the new line scan plot

@@ -594,7 +594,11 @@ class HTTPTransportedTool(BaseTool):
         list[dict[str, Any]]
             Schema list for the configured tools.
         """
-        return [spec.schema for spec in self.exposed_tools if spec.schema is not None]
+        return [
+            spec.schema
+            for spec in self.exposed_tools
+            if spec.schema is not None and spec.model_visible
+        ]
 
     def get_all_tool_names(self) -> list[str]:
         """Return the exposed tool names.

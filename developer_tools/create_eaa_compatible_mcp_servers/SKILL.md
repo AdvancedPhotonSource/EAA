@@ -112,7 +112,8 @@ The worker should:
 - dispatch `method` and `params` to synchronous handler functions;
 - return `{"status": "ok", "result": ...}` or
   `{"status": "error", "error": ...}`;
-- write large data such as images or arrays to files and return paths.
+- write display artifacts such as plots and preview images to files and return
+  paths.
 
 The MCP frontend should:
 
@@ -124,8 +125,9 @@ The MCP frontend should:
 
 Getter tools must return serialized Python objects such as `str`, `int`,
 `float`, `bool`, `list`, `dict`, or `None`. Convert control-library objects,
-NumPy scalars, and arrays before returning them; write large arrays to artifact
-files and return paths instead of embedding array data in the tool result.
+NumPy scalars, and arrays before returning them. Return display artifacts such
+as plots or preview images as paths. Return numerical image buffers for EAA
+imaging task managers with the `get_image_array_payload` contract below.
 
 MCP tool methods must be documented so FastMCP can generate useful tool
 schemas. Each tool function should:
@@ -188,15 +190,63 @@ Expose:
 
 ```python
 acquire_image(...) -> dict
+get_image_array_payload(buffer_name: str) -> dict
 acquire_line_scan(...) -> dict
 ```
 
 For `acquire_image`, return:
 
 - `img_path`: display image path, when a plot should be shown;
-- `array_path`: `.npy` array path readable by the EAA process, when analytical
-  workflows or registration need numerical image data;
 - one pixel-size key: `psize`, `pixel_size`, `scan_step`, or `stepsize_x`.
+
+`acquire_image` must update server-side image buffers. The server must keep at
+least:
+
+- `initial`: first 2D image acquired in the current run;
+- `previous`: image immediately before the current image;
+- `current`: most recent 2D image.
+
+For `get_image_array_payload`, accept `buffer_name` values `current`,
+`previous`, and `initial`, and return:
+
+```python
+{
+    "encoding": "numpy_base64",
+    "dtype": "float32",
+    "shape": [256, 256],
+    "data": "<base64-encoded array bytes>",
+}
+```
+
+External servers should expose this as a normal FastMCP tool. EAA's MCP client
+treats this name as an adapter-only method: analytical task-manager code can
+call it over MCP, but it is omitted from model-facing tool schemas.
+
+Use this dependency-light encoding pattern in external MCP servers:
+
+```python
+import base64
+import numpy as np
+
+
+def encode_image_array_payload(image: np.ndarray) -> dict:
+    contiguous = np.ascontiguousarray(image)
+    return {
+        "encoding": "numpy_base64",
+        "dtype": str(contiguous.dtype),
+        "shape": list(contiguous.shape),
+        "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+    }
+```
+
+EAA analytical imaging workflows retrieve numerical arrays through
+`get_image_array_payload`.
+
+EAA's acquisition proxy exposes `dump_array(buffer_name: str)` as a
+model-visible tool. The LLM can call it to save `current`, `previous`, or
+`initial` buffers to a local array file before calling a path-based registration
+tool. External MCP servers only need to provide `get_image_array_payload`; the
+proxy handles dumping on the EAA side.
 
 For `acquire_line_scan`, return:
 

@@ -1,4 +1,4 @@
-from typing import Annotated, Any, List, Literal, Optional, Tuple, Dict
+from typing import Annotated, Any, Literal, Optional, Tuple, Dict
 import logging
 import re
 from pathlib import Path
@@ -103,7 +103,7 @@ class ImageRegistration(BaseTool):
         reference_image_path: str,
         reference_pixel_size: float = 1.0,
     ) -> None:
-        """Set the reference image from a NumPy ``.npy`` file.
+        """Set the reference image from an array file.
 
         Parameters
         ----------
@@ -151,16 +151,16 @@ class ImageRegistration(BaseTool):
     @tool(name="get_offset_from_paths")
     def get_offset_from_paths(
         self,
-        current_image_path: Annotated[str, "Path to the current image .npy file."],
-        reference_image_path: Annotated[str, "Path to the reference image .npy file."],
+        current_image_path: Annotated[str, "Path to the current image array file."],
+        reference_image_path: Annotated[str, "Path to the reference image array file."],
         current_pixel_size: Annotated[float, "Pixel size of the current image."] = 1.0,
         reference_pixel_size: Annotated[float, "Pixel size of the reference image."] = 1.0,
     ) -> Annotated[
-        List[float],
+        list[float],
         "The translational offset [dy, dx] to apply to the current image "
         "so it aligns with the reference image.",
     ]:
-        """Register two image arrays loaded from ``.npy`` paths.
+        """Register two image arrays loaded from paths.
 
         Parameters
         ----------
@@ -178,13 +178,13 @@ class ImageRegistration(BaseTool):
         list[float]
             Translational offset ``[dy, dx]`` in physical units.
         """
-        current_image = self.process_image(np.load(current_image_path))
-        reference_image = self.process_image(np.load(reference_image_path))
+        current_image = np.load(current_image_path, allow_pickle=False)
+        reference_image = np.load(reference_image_path, allow_pickle=False)
         offset = self.register_images(
-            current_image,
-            reference_image,
-            float(current_pixel_size),
-            float(reference_pixel_size),
+            image_t=current_image,
+            image_r=reference_image,
+            psize_t=float(current_pixel_size),
+            psize_r=float(reference_pixel_size),
             registration_algorithm_kwargs=self.registration_algorithm_kwargs,
         )
         return np.array(offset, dtype=float).tolist()
@@ -192,8 +192,8 @@ class ImageRegistration(BaseTool):
     @tool(name="apply_and_view_offset_from_paths")
     def apply_and_view_offset_from_paths(
         self,
-        current_image_path: Annotated[str, "Path to the current image .npy file."],
-        reference_image_path: Annotated[str, "Path to the reference image .npy file."],
+        current_image_path: Annotated[str, "Path to the current image array file."],
+        reference_image_path: Annotated[str, "Path to the reference image array file."],
         fractional_offset_y: Annotated[
             float,
             "Fractional y-shift (down is positive) relative to image height.",
@@ -415,6 +415,8 @@ class ImageRegistration(BaseTool):
         """
         method = registration_method or self.registration_method
         algorithm_kwargs = dict(registration_algorithm_kwargs or {})
+        image_t = self.process_image(np.array(image_t, copy=True))
+        image_r = self.process_image(np.array(image_r, copy=True))
 
         # Handle pixel size and image size differences
         if psize_t != psize_r:

@@ -4,7 +4,10 @@ import argparse
 import tifffile
 import numpy as np
 
-from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
+from eaa_imaging.tool.imaging.acquisition import (
+    SimulatedAcquireImage,
+    decode_image_array_payload,
+)
 
 import test_utils as tutils
 
@@ -90,10 +93,10 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
 
         assert isinstance(result, dict)
         assert isinstance(result.get("img_path"), str)
-        assert isinstance(result.get("array_path"), str)
-        assert os.path.exists(result["array_path"])
+        assert "array_path" not in result
+        assert result["psize"] == 1
 
-    def test_simulated_image_saves_npy_artifacts_and_collects_unreferenced_files(self):
+    def test_simulated_image_buffers_and_payloads_are_available(self):
         whole_image = tifffile.imread(
             os.path.join(
                 self.get_ci_input_data_dir(),
@@ -104,19 +107,47 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
 
         tool = SimulatedAcquireImage(whole_image, return_message=True)
         tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
-        first_info = tool.get_current_image_info()
+        first_image = tool.get_image_array("current")
         tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
-        second_info = tool.get_current_image_info()
+        second_image = tool.get_image_array("current")
         tool.acquire_image(y_center=232, x_center=232, size_y=64, size_x=64)
-        third_info = tool.get_current_image_info()
+        third_image = tool.get_image_array("current")
         tool.acquire_image(y_center=234, x_center=234, size_y=64, size_x=64)
+        current_info = tool.get_current_image_info()
+        previous_info = tool.get_previous_image_info()
+        initial_info = tool.get_initial_image_info()
+        payload = tool.get_image_array_payload("previous")
 
-        assert os.path.exists(first_info["array_path"])
-        assert not os.path.exists(second_info["array_path"])
-        assert os.path.exists(third_info["array_path"])
-        assert os.path.exists(tool.get_current_image_info()["array_path"])
-        assert os.path.exists(tool.get_previous_image_info()["array_path"])
-        assert os.path.exists(tool.get_initial_image_info()["array_path"])
+        assert np.array_equal(tool.get_image_array("initial"), first_image)
+        assert not np.array_equal(tool.get_image_array("previous"), second_image)
+        assert np.array_equal(tool.get_image_array("previous"), third_image)
+        assert current_info["shape"] == [64, 64]
+        assert previous_info["shape"] == [64, 64]
+        assert initial_info["shape"] == [64, 64]
+        assert "array_path" not in current_info
+        assert np.array_equal(decode_image_array_payload(payload), third_image)
+
+    def test_dump_array_saves_requested_buffer(self):
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+
+        tool = SimulatedAcquireImage(whole_image, return_message=True)
+        tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
+        tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
+
+        result = tool.dump_array("previous")
+
+        assert isinstance(result["array_path"], str)
+        assert os.path.exists(result["array_path"])
+        assert np.array_equal(
+            np.load(result["array_path"], allow_pickle=False),
+            tool.get_image_array("previous"),
+        )
         
         
 if __name__ == '__main__':

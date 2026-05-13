@@ -16,7 +16,6 @@ worker:
     allow_beam: false
   artifacts:
     output_dir: "./artifacts"
-    array_format: "npy"
     overwrite_existing: false
 
 mcp:
@@ -32,7 +31,7 @@ tools:
     size_y: 128
     scan_step: 0.1
     dwell_time_ms: 10
-    return_array: true
+    update_buffers: true
     return_display_image: true
   acquire_line_scan:
     length: 10.0

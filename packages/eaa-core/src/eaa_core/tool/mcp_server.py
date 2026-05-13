@@ -104,6 +104,7 @@ class MCPToolServer:
         return [
             spec.schema or generate_openai_tool_schema(tool_name=name, func=spec.function)
             for name, spec in self._registered_tools.items()
+            if spec.model_visible
         ]
 
     def list_tools(self) -> List[str]:
