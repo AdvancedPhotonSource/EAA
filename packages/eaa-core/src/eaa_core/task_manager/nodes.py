@@ -124,6 +124,7 @@ class NodeFactory:
         messages: list[dict[str, object]],
         *,
         store_all_images_in_context: bool = True,
+        runtime_context: ChatRuntimeContext | None = None,
     ) -> None:
         """Append follow-up messages directly to a graph state.
 
@@ -137,6 +138,8 @@ class NodeFactory:
             Whether image-bearing follow-up messages should remain in
             ``state.messages``. Messages are always recorded in
             ``state.full_history``.
+        runtime_context : ChatRuntimeContext, optional
+            Runtime context used to persist trigger-marked follow-up memories.
 
         Notes
         -----
@@ -155,6 +158,10 @@ class NodeFactory:
                 message,
                 update_context=update_context,
                 update_full_history=True,
+            )
+            self.task_manager.memory_manager.save_triggered_user_memory(
+                message,
+                runtime_context,
             )
 
     def invoke_model_for_state(
@@ -520,16 +527,10 @@ class NodeFactory:
             context=context,
             await_user_input_resolver=await_user_input_resolver,
         )
-        if (
-            is_chat_user_turn
-            and runtime is not None
-            and runtime.context is not None
-            and runtime.context.memory_store is not None
-            and self.task_manager.memory_manager.user_message_triggers_memory(latest_message)
-        ):
-            self.task_manager.memory_manager.save_user_memory(
+        if is_chat_user_turn and runtime is not None:
+            self.task_manager.memory_manager.save_triggered_user_memory(
                 latest_message,
-                runtime.context.memory_namespace,
+                runtime.context,
             )
         if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
             state.initial_prompt_pending = False
@@ -675,13 +676,19 @@ class NodeFactory:
             )
         return followup_messages
 
-    def image_followup(self, state: TaskManagerState) -> dict[str, object]:
+    def image_followup(
+        self,
+        state: TaskManagerState,
+        runtime: Runtime[ChatRuntimeContext] | None = None,
+    ) -> dict[str, object]:
         """Append follow-up messages after a tool batch completes.
 
         Parameters
         ----------
         state : TaskManagerState
             Active graph state after ``execute_tools``.
+        runtime : Runtime[ChatRuntimeContext], optional
+            Runtime context that may carry long-term-memory storage.
 
         Returns
         -------
@@ -708,7 +715,11 @@ class NodeFactory:
                     message_with_yielded_image=state.message_with_yielded_image,
                     allow_non_image_tool_responses=state.allow_non_image_tool_responses,
                 )
-                self.apply_followup_messages_for_state(state, followup_messages)
+                self.apply_followup_messages_for_state(
+                    state,
+                    followup_messages,
+                    runtime_context=None if runtime is None else runtime.context,
+                )
                 return state.model_dump()
             followup_messages = self.build_tool_followup_messages(
                 state,
@@ -719,6 +730,7 @@ class NodeFactory:
                 state,
                 followup_messages,
                 store_all_images_in_context=state.store_all_images_in_context,
+                runtime_context=None if runtime is None else runtime.context,
             )
             return state.model_dump()
         except Exception as exc:

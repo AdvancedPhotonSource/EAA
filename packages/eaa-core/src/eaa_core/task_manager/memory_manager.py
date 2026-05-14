@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar
 
@@ -14,6 +15,7 @@ from eaa_core.task_manager.state import ChatRuntimeContext
 from eaa_core.util import get_image_paths_from_text
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
@@ -40,6 +42,7 @@ class MemoryManager:
         """Build the long-term memory store used by the chat graph."""
         if self.config is None or not self.config.enabled:
             self.store = None
+            logger.debug("Long-term memory store disabled.")
             return
         try:
             from langchain_chroma import Chroma
@@ -54,6 +57,12 @@ class MemoryManager:
             embedding_function=self.build_embeddings_client(),
             collection_metadata={"hnsw:space": "cosine"},
             relevance_score_fn=lambda distance: 1.0 - distance,
+        )
+        logger.info(
+            "Built long-term memory store: collection=%s namespace=%s persist_directory=%s",
+            self.config.collection_name,
+            self.get_namespace(),
+            self.get_persist_directory(),
         )
 
     def build_embeddings_client(self) -> OpenAIEmbeddings:
@@ -284,6 +293,7 @@ class MemoryManager:
             raise ValueError(f"Unsupported image reference kind: {image_reference['kind']}")
         response = invoke_chat_model(self.task_manager.model, messages=[message])
         caption = extract_message_text(response).strip()
+        logger.debug("Captioned memory image reference kind=%s caption=%r", image_reference["kind"], caption)
         return caption
 
     def build_text_with_image_captions(self, text: str, message: dict[str, Any]) -> str:
@@ -304,6 +314,7 @@ class MemoryManager:
         image_references = self.get_message_image_references(message)
         if len(image_references) == 0:
             return text
+        logger.info("Captioning %d image(s) for long-term memory embedding.", len(image_references))
         captions = [
             caption
             for caption in (self.caption_image_reference(reference) for reference in image_references)
@@ -352,11 +363,22 @@ class MemoryManager:
     def save_user_memory(self, message: dict[str, Any], namespace: str) -> None:
         """Persist a user memory in the vector store."""
         if self.store is None:
+            logger.debug("Skipping long-term memory save because memory store is not available.")
             return
         memory_text = self.get_memory_embedding_text(message)
         if not memory_text:
+            logger.debug("Skipping long-term memory save because extracted memory text is empty.")
             return
+        image_count = len(self.get_message_image_references(message))
         key = hashlib.sha1(memory_text.encode("utf-8")).hexdigest()
+        logger.info(
+            "Saving long-term memory: namespace=%s id=%s text_length=%d image_count=%d",
+            namespace,
+            key,
+            len(memory_text),
+            image_count,
+        )
+        logger.debug("Long-term memory text preview: %r", memory_text[:500])
         self.run_with_string_input_fallback(
             lambda: self.store.add_texts(
                 [memory_text],
@@ -370,6 +392,36 @@ class MemoryManager:
                 ids=[key],
             )
         )
+        logger.info("Saved long-term memory: namespace=%s id=%s", namespace, key)
+
+    def save_triggered_user_memory(
+        self,
+        message: Optional[dict[str, Any]],
+        runtime_context: Optional[ChatRuntimeContext],
+    ) -> None:
+        """Persist a user memory when runtime memory and trigger conditions match.
+
+        Parameters
+        ----------
+        message : dict, optional
+            Candidate OpenAI-style user message.
+        runtime_context : ChatRuntimeContext, optional
+            Active graph runtime context containing the memory store and
+            namespace.
+        """
+        if (
+            runtime_context is None
+            or runtime_context.memory_store is None
+            or not self.user_message_triggers_memory(message)
+        ):
+            logger.debug(
+                "Skipping triggered long-term memory save: has_runtime_context=%s has_store=%s triggered=%s",
+                runtime_context is not None,
+                runtime_context is not None and runtime_context.memory_store is not None,
+                self.user_message_triggers_memory(message),
+            )
+            return
+        self.save_user_memory(message, runtime_context.memory_namespace)
 
     def retrieve_user_memories(self, message: dict[str, Any], namespace: str) -> list[Any]:
         """Retrieve semantically relevant long-term memories for a user message."""
@@ -379,10 +431,28 @@ class MemoryManager:
             or not self.config.enabled
             or not self.config.retrieval_enabled
         ):
+            logger.debug(
+                "Skipping long-term memory retrieval: has_store=%s has_config=%s enabled=%s retrieval_enabled=%s",
+                self.store is not None,
+                self.config is not None,
+                self.config is not None and self.config.enabled,
+                self.config is not None and self.config.retrieval_enabled,
+            )
             return []
         query = self.get_memory_query_text(message)
         if not query:
+            logger.debug("Skipping long-term memory retrieval because query text is empty.")
             return []
+        image_count = len(self.get_message_image_references(message))
+        logger.info(
+            "Retrieving long-term memories: namespace=%s top_k=%d threshold=%s query_length=%d image_count=%d",
+            namespace,
+            self.config.top_k,
+            self.config.score_threshold,
+            len(query),
+            image_count,
+        )
+        logger.debug("Long-term memory query preview: %r", query[:500])
         results = self.run_with_string_input_fallback(
             lambda: self.store.similarity_search_with_relevance_scores(
                 query,
@@ -400,6 +470,17 @@ class MemoryManager:
             if score < self.config.score_threshold:
                 continue
             filtered.append((document, score))
+        logger.info(
+            "Retrieved %d long-term memor%s after filtering from %d candidate(s).",
+            len(filtered),
+            "y" if len(filtered) == 1 else "ies",
+            len(results),
+        )
+        if filtered:
+            logger.debug(
+                "Long-term memory result scores: %s",
+                [round(float(score), 4) for _document, score in filtered],
+            )
         return filtered
 
     def build_memory_context_message(self, memory_results: list[Any]) -> Optional[dict[str, Any]]:

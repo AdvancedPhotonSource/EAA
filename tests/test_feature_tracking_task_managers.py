@@ -1,6 +1,10 @@
+import pytest
+
+from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.tool.base import BaseTool, tool
 from eaa_imaging.task_manager.imaging.feature_tracking import FeatureTrackingTaskManager
 from eaa_imaging.task_manager.imaging.roi_search import (
+    EMBED_INTERMEDIATE_IMAGE_TRIGGER,
     MultiAgentROISearchTaskManager,
     MultiAgentROISearchState,
     ROISearchTaskManager,
@@ -41,6 +45,45 @@ def test_roi_search_task_manager_run_uses_feedback_loop(monkeypatch):
 
     assert "bright spot" in captured["initial_prompt"]
     assert captured["message_with_yielded_image"].startswith("Here is the image")
+
+
+def test_roi_search_task_manager_can_embed_intermediate_images(monkeypatch):
+    task_manager = ROISearchTaskManager(
+        build=False,
+        use_coding_tools=False,
+        image_acquisition_tool=DummyAcquireImageTool(),
+        memory_config=MemoryManagerConfig(enabled=False),
+        session_db_path=None,
+        embed_intermediate_images=True,
+    )
+    captured = {}
+
+    def fake_run_feedback_loop(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+
+    task_manager.run(
+        feature_description="bright spot",
+        y_range=(0.0, 10.0),
+        x_range=(5.0, 15.0),
+        fov_size=(2.0, 3.0),
+        step_size=(1.0, 1.5),
+    )
+
+    assert captured["message_with_yielded_image"].startswith(EMBED_INTERMEDIATE_IMAGE_TRIGGER)
+    assert "Here is the image" in captured["message_with_yielded_image"]
+
+
+def test_roi_search_task_manager_requires_memory_config_for_intermediate_embedding():
+    with pytest.raises(ValueError, match="memory_config"):
+        ROISearchTaskManager(
+            build=False,
+            use_coding_tools=False,
+            image_acquisition_tool=DummyAcquireImageTool(),
+            session_db_path=None,
+            embed_intermediate_images=True,
+        )
 
 
 def test_multi_agent_roi_search_uses_dedicated_graph_then_feedback_loop(monkeypatch):
@@ -105,6 +148,78 @@ def test_multi_agent_roi_search_uses_dedicated_graph_then_feedback_loop(monkeypa
     assert feedback_loop_kwargs["initial_image_path"] == "dummy.png"
     assert "bright spot is visible" in feedback_loop_kwargs["initial_prompt"]
     assert "centered in the FOV" in feedback_loop_kwargs["initial_prompt"]
+
+
+def test_multi_agent_roi_search_can_embed_intermediate_centering_images(monkeypatch):
+    task_manager = MultiAgentROISearchTaskManager(
+        build=True,
+        use_coding_tools=False,
+        image_acquisition_tool=DummyAcquireImageTool(),
+        memory_config=MemoryManagerConfig(enabled=False),
+        session_db_path=None,
+        embed_intermediate_images=True,
+    )
+    task_manager.model = object()
+
+    responses = [
+        (
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "acquire_image",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {"role": "user", "content": "position prompt"},
+        ),
+        (
+            {
+                "role": "assistant",
+                "content": '{"foi_present": true, "fov_description": "bright spot is visible"}',
+            },
+            {"role": "user", "content": "checker prompt"},
+        ),
+    ]
+
+    def fake_invoke_model_raw(*args, **kwargs):
+        return responses.pop(0)
+
+    feedback_loop_kwargs = {}
+
+    def fake_run_feedback_loop(**kwargs):
+        feedback_loop_kwargs.update(kwargs)
+
+    monkeypatch.setattr(task_manager, "invoke_model_raw", fake_invoke_model_raw)
+    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+
+    task_manager.run(
+        feature_description="bright spot",
+        y_range=(0.0, 10.0),
+        x_range=(5.0, 15.0),
+        fov_size=(2.0, 3.0),
+        step_size=(1.0, 1.5),
+    )
+
+    assert feedback_loop_kwargs["message_with_yielded_image"].startswith(EMBED_INTERMEDIATE_IMAGE_TRIGGER)
+    assert "Continue adjusting" in feedback_loop_kwargs["message_with_yielded_image"]
+
+
+def test_multi_agent_roi_search_requires_memory_config_for_intermediate_embedding():
+    with pytest.raises(ValueError, match="memory_config"):
+        MultiAgentROISearchTaskManager(
+            build=False,
+            use_coding_tools=False,
+            image_acquisition_tool=DummyAcquireImageTool(),
+            session_db_path=None,
+            embed_intermediate_images=True,
+        )
 
 
 def test_multi_agent_roi_search_repeats_until_feature_present(monkeypatch):

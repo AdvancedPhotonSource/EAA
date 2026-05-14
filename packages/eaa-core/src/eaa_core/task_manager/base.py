@@ -1262,7 +1262,7 @@ class BaseTaskManager:
     def build_feedback_loop_graph(self, checkpointer: Any = None):
         """Build the base feedback-loop graph."""
         node_factory = self.node_factory
-        builder = StateGraph(FeedbackLoopState)
+        builder = StateGraph(FeedbackLoopState, context_schema=ChatRuntimeContext)
         builder.add_node(
             "handle_human_gate",
             node_factory.handle_human_gate,
@@ -1527,7 +1527,9 @@ class BaseTaskManager:
             initial_state.copy_messages_and_history_from_state(self.active_state)
         self.set_active_state(initial_state, "feedback_loop_graph")
         graph = self.feedback_loop_graph
-        graph_kwargs: dict[str, Any] = {}
+        graph_kwargs: dict[str, Any] = {
+            "context": self.memory_manager.get_runtime_context(),
+        }
         if self.session_db_path is not None:
             graph, checkpoint_config, _ = self.get_checkpointed_graph(
                 "feedback_loop_graph",
@@ -1619,7 +1621,10 @@ class BaseTaskManager:
         invoke_result = self.invoke_graph_with_interruption_recovery(
             graph=graph,
             graph_input=None,
-            graph_kwargs={"config": checkpoint_config},
+            graph_kwargs={
+                "config": checkpoint_config,
+                "context": self.memory_manager.get_runtime_context(),
+            },
             graph_name="feedback_loop_graph",
             state_model=FeedbackLoopState,
             interruption_message="Keyboard interrupt detected. The current feedback loop was interrupted.",

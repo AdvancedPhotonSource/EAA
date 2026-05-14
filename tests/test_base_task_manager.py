@@ -8,7 +8,7 @@ from typing import Any
 from eaa_core.api.llm_config import OpenAIConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.task_manager.base import BaseTaskManager
-from eaa_core.task_manager.state import ChatGraphState, FeedbackLoopState, TaskManagerState
+from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, FeedbackLoopState, TaskManagerState
 
 
 class CheckpointableTaskManager(BaseTaskManager):
@@ -1230,6 +1230,65 @@ def test_memory_manager_retrieves_with_image_caption_query(monkeypatch):
         ]
     }
     assert len(memories) == 1
+
+
+def test_feedback_followup_triggered_memory_reuses_memory_manager(monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+        llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
+        memory_config=MemoryManagerConfig(enabled=True),
+    )
+    task_manager.model = object()
+    saved = {}
+
+    class FakeStore:
+        def add_texts(self, texts, metadatas, ids):
+            saved["texts"] = texts
+            saved["metadatas"] = metadatas
+            saved["ids"] = ids
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        saved["caption_messages"] = messages
+        return {"role": "assistant", "content": "A microscope image with a target feature."}
+
+    monkeypatch.setattr("eaa_core.task_manager.memory_manager.invoke_chat_model", fake_invoke_chat_model)
+
+    state = FeedbackLoopState()
+    message = {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "<embed-this> Here is the image the tool returned.",
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,example"},
+            },
+        ],
+    }
+    runtime_context = ChatRuntimeContext(
+        memory_namespace="feedback-test",
+        memory_store=FakeStore(),
+    )
+    task_manager.memory_manager.store = runtime_context.memory_store
+
+    task_manager.node_factory.apply_followup_messages_for_state(
+        state,
+        [message],
+        runtime_context=runtime_context,
+    )
+
+    assert len(state.full_history) == 1
+    assert saved["texts"] == [
+        "Here is the image the tool returned.\n"
+        "Image descriptions:\n"
+        "1. A microscope image with a target feature."
+    ]
+    assert saved["metadatas"][0]["namespace"] == "feedback-test"
+    assert saved["caption_messages"][0]["content"][1]["type"] == "image_url"
 
 
 def test_chat_graph_saves_keyword_triggered_long_term_memory(monkeypatch, tmp_path):

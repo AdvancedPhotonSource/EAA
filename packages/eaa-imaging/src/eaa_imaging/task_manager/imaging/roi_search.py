@@ -20,6 +20,28 @@ from eaa_imaging.task_manager.imaging.feature_tracking import initialize_feature
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
 from eaa_imaging.tool.imaging.registration import ImageRegistration
 
+EMBED_INTERMEDIATE_IMAGE_TRIGGER = "<embed-this>"
+
+
+def build_embedding_triggered_image_message(message: str, embed_intermediate_images: bool) -> str:
+    """Return an image follow-up message with the embedding trigger when requested.
+
+    Parameters
+    ----------
+    message : str
+        Base message sent with tool-yielded images.
+    embed_intermediate_images : bool
+        Whether the message should be marked for long-term-memory embedding.
+
+    Returns
+    -------
+    str
+        Message optionally prefixed with the embedding trigger phrase.
+    """
+    if not embed_intermediate_images:
+        return message
+    return f"{EMBED_INTERMEDIATE_IMAGE_TRIGGER} {message}"
+
 
 class MultiAgentROISearchState(TaskManagerState):
     """State for the multi-agent ROI-search task graph.
@@ -70,6 +92,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         additional_tools: list[BaseTool] = (),
         session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
+        embed_intermediate_images: bool = False,
         *args,
         **kwargs,
     ) -> None:
@@ -91,11 +114,17 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
+        embed_intermediate_images : bool, default=False
+            Whether to mark intermediate feedback-loop image messages for
+            long-term-memory embedding.
         *args
             Positional arguments forwarded to ``ImagingBaseTaskManager``.
         **kwargs
             Keyword arguments forwarded to ``ImagingBaseTaskManager``.
         """
+        if embed_intermediate_images and memory_config is None:
+            raise ValueError("`memory_config` must be provided when `embed_intermediate_images` is True.")
+        self.embed_intermediate_images = embed_intermediate_images
         initialize_feature_tracking_task_manager(
             self,
             llm_config=llm_config,
@@ -187,11 +216,14 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=None,
-            message_with_yielded_image=(
-                "Here is the image the tool returned. If the feature is there, "
-                "report the coordinates of the FOV and include 'TERMINATE' in "
-                "your response. Otherwise, continue to call tools to run the search. "
-                "Include a brief description of what you see in the image in your response."
+            message_with_yielded_image=build_embedding_triggered_image_message(
+                (
+                    "Here is the image the tool returned. If the feature is there, "
+                    "report the coordinates of the FOV and include 'TERMINATE' in "
+                    "your response. Otherwise, continue to call tools to run the search. "
+                    "Include a brief description of what you see in the image in your response."
+                ),
+                self.embed_intermediate_images,
             ),
             max_rounds=max_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
@@ -223,6 +255,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         additional_tools: list[BaseTool] = (),
         session_db_path: Optional[str] = "session.sqlite",
         build: bool = True,
+        embed_intermediate_images: bool = False,
         *args,
         **kwargs,
     ) -> None:
@@ -244,11 +277,17 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
+        embed_intermediate_images : bool, default=False
+            Whether to mark intermediate final-centering image messages for
+            long-term-memory embedding.
         *args
             Positional arguments forwarded to ``ImagingBaseTaskManager``.
         **kwargs
             Keyword arguments forwarded to ``ImagingBaseTaskManager``.
         """
+        if embed_intermediate_images and memory_config is None:
+            raise ValueError("`memory_config` must be provided when `embed_intermediate_images` is True.")
+        self.embed_intermediate_images = embed_intermediate_images
         initialize_feature_tracking_task_manager(
             self,
             llm_config=llm_config,
@@ -871,10 +910,13 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         self.run_feedback_loop(
             initial_prompt=initial_prompt,
             initial_image_path=search_state.last_image_path,
-            message_with_yielded_image=(
-                "Here is the image the tool returned. Continue adjusting the "
-                "field-of-view position until the feature of interest is "
-                "centered. When finished, include TERMINATE in your response."
+            message_with_yielded_image=build_embedding_triggered_image_message(
+                (
+                    "Here is the image the tool returned. Continue adjusting the "
+                    "field-of-view position until the feature of interest is "
+                    "centered. When finished, include TERMINATE in your response."
+                ),
+                self.embed_intermediate_images,
             ),
             max_rounds=max_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
