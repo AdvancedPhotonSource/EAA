@@ -1134,6 +1134,104 @@ class FakeEmbeddings:
         ]
 
 
+def test_memory_manager_saves_image_caption_with_text(monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+        llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
+        memory_config=MemoryManagerConfig(enabled=True),
+    )
+    task_manager.model = object()
+    saved = {}
+
+    class FakeStore:
+        def add_texts(self, texts, metadatas, ids):
+            saved["texts"] = texts
+            saved["metadatas"] = metadatas
+            saved["ids"] = ids
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        saved["caption_messages"] = messages
+        return {"role": "assistant", "content": "A plot with a fragile sample response."}
+
+    task_manager.memory_manager.store = FakeStore()
+    monkeypatch.setattr("eaa_core.task_manager.memory_manager.invoke_chat_model", fake_invoke_chat_model)
+
+    task_manager.memory_manager.save_user_memory(
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Remember this: the sample is fragile."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,example"},
+                },
+            ],
+        },
+        namespace="test",
+    )
+
+    assert saved["texts"] == [
+        "the sample is fragile.\n"
+        "Image descriptions:\n"
+        "1. A plot with a fragile sample response."
+    ]
+    assert saved["metadatas"][0]["namespace"] == "test"
+    assert saved["metadatas"][0]["kind"] == "user_memory"
+    assert saved["caption_messages"][0]["content"][1]["type"] == "image_url"
+
+
+def test_memory_manager_retrieves_with_image_caption_query(monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        session_db_path=None,
+        llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
+        memory_config=MemoryManagerConfig(enabled=True),
+    )
+    task_manager.model = object()
+    captured = {}
+
+    class FakeStore:
+        def similarity_search_with_relevance_scores(self, query, k, filter):
+            captured["query"] = query
+            captured["k"] = k
+            captured["filter"] = filter
+            return [(SimpleNamespace(page_content="stored image memory"), 0.9)]
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "An image showing blue sky."}
+
+    task_manager.memory_manager.store = FakeStore()
+    monkeypatch.setattr("eaa_core.task_manager.memory_manager.invoke_chat_model", fake_invoke_chat_model)
+
+    memories = task_manager.memory_manager.retrieve_user_memories(
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What matches this image?"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,example"},
+                },
+            ],
+        },
+        namespace="test",
+    )
+
+    assert "What matches this image?" in captured["query"]
+    assert "Image descriptions:\n1. An image showing blue sky." in captured["query"]
+    assert captured["k"] == task_manager.memory_manager.config.top_k
+    assert captured["filter"] == {
+        "$and": [
+            {"namespace": "test"},
+            {"kind": "user_memory"},
+        ]
+    }
+    assert len(memories) == 1
+
+
 def test_chat_graph_saves_keyword_triggered_long_term_memory(monkeypatch, tmp_path):
     task_manager = BaseTaskManager(
         build=False,

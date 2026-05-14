@@ -30,9 +30,25 @@ Chroma-backed vector store. When memory is enabled:
 - chat turns can retrieve relevant user memories
 - retrieved memories are injected into the model context as a system message
 - user messages that match a trigger phrase can be saved as memories
+- image-bearing messages are converted to text for retrieval by asking the
+  task manager's main chat model to caption each image, then embedding the
+  original text together with the generated image descriptions
 
 Memory retrieval is only wired into the chat graph path, not every possible
 custom workflow.
+
+Image handling
+--------------
+
+The built-in memory store still uses a text embedding model. When a saved
+memory or retrieval query contains images, the memory manager sends each image
+to the main chat model configured on the task manager and asks for a concise
+semantic description. Those descriptions are appended under an
+``Image descriptions:`` section before calling the text embedding model.
+
+This supports both OpenAI-style ``image_url`` message parts and EAA
+``<img /path/to/image.png>`` tags in text content. The image captions are
+stored as text in the vector store; raw image vectors are not stored.
 
 Saving memory with trigger words
 --------------------------------

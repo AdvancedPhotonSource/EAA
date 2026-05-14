@@ -59,5 +59,6 @@ class MemoryManagerConfig(BaseConfig):
         "keep in mind",
         "please remember",
         "remember:",
+        "<embed-this>"
     )
     """User phrases that trigger long-term memory saving."""

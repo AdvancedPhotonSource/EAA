@@ -9,7 +9,9 @@ from openai import UnprocessableEntityError
 
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.message_proc import extract_message_text, generate_openai_message
+from eaa_core.llm.model import invoke_chat_model
 from eaa_core.task_manager.state import ChatRuntimeContext
+from eaa_core.util import get_image_paths_from_text
 
 T = TypeVar("T")
 
@@ -190,14 +192,168 @@ class MemoryManager:
             if index < 0:
                 continue
             suffix = text[index + len(trigger) :].lstrip(" :,-")
-            return suffix or text
-        return text
+            return self.remove_image_tags_from_text(suffix or text)
+        return self.remove_image_tags_from_text(text)
+
+    def remove_image_tags_from_text(self, text: str) -> str:
+        """Return text with EAA ``<img ...>`` tags removed.
+
+        Parameters
+        ----------
+        text : str
+            Text that may include EAA image tags.
+
+        Returns
+        -------
+        str
+            Text with image tags removed and surrounding whitespace stripped.
+        """
+        _, cleaned_text = get_image_paths_from_text(text, return_text_without_image_tag=True)
+        return cleaned_text.strip()
+
+    def get_message_image_references(self, message: dict[str, Any]) -> list[dict[str, str]]:
+        """Extract image references from an OpenAI-style message.
+
+        Parameters
+        ----------
+        message : dict
+            Message payload to inspect.
+
+        Returns
+        -------
+        list[dict[str, str]]
+            Image references as dictionaries with ``kind`` and ``value`` keys.
+        """
+        references: list[dict[str, str]] = []
+        content = message.get("content")
+        if isinstance(content, str):
+            references.extend({"kind": "path", "value": path} for path in get_image_paths_from_text(content))
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    references.extend(
+                        {"kind": "path", "value": path}
+                        for path in get_image_paths_from_text(str(part.get("text", "")))
+                    )
+                elif part.get("type") == "image_url":
+                    image_url = part.get("image_url", {}).get("url")
+                    if isinstance(image_url, str) and image_url:
+                        references.append({"kind": "image_url", "value": image_url})
+        return references
+
+    def caption_image_reference(self, image_reference: dict[str, str]) -> str:
+        """Caption one image through the task manager's main chat model.
+
+        Parameters
+        ----------
+        image_reference : dict[str, str]
+            Image reference with ``kind`` set to ``path`` or ``image_url``.
+
+        Returns
+        -------
+        str
+            Concise model-generated image caption.
+        """
+        if self.task_manager.model is None:
+            raise RuntimeError("Image memory captioning requires the main LLM model to be configured.")
+        prompt = (
+            "Describe this image for semantic retrieval memory. "
+            "Focus on visible objects, scene structure, text, plots, measurements, "
+            "and scientifically relevant details. Be concise."
+        )
+        if image_reference["kind"] == "path":
+            message = generate_openai_message(
+                content=prompt,
+                role="user",
+                image_path=image_reference["value"],
+            )
+        elif image_reference["kind"] == "image_url":
+            message = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_reference["value"]},
+                    },
+                ],
+            }
+        else:
+            raise ValueError(f"Unsupported image reference kind: {image_reference['kind']}")
+        response = invoke_chat_model(self.task_manager.model, messages=[message])
+        caption = extract_message_text(response).strip()
+        return caption
+
+    def build_text_with_image_captions(self, text: str, message: dict[str, Any]) -> str:
+        """Append LLM-generated image captions to text for embedding.
+
+        Parameters
+        ----------
+        text : str
+            Textual message content.
+        message : dict
+            Message payload that may include image references.
+
+        Returns
+        -------
+        str
+            Text suitable for a text embedding model.
+        """
+        image_references = self.get_message_image_references(message)
+        if len(image_references) == 0:
+            return text
+        captions = [
+            caption
+            for caption in (self.caption_image_reference(reference) for reference in image_references)
+            if caption
+        ]
+        if len(captions) == 0:
+            return text
+        sections = [text.strip()] if text.strip() else []
+        sections.append("Image descriptions:")
+        sections.extend(f"{index}. {caption}" for index, caption in enumerate(captions, start=1))
+        return "\n".join(sections)
+
+    def get_memory_embedding_text(self, message: dict[str, Any]) -> Optional[str]:
+        """Build text to embed for a saved memory message.
+
+        Parameters
+        ----------
+        message : dict
+            User message being saved.
+
+        Returns
+        -------
+        str or None
+            Text and image captions to embed, or ``None`` when empty.
+        """
+        text = self.get_memory_text(message) or ""
+        embedding_text = self.build_text_with_image_captions(text, message).strip()
+        return embedding_text or None
+
+    def get_memory_query_text(self, message: dict[str, Any]) -> str:
+        """Build text to embed for memory retrieval.
+
+        Parameters
+        ----------
+        message : dict
+            User query message.
+
+        Returns
+        -------
+        str
+            Query text augmented with image captions when images are present.
+        """
+        text = self.remove_image_tags_from_text(extract_message_text(message))
+        return self.build_text_with_image_captions(text, message).strip()
 
     def save_user_memory(self, message: dict[str, Any], namespace: str) -> None:
         """Persist a user memory in the vector store."""
         if self.store is None:
             return
-        memory_text = self.get_memory_text(message)
+        memory_text = self.get_memory_embedding_text(message)
         if not memory_text:
             return
         key = hashlib.sha1(memory_text.encode("utf-8")).hexdigest()
@@ -224,7 +380,7 @@ class MemoryManager:
             or not self.config.retrieval_enabled
         ):
             return []
-        query = extract_message_text(message).strip()
+        query = self.get_memory_query_text(message)
         if not query:
             return []
         results = self.run_with_string_input_fallback(
