@@ -123,11 +123,16 @@ The MCP frontend should:
 - use `asyncio.to_thread(...)` if an async MCP handler calls a blocking ZMQ
   client.
 
-Getter tools must return serialized Python objects such as `str`, `int`,
-`float`, `bool`, `list`, `dict`, or `None`. Convert control-library objects,
-NumPy scalars, and arrays before returning them. Return display artifacts such
-as plots or preview images as paths. Return numerical image buffers for EAA
-imaging task managers with the `get_image_array_payload` contract below.
+### Tool returns
+
+Tools and getters must return serialized Python objects such as `str`, `int`,
+`float`, `bool`, `list`, `dict`, or `None`. Non-literal objects need to
+be handled properly:
+- If a tool is supposed to yield an image, the image should be rendered
+to PNG, saved to hard drive, and the tool should return the path in the
+`img_path` field of a JSON obejct.
+- If a tool is supposed to return a NumPy array, use the 
+`get_image_array_payload` contract below.
 
 MCP tool methods must be documented so FastMCP can generate useful tool
 schemas. Each tool function should:
@@ -170,33 +175,49 @@ artifact path requirements, and tool defaults configured in YAML.
 
 ## EAA Contracts
 
-Do not force EAA-specific names on general chat tools. The following contracts
-are only needed for EAA logic-driven task managers that use adapter proxies.
+EAA can use MCP tools in two workflow styles:
 
-### Parameter Tuning
+- **LLM-driven workflows**: an agent chooses and calls tools from the
+  model-facing tool schema.
+- **Logic-driven workflows**: task-manager code calls tools explicitly through
+  EAA adapter proxies.
 
-Expose:
+Tools should ideally support both workflow styles. LLM-driven workflows mostly
+need clear schemas and file-based artifacts that the model can reason about.
+Logic-driven workflows require slightly more contract surface because analytical
+code often needs numerical arrays or other non-JSON-native data from the
+server's internal state.
 
-```python
-set_parameters(parameters: list[float]) -> str | dict
-```
+Do not force EAA-specific names on every general chat tool. Add these contracts
+when a server is intended to participate in EAA acquisition, tuning, or
+analysis workflows.
 
-The order must match the task manager's `initial_parameters` keys. EAA supplies
-parameter names and ranges locally and records parameter history in the proxy.
+### LLM-Driven Workflow Contracts
 
-### Imaging Acquisition
+LLM-driven workflows call visible MCP tools and operate on JSON responses plus
+filesystem artifacts.
 
-Expose:
+#### General Return Rules
+
+- Tools must return serialized Python objects such as `str`, `int`, `float`,
+  `bool`, `list`, `dict`, or `None`.
+- Images must be rendered to PNG, saved to disk, and returned in the `img_path`
+  field of a JSON object.
+- NumPy arrays must be saved to disk as `.npy` files, and the tool must return
+  the array path in JSON.
+- Artifact paths returned to EAA must be readable from the EAA process.
+
+#### Image Acquisition Tools
+
+Expose an image acquisition tool:
 
 ```python
 acquire_image(...) -> dict
-get_image_array_payload(buffer_name: str) -> dict
-acquire_line_scan(...) -> dict
 ```
 
 For `acquire_image`, return:
 
-- `img_path`: display image path, when a plot should be shown;
+- `img_path`: path to a PNG display image;
 - one pixel-size key: `psize`, `pixel_size`, `scan_step`, or `stepsize_x`.
 
 `acquire_image` must update server-side image buffers. The server must keep at
@@ -206,8 +227,96 @@ least:
 - `previous`: image immediately before the current image;
 - `current`: most recent 2D image.
 
-For `get_image_array_payload`, accept `buffer_name` values `current`,
-`previous`, and `initial`, and return:
+Expose an array dump tool in the image acquisition contract:
+
+```python
+dump_array(buffer_name: str) -> dict
+```
+
+`dump_array` must:
+
+- accept `buffer_name` values `current`, `previous`, and `initial`;
+- save the selected buffer as a `.npy` file;
+- return the path to the saved array in JSON;
+- avoid embedding large array values directly in the model-visible response.
+
+When an external MCP server is used through EAA's acquisition proxy, the proxy
+can provide the model-visible `dump_array` tool from the server's
+`get_image_array_payload` method. If the server is used directly by an LLM
+without that proxy, expose `dump_array` on the server itself.
+
+Expose a line-scan acquisition tool when the instrument supports focusing or
+line-profile analysis:
+
+```python
+acquire_line_scan(...) -> dict
+```
+
+For `acquire_line_scan`, return:
+
+- `fwhm`: numeric Gaussian-fit FWHM for analytical focusing;
+- `img_path`: path to a PNG display image, recommended;
+- optional fit metadata: `a`, `mu`, `sigma`, `c`, `normalized_residual`,
+  `x_min`, `x_max`.
+
+Prefer default argument names:
+
+- image and line coordinates: `x_center`, `y_center`;
+- image size: `size_x`, `size_y`;
+- scan step: `scan_step`;
+- line scan length: `length`;
+- line scan angle: `angle`.
+
+#### Parameter Setting Tools
+
+Expose a parameter-setting tool for optimization and tuning workflows:
+
+```python
+set_parameters(parameters: list[float]) -> str | dict
+```
+
+The order must match the task manager's `initial_parameters` keys. EAA supplies
+parameter names and ranges locally and records parameter history in the proxy.
+
+The response should be JSON-serializable and should report whether the setting
+operation succeeded. Include current values or relevant status fields when they
+help the agent decide the next action.
+
+Optionally expose a named setting tool for simple configuration changes:
+
+```python
+set_attribute(name: str, value: object) -> dict
+```
+
+or:
+
+```python
+set_config(name: str, value: object) -> dict
+```
+
+EAA uses one of these to request
+`line_scan_return_gaussian_fit=True` when available.
+
+### Logic-Driven Workflow Contracts
+
+Logic-driven workflows call tools explicitly from task-manager code. They can
+use the same visible tools as LLM-driven workflows, but they often need direct
+access to numerical arrays held in server-side buffers.
+
+Expose an adapter method for image array transfer:
+
+```python
+get_image_array_payload(buffer_name: str) -> dict
+```
+
+`get_image_array_payload` must:
+
+- accept `buffer_name` values `current`, `previous`, and `initial`;
+- return a JSON-serializable payload containing the selected array;
+- preserve the array dtype and shape;
+- avoid requiring EAA as a dependency of the external MCP server.
+
+Return payloads in this format:
 
 ```python
 {
@@ -217,10 +326,6 @@ For `get_image_array_payload`, accept `buffer_name` values `current`,
     "data": "<base64-encoded array bytes>",
 }
 ```
-
-External servers should expose this as a normal FastMCP tool. EAA's MCP client
-treats this name as an adapter-only method: analytical task-manager code can
-call it over MCP, but it is omitted from model-facing tool schemas.
 
 Use this dependency-light encoding pattern in external MCP servers:
 
@@ -239,44 +344,15 @@ def encode_image_array_payload(image: np.ndarray) -> dict:
     }
 ```
 
-EAA analytical imaging workflows retrieve numerical arrays through
-`get_image_array_payload`.
+External servers should expose `get_image_array_payload` as a normal FastMCP
+tool. EAA filters this method out of the LLM-facing tool schema, so the model
+cannot see or call it. Analytical task-manager code can still call it over MCP
+through EAA's adapter layer.
 
-EAA's acquisition proxy exposes `dump_array(buffer_name: str)` as a
-model-visible tool. The LLM can call it to save `current`, `previous`, or
-`initial` buffers to a local array file before calling a path-based registration
-tool. External MCP servers only need to provide `get_image_array_payload`; the
-proxy handles dumping on the EAA side.
-
-For `acquire_line_scan`, return:
-
-- `fwhm`: numeric Gaussian-fit FWHM for analytical focusing;
-- `img_path`: display image path, recommended;
-- optional fit metadata: `a`, `mu`, `sigma`, `c`, `normalized_residual`,
-  `x_min`, `x_max`.
-
-Prefer default argument names:
-
-- image and line coordinates: `x_center`, `y_center`;
-- image size: `size_x`, `size_y`;
-- scan step: `scan_step`;
-- line scan length: `length`;
-- line scan angle: `angle`.
-
-Optionally expose:
-
-```python
-set_attribute(name: str, value: object) -> dict
-```
-
-or:
-
-```python
-set_config(name: str, value: object) -> dict
-```
-
-EAA uses one of these to request
-`line_scan_return_gaussian_fit=True` when available.
+EAA's acquisition proxy can use `get_image_array_payload` to implement
+`dump_array(buffer_name: str)` by retrieving `current`, `previous`, or
+`initial`, writing it to a local `.npy` file, and returning the path to the
+LLM-visible workflow.
 
 ## Review Checklist
 
