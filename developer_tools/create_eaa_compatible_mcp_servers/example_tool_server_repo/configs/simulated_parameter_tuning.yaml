@@ -1,0 +1,41 @@
+launcher:
+  worker_startup_timeout_s: 10
+  shutdown_timeout_s: 5
+
+worker:
+  endpoint: tcp://127.0.0.1:5555
+  request_timeout_ms: 30000
+  output_dir: .tmp/control_suite_mcp_dummy
+  simulation_mode: true
+  allow_hardware_access: false
+
+mcp:
+  host: 127.0.0.1
+  port: 8050
+  path: /mcp
+
+acquisition:
+  # Optional .npy, .tif, or .tiff image path. When null, the built-in synthetic image is used.
+  image: null
+  add_axis_ticks: true
+  n_ticks: 10
+  add_grid_lines: false
+  invert_yaxis: false
+  add_line_scan_candidates_to_image: false
+  plot_image_in_log_scale: false
+  line_scan_return_gaussian_fit: true
+  line_scan_gaussian_fit_y_threshold: 0.0
+  poisson_noise_scale: 100
+  scan_jitter: 0
+  gaussian_psf_sigma: 1
+
+parameter_setting:
+  parameter_names:
+    - z
+  true_parameters:
+    - 3.0
+  parameter_ranges:
+    - [0.0]
+    - [10.0]
+  drift_factor: 30
+  blur_factor: 5

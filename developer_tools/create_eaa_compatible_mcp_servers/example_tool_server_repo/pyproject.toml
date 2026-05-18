@@ -1,0 +1,35 @@
+[project]
+name = "control-suite-mcp-dummy"
+version = "0.1.0"
+description = "Dummy FastMCP to ZMQ instrument-control suite for simulated image acquisition."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "pyzmq>=26.0",
+    "pyyaml>=6.0",
+    "scipy>=1.12",
+    "tifffile>=2024.0",
+]
+
+[project.scripts]
+control-suite = "control_suite_mcp_dummy.launcher:main"
+control-suite-worker = "control_suite_mcp_dummy.worker:main"
+control-suite-mcp = "control_suite_mcp_dummy.mcp_server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/control_suite_mcp_dummy"]
+
+[tool.ruff]
+line-length = 99

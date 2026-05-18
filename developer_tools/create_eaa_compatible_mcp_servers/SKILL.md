@@ -320,63 +320,12 @@ get_attribute_payload(name: str) -> object
 - preserve the array dtype and shape when encoding arrays;
 - avoid requiring EAA as a dependency of the external MCP server.
 
-For acquisition buffers, EAA callers use the native attribute names rather than
-the old aliases:
-
-- `image_k` for the current image;
-- `image_km1` for the previous image;
-- `image_0` for the initial image.
-
-Array payloads must use this format:
-
-```python
-{
-    "encoding": "numpy_base64",
-    "dtype": "float32",
-    "shape": [256, 256],
-    "data": "<base64-encoded array bytes>",
-}
-```
-
-Use this dependency-light encoding pattern in external MCP servers:
-
-```python
-import base64
-import numpy as np
-
-
-def encode_array_payload(array: np.ndarray) -> dict:
-    contiguous = np.ascontiguousarray(array)
-    return {
-        "encoding": "numpy_base64",
-        "dtype": str(contiguous.dtype),
-        "shape": list(contiguous.shape),
-        "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
-    }
-
-
-def get_attribute_payload(name: str) -> object:
-    value = getattr(tool, name)
-    if isinstance(value, np.ndarray):
-        return encode_array_payload(value)
-    if isinstance(value, (str, int, float, bool, list, dict, type(None))):
-        return value
-    if isinstance(value, np.generic):
-        return value.item()
-    raise ValueError(f"Attribute {name!r} has unsupported payload type.")
-```
-
 External servers should expose `get_attribute_payload` as a normal FastMCP
 tool. EAA filters this method out of the LLM-facing tool schema, so the model
 cannot see or call it. Analytical task-manager code can still call it over MCP
 through EAA's adapter layer. EAA's built-in tools inherit this method from
 `BaseTool`, but external MCP servers do not use `BaseTool`; server authors must
 implement this contract explicitly.
-
-EAA's acquisition proxy can use `get_attribute_payload` to implement
-`dump_array(buffer_name: str)` by retrieving `image_k`, `image_km1`, or
-`image_0`, writing it to a local `.npy` file, and returning the path to the
-LLM-visible workflow.
 
 ## Review Checklist
 
