@@ -280,8 +280,9 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
         file_path: Annotated[str, "Text file path to read. Relative paths are resolved from the workspace."],
         offset: Annotated[int, "Zero-based line offset to start reading from."] = 0,
         limit: Annotated[int, "Maximum number of lines to read."] = 200,
+        show_line_number: Annotated[bool, "Whether to prefix each returned line with its line number."] = True,
     ) -> str:
-        """Read a text file with line numbers."""
+        """Read a text file, optionally with line numbers."""
         if offset < 0:
             raise ValueError("offset must be non-negative")
         if limit <= 0:
@@ -300,7 +301,10 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
         lines = content.splitlines()
         if offset >= len(lines):
             raise ValueError(f"Line offset {offset} exceeds file length ({len(lines)} lines).")
-        return format_lines_with_numbers(lines[offset : offset + limit], start_line=offset + 1)
+        selected_lines = lines[offset : offset + limit]
+        if show_line_number:
+            return format_lines_with_numbers(selected_lines, start_line=offset + 1)
+        return "\n".join(selected_lines)
 
     @tool(name="write_file", require_approval=True)
     def write_file(
