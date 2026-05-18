@@ -27,6 +27,7 @@ IMAGE_PATH_SUFFIXES = {
     ".bmp",
     ".gif",
 }
+JSON_LITERAL_TYPES = (str, int, float, bool, list, dict, type(None))
 
 
 @dataclass
@@ -121,6 +122,83 @@ class BaseTool:
         plt.close()
         buffer.seek(0)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    @staticmethod
+    def encode_array_payload(array: np.ndarray) -> dict[str, Any]:
+        """Encode a NumPy array as a JSON-serializable payload.
+
+        Parameters
+        ----------
+        array : numpy.ndarray
+            Array to encode.
+
+        Returns
+        -------
+        dict[str, Any]
+            Payload containing base64-encoded contiguous array bytes.
+        """
+        contiguous = np.ascontiguousarray(array)
+        return {
+            "encoding": "numpy_base64",
+            "dtype": str(contiguous.dtype),
+            "shape": list(contiguous.shape),
+            "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+        }
+
+    @staticmethod
+    def decode_array_payload(payload: dict[str, Any]) -> np.ndarray:
+        """Decode a NumPy array payload produced by :meth:`encode_array_payload`.
+
+        Parameters
+        ----------
+        payload : dict[str, Any]
+            Encoded array payload.
+
+        Returns
+        -------
+        numpy.ndarray
+            Decoded array.
+        """
+        if payload.get("encoding") != "numpy_base64":
+            raise ValueError(f"Unsupported array encoding: {payload.get('encoding')!r}.")
+        data = payload.get("data")
+        if not isinstance(data, str):
+            raise ValueError("Array payload must contain base64 string field `data`.")
+        dtype = payload.get("dtype")
+        shape = payload.get("shape")
+        if not isinstance(dtype, str) or not isinstance(shape, list):
+            raise ValueError("Array payload must contain `dtype` and `shape` fields.")
+        array_bytes = base64.b64decode(data.encode("ascii"))
+        return np.frombuffer(array_bytes, dtype=np.dtype(dtype)).reshape(shape).copy()
+
+    @tool(name="get_attribute_payload", model_visible=False)
+    def get_attribute_payload(
+        self,
+        name: typing.Annotated[str, "Name of the tool attribute to fetch."],
+    ) -> Any:
+        """Return a JSON-serializable payload for a tool attribute.
+
+        Parameters
+        ----------
+        name : str
+            Attribute name to fetch from the tool instance.
+
+        Returns
+        -------
+        Any
+            JSON literal values are returned as-is. NumPy arrays are returned
+            as encoded array payload dictionaries.
+        """
+        value = getattr(self, name)
+        if isinstance(value, np.ndarray):
+            return self.encode_array_payload(value)
+        if isinstance(value, JSON_LITERAL_TYPES):
+            return value
+        if isinstance(value, np.generic):
+            return value.item()
+        raise ValueError(
+            f"Attribute {name!r} has unsupported payload type {type(value).__name__!r}."
+        )
 
     @staticmethod
     def save_image_to_temp_dir(

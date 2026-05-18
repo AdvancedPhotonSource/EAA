@@ -898,11 +898,15 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     raise RegistrationFailed(
                         f"No pixel size is available for the {image_role} image."
                     )
-            reference_buffer_name = "previous" if target == "previous" else "initial"
+            reference_image = (
+                self.acquisition_tool.image_km1
+                if target == "previous"
+                else self.acquisition_tool.image_0
+            )
             alignment_offset = np.array(
                 registration_tool.register_images(
-                    image_t=self.acquisition_tool.get_image_array("current"),
-                    image_r=self.acquisition_tool.get_image_array(reference_buffer_name),
+                    image_t=self.acquisition_tool.image_k,
+                    image_r=reference_image,
                     psize_t=current_info["psize"],
                     psize_r=reference_info["psize"],
                 ),

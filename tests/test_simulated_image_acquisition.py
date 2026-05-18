@@ -4,10 +4,8 @@ import argparse
 import tifffile
 import numpy as np
 
-from eaa_imaging.tool.imaging.acquisition import (
-    SimulatedAcquireImage,
-    decode_image_array_payload,
-)
+from eaa_core.tool.base import BaseTool
+from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
 
 import test_utils as tutils
 
@@ -107,25 +105,25 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
 
         tool = SimulatedAcquireImage(whole_image, return_message=True)
         tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
-        first_image = tool.get_image_array("current")
+        first_image = tool.image_k
         tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
-        second_image = tool.get_image_array("current")
+        second_image = tool.image_k
         tool.acquire_image(y_center=232, x_center=232, size_y=64, size_x=64)
-        third_image = tool.get_image_array("current")
+        third_image = tool.image_k
         tool.acquire_image(y_center=234, x_center=234, size_y=64, size_x=64)
         current_info = tool.get_current_image_info()
         previous_info = tool.get_previous_image_info()
         initial_info = tool.get_initial_image_info()
-        payload = tool.get_image_array_payload("previous")
+        payload = tool.get_attribute_payload("image_km1")
 
-        assert np.array_equal(tool.get_image_array("initial"), first_image)
-        assert not np.array_equal(tool.get_image_array("previous"), second_image)
-        assert np.array_equal(tool.get_image_array("previous"), third_image)
+        assert np.array_equal(tool.image_0, first_image)
+        assert not np.array_equal(tool.image_km1, second_image)
+        assert np.array_equal(tool.image_km1, third_image)
         assert current_info["shape"] == [64, 64]
         assert previous_info["shape"] == [64, 64]
         assert initial_info["shape"] == [64, 64]
         assert "array_path" not in current_info
-        assert np.array_equal(decode_image_array_payload(payload), third_image)
+        assert np.array_equal(BaseTool.decode_array_payload(payload), third_image)
 
     def test_dump_array_saves_requested_buffer(self):
         whole_image = tifffile.imread(
@@ -140,14 +138,19 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
         tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
 
-        result = tool.dump_array("previous")
+        result = tool.dump_array("image_km1")
 
-        assert isinstance(result["array_path"], str)
-        assert os.path.exists(result["array_path"])
-        assert np.array_equal(
-            np.load(result["array_path"], allow_pickle=False),
-            tool.get_image_array("previous"),
-        )
+        try:
+            assert isinstance(result["array_path"], str)
+            assert os.path.exists(result["array_path"])
+            assert np.array_equal(
+                np.load(result["array_path"], allow_pickle=False),
+                tool.image_km1,
+            )
+        finally:
+            array_path = result.get("array_path")
+            if isinstance(array_path, str):
+                os.remove(array_path)
         
         
 if __name__ == '__main__':

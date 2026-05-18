@@ -1,5 +1,4 @@
 from typing import Annotated, Dict, List, Any, Literal
-import base64
 import logging
 import os
 
@@ -18,55 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 ImageBufferName = Literal["image_0", "image_km1", "image_k"]
-ImageBufferAlias = Literal["initial", "previous", "current", "image_0", "image_km1", "image_k"]
-
-
-def encode_image_array_payload(image: np.ndarray) -> dict[str, Any]:
-    """Encode a NumPy image array as a JSON-serializable payload.
-
-    Parameters
-    ----------
-    image : numpy.ndarray
-        Image array to encode.
-
-    Returns
-    -------
-    dict[str, Any]
-        Payload containing base64-encoded array bytes.
-    """
-    contiguous = np.ascontiguousarray(image)
-    return {
-        "encoding": "numpy_base64",
-        "dtype": str(contiguous.dtype),
-        "shape": list(contiguous.shape),
-        "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
-    }
-
-
-def decode_image_array_payload(payload: dict[str, Any]) -> np.ndarray:
-    """Decode an image array payload produced by ``encode_image_array_payload``.
-
-    Parameters
-    ----------
-    payload : dict[str, Any]
-        Encoded image array payload.
-
-    Returns
-    -------
-    numpy.ndarray
-        Decoded image array.
-    """
-    if payload.get("encoding") != "numpy_base64":
-        raise ValueError(f"Unsupported image array encoding: {payload.get('encoding')!r}.")
-    data = payload.get("data")
-    if not isinstance(data, str):
-        raise ValueError("Image array payload must contain base64 string field `data`.")
-    array_bytes = base64.b64decode(data.encode("ascii"))
-    dtype = payload.get("dtype")
-    shape = payload.get("shape")
-    if not isinstance(dtype, str) or not isinstance(shape, list):
-        raise ValueError("Image array payload must contain `dtype` and `shape` fields.")
-    return np.frombuffer(array_bytes, dtype=np.dtype(dtype)).reshape(shape).copy()
 
 
 class AcquireImage(BaseTool):
@@ -134,39 +84,22 @@ class AcquireImage(BaseTool):
             "angle": angle,
         })
 
-    @staticmethod
-    def normalize_image_buffer_name(buffer_name: ImageBufferAlias) -> ImageBufferName:
-        """Normalize image buffer aliases to internal buffer names."""
-        aliases = {
-            "initial": "image_0",
-            "previous": "image_km1",
-            "current": "image_k",
-            "image_0": "image_0",
-            "image_km1": "image_km1",
-            "image_k": "image_k",
-        }
-        try:
-            return aliases[buffer_name]
-        except KeyError as exc:
-            raise ValueError(f"Unknown image buffer name: {buffer_name!r}.") from exc
-
     def get_image_buffer_info_by_name(
         self,
-        buffer_name: ImageBufferAlias,
+        buffer_name: ImageBufferName,
     ) -> dict[str, Any]:
         """Return pixel size and shape metadata for an image buffer.
 
         Parameters
         ----------
-        buffer_name : ImageBufferAlias
-            Name or alias of the image buffer to query.
+        buffer_name : ImageBufferName
+            Native name of the image buffer to query.
 
         Returns
         -------
         dict[str, Any]
             Metadata for the requested buffer.
         """
-        buffer_name = self.normalize_image_buffer_name(buffer_name)
         image = getattr(self, buffer_name)
         psize = getattr(self, f"psize_{buffer_name.split('_', 1)[1]}")
         return {
@@ -176,68 +109,31 @@ class AcquireImage(BaseTool):
             "dtype": None if image is None else str(image.dtype),
         }
 
-    def get_image_array(self, buffer_name: ImageBufferAlias) -> np.ndarray:
-        """Return an image array from the local acquisition buffer.
-
-        Parameters
-        ----------
-        buffer_name : ImageBufferAlias
-            Name or alias of the image buffer to fetch.
-
-        Returns
-        -------
-        numpy.ndarray
-            Image array stored in the requested buffer.
-        """
-        buffer_name = self.normalize_image_buffer_name(buffer_name)
-        image = getattr(self, buffer_name)
-        if image is None:
-            raise ValueError(f"Image buffer {buffer_name!r} is empty.")
-        return image
-
-    @tool(name="get_image_array_payload", model_visible=False)
-    def get_image_array_payload(
-        self,
-        buffer_name: Annotated[str, "Image buffer to fetch: current, previous, or initial."],
-    ) -> dict[str, Any]:
-        """Return an encoded image array payload for code and MCP proxy callers.
-
-        Parameters
-        ----------
-        buffer_name : str
-            Name or alias of the image buffer to fetch.
-
-        Returns
-        -------
-        dict[str, Any]
-            JSON-serializable encoded image array payload.
-        """
-        return encode_image_array_payload(self.get_image_array(buffer_name))
-
     @tool(name="dump_array")
     def dump_array(
         self,
-        buffer_name: Annotated[str, "Image buffer to dump: current, previous, or initial."],
+        buffer_name: Annotated[ImageBufferName, "Native image buffer to dump: image_k, image_km1, or image_0."],
     ) -> Annotated[dict[str, str], "Tool payload containing `array_path`."]:
         """Save a buffered image array to disk for path-based tools.
 
         Parameters
         ----------
         buffer_name : str
-            Name or alias of the image buffer to dump.
+            Native name of the image buffer to dump.
 
         Returns
         -------
         dict[str, str]
             Tool payload containing ``array_path``.
         """
-        image = self.get_image_array(buffer_name)
-        normalized_name = self.normalize_image_buffer_name(buffer_name)
+        image = getattr(self, buffer_name)
+        if image is None:
+            raise ValueError(f"Image buffer {buffer_name!r} is empty.")
         os.makedirs(".tmp", exist_ok=True)
         path = os.path.abspath(
             os.path.join(
                 ".tmp",
-                f"{normalized_name}_{get_timestamp()}.npy",
+                f"{buffer_name}_{get_timestamp()}.npy",
             )
         )
         np.save(path, image, allow_pickle=False)

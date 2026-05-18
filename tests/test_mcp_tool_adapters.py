@@ -1,10 +1,10 @@
 import json
+import os
 
 import numpy as np
 
-from eaa_core.tool.base import ExposedToolSpec
+from eaa_core.tool.base import BaseTool, ExposedToolSpec
 from eaa_core.tool.mcp_adapter import MCPParameterSettingProxy
-from eaa_imaging.tool.imaging.acquisition import encode_image_array_payload
 from eaa_imaging.tool.imaging.mcp_acquisition import MCPAcquireImageProxy
 
 
@@ -22,6 +22,27 @@ class FakeRemoteTool:
         raise AttributeError(name)
 
 
+def test_base_tool_get_attribute_payload_returns_literals_and_arrays():
+    class SampleTool(BaseTool):
+        def build(self):
+            self.scalar = 3
+            self.array = np.arange(6, dtype=np.float32).reshape(2, 3)
+
+    tool = SampleTool()
+    payload_spec = next(
+        spec
+        for spec in tool.exposed_tools
+        if spec.name == "get_attribute_payload"
+    )
+
+    assert payload_spec.model_visible is False
+    assert tool.get_attribute_payload("scalar") == 3
+    assert np.array_equal(
+        BaseTool.decode_array_payload(tool.get_attribute_payload("array")),
+        tool.array,
+    )
+
+
 def test_mcp_acquire_image_proxy_updates_local_buffers_from_array_payload(tmp_path):
     calls = []
     remote_images = []
@@ -35,16 +56,16 @@ def test_mcp_acquire_image_proxy_updates_local_buffers_from_array_payload(tmp_pa
             "psize": kwargs["scan_step"],
         }
 
-    def get_image_array_payload(buffer_name):
-        if buffer_name in {"current", "image_k"}:
+    def get_attribute_payload(name):
+        if name == "image_k":
             image = remote_images[-1]
-        elif buffer_name in {"previous", "image_km1"}:
+        elif name == "image_km1":
             image = remote_images[-2]
-        elif buffer_name in {"initial", "image_0"}:
+        elif name == "image_0":
             image = remote_images[0]
         else:
-            raise ValueError(buffer_name)
-        return encode_image_array_payload(image)
+            raise ValueError(name)
+        return BaseTool.encode_array_payload(image)
 
     def dump_array(buffer_name):
         raise AssertionError("Proxy dump_array should use the local buffered array.")
@@ -52,7 +73,7 @@ def test_mcp_acquire_image_proxy_updates_local_buffers_from_array_payload(tmp_pa
     remote = FakeRemoteTool(
         {
             "acquire_image": acquire_image,
-            "get_image_array_payload": get_image_array_payload,
+            "get_attribute_payload": get_attribute_payload,
             "dump_array": dump_array,
         }
     )
@@ -79,8 +100,6 @@ def test_mcp_acquire_image_proxy_updates_local_buffers_from_array_payload(tmp_pa
     assert "array_path" not in second
     assert np.all(proxy.image_k == 2)
     assert np.all(proxy.image_km1 == 1)
-    assert np.all(proxy.get_image_array("current") == 2)
-    assert np.all(proxy.get_image_array("previous") == 1)
     assert proxy.psize_k == 0.25
     assert proxy.psize_km1 == 0.5
     assert "array_path" not in proxy.get_current_image_info()
@@ -91,15 +110,20 @@ def test_mcp_acquire_image_proxy_updates_local_buffers_from_array_payload(tmp_pa
         for spec in proxy.exposed_tools
         if spec.name == "dump_array"
     )
-    dumped = dump_spec.function(buffer_name="previous")
-    assert np.array_equal(
-        np.load(dumped["array_path"], allow_pickle=False),
-        proxy.get_image_array("previous"),
-    )
+    dumped = dump_spec.function(buffer_name="image_km1")
+    try:
+        assert np.array_equal(
+            np.load(dumped["array_path"], allow_pickle=False),
+            proxy.image_km1,
+        )
+    finally:
+        dumped_path = dumped.get("array_path")
+        if isinstance(dumped_path, str):
+            os.remove(dumped_path)
     hidden_spec = next(
         spec
         for spec in proxy.exposed_tools
-        if spec.name == "get_image_array_payload"
+        if spec.name == "get_attribute_payload"
     )
     assert hidden_spec.model_visible is False
 

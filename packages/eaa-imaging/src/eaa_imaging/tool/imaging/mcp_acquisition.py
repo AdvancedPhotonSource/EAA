@@ -5,16 +5,10 @@ from __future__ import annotations
 from typing import Any
 import copy
 
-import numpy as np
-
-from eaa_core.tool.base import ExposedToolSpec, tool
+from eaa_core.tool.base import BaseTool, ExposedToolSpec, tool
 from eaa_core.tool.mcp_adapter import call_named_tool
 from eaa_core.tool.mcp_client import MCPTool
-from eaa_imaging.tool.imaging.acquisition import (
-    AcquireImage,
-    ImageBufferAlias,
-    decode_image_array_payload,
-)
+from eaa_imaging.tool.imaging.acquisition import AcquireImage
 
 
 class MCPAcquireImageProxy(AcquireImage):
@@ -95,7 +89,7 @@ class MCPAcquireImageProxy(AcquireImage):
                     schema=remote_spec.schema,
                     model_visible=(
                         False
-                        if name == "get_image_array_payload"
+                        if name == "get_attribute_payload"
                         else remote_spec.model_visible
                     ),
                 )
@@ -132,34 +126,6 @@ class MCPAcquireImageProxy(AcquireImage):
                 return float(value)
         return 1.0
 
-    def get_image_array(self, buffer_name: ImageBufferAlias) -> np.ndarray:
-        """Return an image array from the proxy buffer or remote MCP server.
-
-        Parameters
-        ----------
-        buffer_name : ImageBufferAlias
-            Name or alias of the image buffer to fetch.
-
-        Returns
-        -------
-        numpy.ndarray
-            Decoded image array.
-        """
-        local_buffer_name = self.normalize_image_buffer_name(buffer_name)
-        local_image = getattr(self, local_buffer_name)
-        if local_image is not None:
-            return local_image
-        payload = call_named_tool(
-            self.mcp_tool,
-            "get_image_array_payload",
-            {"buffer_name": buffer_name},
-        )
-        if not isinstance(payload, dict):
-            raise ValueError(
-                "MCP get_image_array_payload must return a dictionary payload."
-            )
-        return decode_image_array_payload(payload)
-
     def sync_image_buffers_from_result(
         self,
         result: dict[str, Any],
@@ -170,12 +136,12 @@ class MCPAcquireImageProxy(AcquireImage):
         if not isinstance(payload, dict):
             payload = call_named_tool(
                 self.mcp_tool,
-                "get_image_array_payload",
-                {"buffer_name": "current"},
+                "get_attribute_payload",
+                {"name": "image_k"},
             )
         if not isinstance(payload, dict):
             return
-        image = decode_image_array_payload(payload)
+        image = BaseTool.decode_array_payload(payload)
         self.update_image_buffers(
             image,
             psize=self.resolve_pixel_size(result, kwargs),

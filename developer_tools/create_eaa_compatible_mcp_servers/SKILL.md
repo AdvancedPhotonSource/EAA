@@ -11,15 +11,16 @@ for EAA.
 ## Goals
 
 - Keep facility and endstation-specific control logic outside EAA.
-- Do not add EAA as a dependency of the MCP server repository.
+- The MCP server should not depend on EAA, and should be able to work with
+  more MCP clients than EAA.
+- However, it should observe a collection of contracts with EAA in order to
+  exploit EAA's full capability.
 - Use the process pattern `MCP frontend -> ZMQ -> instrument worker`.
 - Keep instrument worker functions synchronous and blocking unless the facility
   control library requires an internal runtime.
 - Make chat-facing MCP tools clear and self-describing.
 - Document MCP tool methods in a way compatible with FastMCP tool schema
   generation.
-- Implement EAA adapter contracts only when logic-driven task managers need
-  direct method calls.
 
 ## Repository Shape
 
@@ -31,6 +32,16 @@ The runtime dependencies should include MCP, ZMQ, and the facility control
 library dependencies. Do not depend on EAA packages. The server should be usable
 by any MCP client; EAA compatibility should come from tool schemas and payloads,
 not from importing EAA.
+
+The server should consist of an MCP frontend and a backend instrument worker.
+At runtime, the frontend and worker are launched in different processes and
+communicate through ZMQ. All calls of instrument control libraries, such as
+Bluesky and EPICS, should only happen in the worker process. The worker process
+should listen to ZMQ messages and execute instrument control functions using
+blocking and synchronous routines. Avoiding async and multithreading is essential
+to ensure that
+- The tool server is thread- and async-safe with the instrument control libraries;
+- All instrument movements are sequential and deterministic.
 
 Tool and launcher settings must be configurable through a YAML file. Include a
 `configs/` directory in each server repository with at least one example YAML
@@ -50,15 +61,16 @@ Use these modules or equivalents:
 - `launcher.py`: supervisor that starts the worker, waits for health, then
   starts the MCP frontend.
 
-Expose three console scripts:
-
-- `<facility-suite>`
-- `<facility-suite>-worker`
-- `<facility-suite>-mcp`
-
 ## Launch Interface
 
-Keep CLI options consistent across facility MCP servers:
+Expose three console scripts:
+
+- `<facility-suite>`: a script that launches both the worker process and the 
+  MCP frontend process
+- `<facility-suite>-worker`: a script that launches the worker process
+- `<facility-suite>-mcp`: a script that launches the MCP frontend process
+
+Example, and recommended argument naming for the combined launch script:
 
 ```bash
 <facility-suite> \
@@ -75,7 +87,7 @@ All console scripts should accept `--config PATH` for loading the YAML file.
 Explicit CLI flags should override YAML values so operators can make temporary
 runtime changes without editing the file.
 
-The combined launcher command is required. It should:
+The combined launcher command should:
 
 - resolve the worker and MCP frontend console scripts from `PATH`;
 - start the worker subprocess first;
@@ -85,6 +97,8 @@ The combined launcher command is required. It should:
   fails;
 - handle `SIGINT` and `SIGTERM` by terminating both child processes, then
   killing them after a short timeout if needed.
+
+For the seperate worker/frontend launching scripts, here are the examples:
 
 ```bash
 <facility-suite>-worker \
@@ -118,7 +132,8 @@ The worker should:
 The MCP frontend should:
 
 - own FastMCP and HTTP transport;
-- not import or initialize the control library unless it is harmless;
+- not import or initialize the control library unless it absolutely 
+  won't cause any thread- or async-safety issue;
 - forward each MCP tool call to the worker through the ZMQ client;
 - use `asyncio.to_thread(...)` if an async MCP handler calls a blocking ZMQ
   client.
@@ -132,7 +147,7 @@ be handled properly:
 to PNG, saved to hard drive, and the tool should return the path in the
 `img_path` field of a JSON obejct.
 - If a tool is supposed to return a NumPy array, use the 
-`get_image_array_payload` contract below.
+`get_attribute_payload` contract below.
 
 MCP tool methods must be documented so FastMCP can generate useful tool
 schemas. Each tool function should:
@@ -170,8 +185,9 @@ Include:
 ```
 
 Also document important server-specific options such as host, port, ZMQ
-endpoint, timeout, hardware safety flags, simulation mode, output directory,
-artifact path requirements, and tool defaults configured in YAML.
+endpoint, timeout, hardware safety flags, output directory,
+artifact path requirements, and instrument-specific parameters 
+(such as exposure time) configured in YAML.
 
 ## EAA Contracts
 
@@ -207,6 +223,11 @@ filesystem artifacts.
   the array path in JSON.
 - Artifact paths returned to EAA must be readable from the EAA process.
 
+The subsequent sub-sections present the contracts used for some specific tool types.
+Not all tools should follow these API requirements; they apply only to tools with
+matching functions. For example, the requirements for "Image Acquisition Tools" only
+apply to tools for acquiring images.
+
 #### Image Acquisition Tools
 
 Expose an image acquisition tool:
@@ -223,9 +244,9 @@ For `acquire_image`, return:
 `acquire_image` must update server-side image buffers. The server must keep at
 least:
 
-- `initial`: first 2D image acquired in the current run;
-- `previous`: image immediately before the current image;
-- `current`: most recent 2D image.
+- `image_0`: first 2D image acquired in the current run;
+- `image_km1`: image immediately before the current image;
+- `image_k`: most recent 2D image.
 
 Expose an array dump tool in the image acquisition contract:
 
@@ -235,17 +256,12 @@ dump_array(buffer_name: str) -> dict
 
 `dump_array` must:
 
-- accept `buffer_name` values `current`, `previous`, and `initial`;
+- accept native `buffer_name` values `image_k`, `image_km1`, and `image_0`;
 - save the selected buffer as a `.npy` file;
 - return the path to the saved array in JSON;
 - avoid embedding large array values directly in the model-visible response.
 
-When an external MCP server is used through EAA's acquisition proxy, the proxy
-can provide the model-visible `dump_array` tool from the server's
-`get_image_array_payload` method. If the server is used directly by an LLM
-without that proxy, expose `dump_array` on the server itself.
-
-Expose a line-scan acquisition tool when the instrument supports focusing or
+Optionally, expose a line-scan acquisition tool when the instrument supports focusing or
 line-profile analysis:
 
 ```python
@@ -255,7 +271,7 @@ acquire_line_scan(...) -> dict
 For `acquire_line_scan`, return:
 
 - `fwhm`: numeric Gaussian-fit FWHM for analytical focusing;
-- `img_path`: path to a PNG display image, recommended;
+- `img_path`: path to a PNG image of the scanned line profile plot, optionally with the Gaussian fit;
 - optional fit metadata: `a`, `mu`, `sigma`, `c`, `normalized_residual`,
   `x_min`, `x_max`.
 
@@ -265,37 +281,22 @@ Prefer default argument names:
 - image size: `size_x`, `size_y`;
 - scan step: `scan_step`;
 - line scan length: `length`;
-- line scan angle: `angle`.
+- line scan direction (0 degree is horizontal; position angles rotate counter-clockwise): `angle`.
 
-#### Parameter Setting Tools
+#### Instrument Parameter Setting Tools
 
-Expose a parameter-setting tool for optimization and tuning workflows:
+Expose a setter for setting instrument parameters (motor positions, exposure time, etc.).
+For example:
 
 ```python
-set_parameters(parameters: list[float]) -> str | dict
+set_zp_z_position(parameters: list[float]) -> str | dict
 ```
 
-The order must match the task manager's `initial_parameters` keys. EAA supplies
-parameter names and ranges locally and records parameter history in the proxy.
+The input can be a list if the parameter is multi-dimensional.
 
 The response should be JSON-serializable and should report whether the setting
 operation succeeded. Include current values or relevant status fields when they
 help the agent decide the next action.
-
-Optionally expose a named setting tool for simple configuration changes:
-
-```python
-set_attribute(name: str, value: object) -> dict
-```
-
-or:
-
-```python
-set_config(name: str, value: object) -> dict
-```
-
-EAA uses one of these to request
-`line_scan_return_gaussian_fit=True` when available.
 
 ### Logic-Driven Workflow Contracts
 
@@ -303,20 +304,30 @@ Logic-driven workflows call tools explicitly from task-manager code. They can
 use the same visible tools as LLM-driven workflows, but they often need direct
 access to numerical arrays held in server-side buffers.
 
-Expose an adapter method for image array transfer:
+Expose an adapter method for logic-driven attribute transfer:
 
 ```python
-get_image_array_payload(buffer_name: str) -> dict
+get_attribute_payload(name: str) -> object
 ```
 
-`get_image_array_payload` must:
+`get_attribute_payload` must:
 
-- accept `buffer_name` values `current`, `previous`, and `initial`;
-- return a JSON-serializable payload containing the selected array;
-- preserve the array dtype and shape;
+- accept the native server-side attribute name to fetch;
+- fetch the value with attribute semantics equivalent to `getattr(tool, name)`;
+- return JSON literal values such as `str`, `int`, `float`, `bool`, `list`,
+  `dict`, or `None` as-is;
+- encode NumPy arrays as a JSON-serializable payload;
+- preserve the array dtype and shape when encoding arrays;
 - avoid requiring EAA as a dependency of the external MCP server.
 
-Return payloads in this format:
+For acquisition buffers, EAA callers use the native attribute names rather than
+the old aliases:
+
+- `image_k` for the current image;
+- `image_km1` for the previous image;
+- `image_0` for the initial image.
+
+Array payloads must use this format:
 
 ```python
 {
@@ -334,24 +345,37 @@ import base64
 import numpy as np
 
 
-def encode_image_array_payload(image: np.ndarray) -> dict:
-    contiguous = np.ascontiguousarray(image)
+def encode_array_payload(array: np.ndarray) -> dict:
+    contiguous = np.ascontiguousarray(array)
     return {
         "encoding": "numpy_base64",
         "dtype": str(contiguous.dtype),
         "shape": list(contiguous.shape),
         "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
     }
+
+
+def get_attribute_payload(name: str) -> object:
+    value = getattr(tool, name)
+    if isinstance(value, np.ndarray):
+        return encode_array_payload(value)
+    if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    raise ValueError(f"Attribute {name!r} has unsupported payload type.")
 ```
 
-External servers should expose `get_image_array_payload` as a normal FastMCP
+External servers should expose `get_attribute_payload` as a normal FastMCP
 tool. EAA filters this method out of the LLM-facing tool schema, so the model
 cannot see or call it. Analytical task-manager code can still call it over MCP
-through EAA's adapter layer.
+through EAA's adapter layer. EAA's built-in tools inherit this method from
+`BaseTool`, but external MCP servers do not use `BaseTool`; server authors must
+implement this contract explicitly.
 
-EAA's acquisition proxy can use `get_image_array_payload` to implement
-`dump_array(buffer_name: str)` by retrieving `current`, `previous`, or
-`initial`, writing it to a local `.npy` file, and returning the path to the
+EAA's acquisition proxy can use `get_attribute_payload` to implement
+`dump_array(buffer_name: str)` by retrieving `image_k`, `image_km1`, or
+`image_0`, writing it to a local `.npy` file, and returning the path to the
 LLM-visible workflow.
 
 ## Review Checklist

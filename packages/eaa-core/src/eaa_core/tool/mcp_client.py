@@ -6,7 +6,7 @@ import fastmcp
 
 from eaa_core.tool.base import ExposedToolSpec, BaseTool
 
-MODEL_HIDDEN_REMOTE_TOOL_NAMES = {"get_image_array_payload"}
+MODEL_HIDDEN_REMOTE_TOOL_NAMES = {"get_attribute_payload"}
 
 
 class MCPTool(BaseTool):
@@ -323,8 +323,7 @@ class MCPTool(BaseTool):
                 input_schema=input_schema,
                 description=remote_tool.description or "",
             )
-            if not hasattr(self, remote_tool.name):
-                setattr(self, remote_tool.name, function)
+            setattr(self, remote_tool.name, function)
             exposed_tools.append(
                 ExposedToolSpec(
                     name=remote_tool.name,

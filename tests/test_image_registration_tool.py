@@ -17,8 +17,8 @@ class TestImageRegistrationTool(tutils.BaseTester):
         previous_info = acquisition_tool.get_previous_image_info()
         current_info = acquisition_tool.get_current_image_info()
         return registration_tool.register_images(
-            image_t=acquisition_tool.get_image_array("current"),
-            image_r=acquisition_tool.get_image_array("previous"),
+            image_t=acquisition_tool.image_k,
+            image_r=acquisition_tool.image_km1,
             psize_t=current_info["psize"],
             psize_r=previous_info["psize"],
         )
@@ -181,17 +181,21 @@ class TestImageRegistrationTool(tutils.BaseTester):
         )
         current_info = acquisition_tool.get_current_image_info()
         previous_info = acquisition_tool.get_previous_image_info()
-        current_path = acquisition_tool.dump_array("current")["array_path"]
-        previous_path = acquisition_tool.dump_array("previous")["array_path"]
+        current_path = acquisition_tool.dump_array("image_k")["array_path"]
+        previous_path = acquisition_tool.dump_array("image_km1")["array_path"]
 
-        offset = registration_tool.get_offset_from_paths(
-            current_image_path=current_path,
-            reference_image_path=previous_path,
-            current_pixel_size=current_info["psize"],
-            reference_pixel_size=previous_info["psize"],
-        )
+        try:
+            offset = registration_tool.get_offset_from_paths(
+                current_image_path=current_path,
+                reference_image_path=previous_path,
+                current_pixel_size=current_info["psize"],
+                reference_pixel_size=previous_info["psize"],
+            )
 
-        assert np.allclose(offset, [-20, -20])
+            assert np.allclose(offset, [-20, -20])
+        finally:
+            for array_path in (current_path, previous_path):
+                os.remove(array_path)
         return
         
         

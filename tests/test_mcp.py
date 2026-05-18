@@ -144,7 +144,7 @@ def test_mcp_tool_preserves_remote_argument_signatures_and_schemas(tmp_path):
         mcp_tool._run_coroutine(mcp_tool.disconnect())
 
 
-def test_mcp_tool_hides_external_image_array_payload_from_model_schemas(tmp_path):
+def test_mcp_tool_hides_external_attribute_payload_from_model_schemas(tmp_path):
     script_path = tmp_path / "mcp_server.py"
     repo_src = Path(__file__).resolve().parents[1] / "src"
     script_path.write_text(
@@ -156,13 +156,12 @@ def test_mcp_tool_hides_external_image_array_payload_from_model_schemas(tmp_path
                 "from eaa_core.tool.mcp_server import run_mcp_server_from_tools",
                 "",
                 "class ExternalAcquisitionTool(BaseTool):",
+                "    def build(self):",
+                "        self.image_k = {'encoding': 'numpy_base64', 'buffer_name': 'image_k'}",
+                "",
                 "    @tool(name='acquire_image')",
                 "    def acquire_image(self) -> dict:",
                 "        return {'psize': 1.0}",
-                "",
-                "    @tool(name='get_image_array_payload')",
-                "    def get_image_array_payload(self, buffer_name: str) -> dict:",
-                "        return {'encoding': 'numpy_base64', 'buffer_name': buffer_name}",
                 "",
                 "if __name__ == '__main__':",
                 "    run_mcp_server_from_tools(ExternalAcquisitionTool(), server_name='ExternalAcquisitionServer')",
@@ -183,9 +182,9 @@ def test_mcp_tool_hides_external_image_array_payload_from_model_schemas(tmp_path
 
     try:
         exposed = {spec.name: spec for spec in mcp_tool.exposed_tools}
-        assert exposed["get_image_array_payload"].model_visible is False
-        assert mcp_tool.get_image_array_payload(buffer_name="current") == {
-            "buffer_name": "current",
+        assert exposed["get_attribute_payload"].model_visible is False
+        assert mcp_tool.get_attribute_payload(name="image_k") == {
+            "buffer_name": "image_k",
             "encoding": "numpy_base64",
         }
         assert [
@@ -217,8 +216,9 @@ def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():
     assert {spec.name for spec in tool.exposed_tools} == {
         "visible",
         "hidden_payload",
+        "get_attribute_payload",
     }
-    assert server.list_tools() == ["visible", "hidden_payload"]
+    assert server.list_tools() == ["visible", "hidden_payload", "get_attribute_payload"]
     assert tool.hidden_payload() == {"encoding": "numpy_base64"}
     assert [
         schema["function"]["name"]
@@ -266,6 +266,7 @@ def test_calculator_example_main_builds_server_with_refactored_tool_specs(monkey
         "divide",
         "get_history",
         "clear_history",
+        "get_attribute_payload",
     ]
 
 
