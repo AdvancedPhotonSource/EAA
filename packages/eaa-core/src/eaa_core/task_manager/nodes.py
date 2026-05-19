@@ -348,8 +348,11 @@ class NodeFactory:
           ``/monitor <task>``
               Sets ``state.monitor_requested`` and stores the task
               description in ``state.monitor_task_description``.
-          ``/skill`` and ``/help``
-              Perform side effects only and keep waiting for input.
+          ``/skill``
+              Without an argument, displays available skills. With an
+              argument, appends the selected ``SKILL.md`` to context.
+          ``/help``
+              Performs side effects only and keeps waiting for input.
 
         Regular user text is appended to the state and flips
         ``state.await_user_input`` to ``False`` so the graph can continue to
@@ -358,15 +361,15 @@ class NodeFactory:
         if state.bootstrap_message is not None:
             bootstrap = state.bootstrap_message
             if isinstance(bootstrap, str):
-                message = generate_openai_message(content=bootstrap, role="user")
-                if not self.task_manager.use_webui:
-                    print_message(message)
-                self.update_message_history_for_state(
-                    state,
-                    message,
-                    update_context=True,
-                    update_full_history=True,
-                )
+                for message in self.task_manager.expand_skill_command_in_text(bootstrap):
+                    if not self.task_manager.use_webui:
+                        print_message(message)
+                    self.update_message_history_for_state(
+                        state,
+                        message,
+                        update_context=True,
+                        update_full_history=True,
+                    )
             elif isinstance(bootstrap, dict):
                 if not self.task_manager.use_webui:
                     print_message(bootstrap)
@@ -413,21 +416,52 @@ class NodeFactory:
                 state.monitor_task_description = command.argument
                 state.await_user_input = False
                 return state.model_dump()
-            if command.kind == "skill":
+            if command.kind == "skill" and not command.argument:
                 self.task_manager.display_available_skills()
                 continue
+            if command.kind == "skill":
+                try:
+                    messages = self.task_manager.build_selected_skill_messages(command.argument)
+                except ValueError as exc:
+                    self.task_manager.record_system_message(
+                        str(exc),
+                        update_context=True,
+                        write_to_webui=True,
+                    )
+                    continue
+                for message in messages:
+                    if not self.task_manager.use_webui:
+                        print_message(message)
+                    self.update_message_history_for_state(
+                        state,
+                        message,
+                        update_context=True,
+                        update_full_history=True,
+                    )
+                if command.text:
+                    message = generate_openai_message(content=command.text, role="user")
+                    if not self.task_manager.use_webui:
+                        print_message(message)
+                    self.update_message_history_for_state(
+                        state,
+                        message,
+                        update_context=True,
+                        update_full_history=True,
+                    )
+                state.await_user_input = False
+                return state.model_dump()
             if command.kind == "help":
                 self.task_manager.display_command_help()
                 continue
-            message = generate_openai_message(content=command.text, role="user")
-            if not self.task_manager.use_webui:
-                print_message(message)
-            self.update_message_history_for_state(
-                state,
-                message,
-                update_context=True,
-                update_full_history=True,
-            )
+            for message in self.task_manager.expand_skill_command_in_text(command.text):
+                if not self.task_manager.use_webui:
+                    print_message(message)
+                self.update_message_history_for_state(
+                    state,
+                    message,
+                    update_context=True,
+                    update_full_history=True,
+                )
             state.await_user_input = False
             return state.model_dump()
 
@@ -500,8 +534,18 @@ class NodeFactory:
         image_path = None
         context = list(state.messages)
         if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
-            message = state.initial_prompt
+            message = self.task_manager.expand_skill_command_in_text(state.initial_prompt)
             image_path = state.initial_image_path
+            if image_path is not None and isinstance(message, list) and message:
+                last_message = message[-1]
+                content = last_message.get("content") if isinstance(last_message, dict) else None
+                if isinstance(content, str):
+                    message[-1] = generate_openai_message(
+                        content=content,
+                        role="user",
+                        image_path=image_path,
+                    )
+                    image_path = None
         memory_message = None
         latest_message = state.messages[-1] if state.messages else None
         is_chat_user_turn = isinstance(state, ChatGraphState) and state.last_message_is_from_user()
@@ -847,6 +891,10 @@ class NodeFactory:
         - ``/exit`` sets ``state.exit_requested``.
         - ``/chat`` sets ``state.chat_requested`` so the task-manager boundary
           can hand off to chat mode after the graph exits.
+        - ``/skill`` without an argument shows skills and keeps waiting for
+          input.
+        - ``/skill <name>`` appends the selected ``SKILL.md`` to context and
+          sends the updated context back through the model.
         - ``/help`` shows help and keeps waiting for input.
         - Any other text is appended as a user message and sent back through
           the model using the current ``state.messages`` context.
@@ -869,13 +917,52 @@ class NodeFactory:
             state.await_user_input = False
             state.chat_requested = True
             return state.model_dump()
+        if command.kind == "skill" and not command.argument:
+            state.await_user_input = True
+            self.task_manager.display_available_skills()
+            return state.model_dump()
+        if command.kind == "skill":
+            try:
+                messages = self.task_manager.build_selected_skill_messages(command.argument)
+            except ValueError as exc:
+                self.task_manager.record_system_message(
+                    str(exc),
+                    update_context=True,
+                    write_to_webui=True,
+                )
+                state.await_user_input = True
+                return state.model_dump()
+            for skill_message in messages:
+                if not self.task_manager.use_webui:
+                    print_message(skill_message)
+                self.update_message_history_for_state(
+                    state,
+                    skill_message,
+                    update_context=True,
+                    update_full_history=True,
+                )
+            if command.text:
+                user_message = generate_openai_message(content=command.text, role="user")
+                if not self.task_manager.use_webui:
+                    print_message(user_message)
+                self.update_message_history_for_state(
+                    state,
+                    user_message,
+                    update_context=True,
+                    update_full_history=True,
+                )
+            return self.invoke_model_for_state(
+                state,
+                context=list(state.messages),
+                await_user_input_resolver=self.feedback_response_requires_user_input,
+            )
         if command.kind == "help":
             state.await_user_input = True
             self.task_manager.display_command_help()
             return state.model_dump()
         return self.invoke_model_for_state(
             state,
-            message=message,
+            message=self.task_manager.expand_skill_command_in_text(message),
             context=list(state.messages),
             await_user_input_resolver=self.feedback_response_requires_user_input,
         )

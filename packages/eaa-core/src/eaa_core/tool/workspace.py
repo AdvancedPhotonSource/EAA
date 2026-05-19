@@ -199,6 +199,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
         self,
         *,
         workspace_path: Optional[str] = None,
+        read_whitelist_paths: Optional[list[str]] = None,
         require_approval: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -209,6 +210,10 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
         workspace_path : str, optional
             Root path used to resolve relative paths. Defaults to the current
             working directory.
+        read_whitelist_paths : list[str], optional
+            Additional directories where ``ls`` and ``read_file`` do not
+            require approval. This is intended for configured skill
+            directories that agents may inspect as prompt context.
         require_approval : bool, default=False
             Fallback approval setting for tools without stricter method-level
             approval rules.
@@ -216,11 +221,19 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             Additional arguments forwarded to :class:`BaseTool`.
         """
         self.workspace_path = Path(workspace_path or os.getcwd()).expanduser().resolve()
+        self.read_whitelist_paths = [
+            Path(path).expanduser().resolve()
+            for path in (read_whitelist_paths or [])
+        ]
         super().__init__(require_approval=require_approval, **kwargs)
 
     def requires_approval_for_path(self, arguments: dict[str, Any]) -> bool:
         """Return whether a single target path sits outside the workspace."""
-        return self.any_path_outside_workspace(arguments, ("path",))
+        path = arguments.get("path")
+        if isinstance(path, str):
+            target = self.resolve_path(path)
+            return not (self.is_in_workspace(target) or self.is_in_read_whitelist(target))
+        return False
 
     def requires_approval_for_directory_path(self, arguments: dict[str, Any]) -> bool:
         """Return whether a directory path sits outside the workspace."""
@@ -228,11 +241,25 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
 
     def requires_approval_for_file_path(self, arguments: dict[str, Any]) -> bool:
         """Return whether a file path sits outside the workspace."""
-        return self.any_path_outside_workspace(arguments, ("file_path",))
+        file_path = arguments.get("file_path")
+        if isinstance(file_path, str):
+            target = self.resolve_path(file_path)
+            return not (self.is_in_workspace(target) or self.is_in_read_whitelist(target))
+        return False
 
     def requires_approval_for_copy(self, arguments: dict[str, Any]) -> bool:
         """Return whether copy source or destination sits outside the workspace."""
         return self.any_path_outside_workspace(arguments, ("source_path", "destination_path"))
+
+    def is_in_read_whitelist(self, path: Path) -> bool:
+        """Return whether a path is within an approval-free read directory."""
+        for allowed_path in self.read_whitelist_paths:
+            try:
+                path.resolve().relative_to(allowed_path)
+                return True
+            except ValueError:
+                continue
+        return False
 
     @tool(name="ls", require_approval="requires_approval_for_path")
     def ls(

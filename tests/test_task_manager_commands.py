@@ -7,6 +7,10 @@ def test_parse_user_input_command_recognizes_commands():
     assert parse_user_input_command("/chat").kind == "chat"
     assert parse_user_input_command("/help").kind == "help"
     assert parse_user_input_command("/skill").kind == "skill"
+    skill = parse_user_input_command("/skill roi-search-workflow use it now")
+    assert skill.kind == "skill"
+    assert skill.argument == "roi-search-workflow"
+    assert skill.text == "use it now"
 
 
 def test_parse_user_input_command_preserves_messages_and_monitor_argument():

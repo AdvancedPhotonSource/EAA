@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Sequence
 import json
 import logging
+import re
 import sqlite3
 import time
 
@@ -20,12 +21,18 @@ from eaa_core.message_proc import (
     get_message_preview,
     print_message,
 )
-from eaa_core.skill import load_skills
 from eaa_core.task_manager.commands import parse_user_input_command
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
 from eaa_core.task_manager.prompts import render_prompt_template
+from eaa_core.task_manager.skills import (
+    SkillMetadata,
+    build_skill_context_message,
+    discover_skills,
+    resolve_skill,
+    skill_catalog_to_dicts,
+)
 from eaa_core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
@@ -36,9 +43,9 @@ from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
 from eaa_core.tool.coding import BashCodingTool, PythonCodingTool
 from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
-from eaa_core.tool.skill import SkillLibraryTool
 
 logger = logging.getLogger(__name__)
+SKILL_SELECTION_PATTERN = re.compile(r"(?P<prefix>^|\s)/skill\s+(?P<name>\S+)")
 
 GraphName = Literal["chat_graph", "feedback_loop_graph", "task_graph"]
 GraphInvokeCommand = Literal["completed", "chat", "return", "exit"]
@@ -259,7 +266,7 @@ class BaseTaskManager:
         self.memory_config = memory_config
         self.tools = list(tools)
         self.skill_dirs = list(skill_dirs) if skill_dirs else []
-        self.skill_tool: Optional[SkillLibraryTool] = None
+        self.skill_catalog: list[SkillMetadata] = discover_skills(self.skill_dirs)
         self.use_webui = use_webui
         self.use_coding_tools = use_coding_tools
         self.run_codes_in_sandbox = run_codes_in_sandbox
@@ -298,15 +305,67 @@ class BaseTaskManager:
 
     def format_available_skills_for_prompt(self) -> str:
         """Return the available-skill summary injected into the system prompt."""
-        skill_catalog = load_skills(self.skill_dirs)
-        if not skill_catalog:
+        if not self.skill_catalog:
             return "No skills are currently available."
         lines = ["Available skills:"]
         lines.extend(
-            f"- {skill.name}: {skill.description}"
-            for skill in skill_catalog
+            f"- {skill.name}: {skill.description} [{skill.path}]"
+            for skill in self.skill_catalog
         )
         return "\n".join(lines)
+
+    def build_selected_skill_messages(self, skill_name: str) -> list[dict[str, object]]:
+        """Return context messages for an explicitly selected skill.
+
+        Parameters
+        ----------
+        skill_name : str
+            Skill name or path selected with ``/skill``.
+
+        Returns
+        -------
+        list[dict[str, object]]
+            Messages containing only the selected skill's ``SKILL.md``.
+        """
+        skill = resolve_skill(self.skill_catalog, skill_name)
+        if skill is None:
+            names = ", ".join(item.name for item in self.skill_catalog) or "none"
+            raise ValueError(f"Unknown skill requested: {skill_name}. Available skills: {names}")
+        return [build_skill_context_message(skill)]
+
+    def expand_skill_command_in_text(self, text: str) -> list[dict[str, object]]:
+        """Build context messages for ``/skill <name>`` user text.
+
+        Parameters
+        ----------
+        text : str
+            User input text that may contain a skill selection command.
+
+        Returns
+        -------
+        list[dict[str, object]]
+            Skill context message followed by any remaining user message.
+        """
+        command = parse_user_input_command(text)
+        if command.kind != "skill" or not command.argument:
+            match = SKILL_SELECTION_PATTERN.search(text)
+            if match is None:
+                return [generate_openai_message(content=text, role="user")]
+            skill_name = match.group("name")
+            remaining_text = (
+                text[: match.start()]
+                + match.group("prefix")
+                + text[match.end() :]
+            ).strip()
+            remaining_text = re.sub(r"\s{2,}", " ", remaining_text)
+            messages = self.build_selected_skill_messages(skill_name)
+            if remaining_text:
+                messages.append(generate_openai_message(content=remaining_text, role="user"))
+            return messages
+        messages = self.build_selected_skill_messages(command.argument)
+        if command.text:
+            messages.append(generate_openai_message(content=command.text, role="user"))
+        return messages
 
     def set_active_state(
         self,
@@ -485,9 +544,36 @@ class BaseTaskManager:
             if command.kind == "help":
                 self.display_command_help()
                 continue
-            if command.kind == "skill":
+            if command.kind == "skill" and not command.argument:
                 self.display_available_skills()
                 continue
+            if command.kind == "skill":
+                try:
+                    skill_messages = self.build_selected_skill_messages(command.argument)
+                except ValueError as exc:
+                    self.record_system_message(
+                        str(exc),
+                        update_context=True,
+                        write_to_webui=True,
+                    )
+                    continue
+                for skill_message in skill_messages:
+                    self.update_message_history(
+                        skill_message,
+                        update_context=True,
+                        update_full_history=True,
+                    )
+                if command.text:
+                    user_message = generate_openai_message(content=command.text, role="user")
+                    if not self.use_webui:
+                        print_message(user_message)
+                    self.update_message_history(
+                        user_message,
+                        update_context=True,
+                        update_full_history=True,
+                    )
+                self.active_state.await_user_input = False
+                return "completed"
             if command.kind in {"exit", "return", "chat"}:
                 return command.kind
             if command.kind == "monitor":
@@ -497,14 +583,14 @@ class BaseTaskManager:
                     write_to_webui=True,
                 )
                 continue
-            user_message = generate_openai_message(content=command.text, role="user")
-            if not self.use_webui:
-                print_message(user_message)
-            self.update_message_history(
-                user_message,
-                update_context=True,
-                update_full_history=True,
-            )
+            for user_message in self.expand_skill_command_in_text(command.text):
+                if not self.use_webui:
+                    print_message(user_message)
+                self.update_message_history(
+                    user_message,
+                    update_context=True,
+                    update_full_history=True,
+                )
             self.active_state.await_user_input = False
             return "completed"
 
@@ -599,6 +685,7 @@ class BaseTaskManager:
     def build_db(self, *args, **kwargs):
         """Initialize message persistence and optionally hydrate prior messages."""
         self.persistence.connect()
+        self.persistence.set_skill_catalog(skill_catalog_to_dicts(self.skill_catalog))
 
     def build_model(self, *args, **kwargs):
         """Build the chat model if an LLM config is provided."""
@@ -744,13 +831,11 @@ class BaseTaskManager:
     def _build_default_tools(self) -> list[BaseTool]:
         """Return default built-in tools."""
         tools: list[BaseTool] = []
-        self.skill_tool = SkillLibraryTool(skill_dirs=self.skill_dirs)
-        tools.append(self.skill_tool)
         if not self.use_coding_tools:
             return tools
         tools.extend(
             [
-                FileSystemTool(),
+                FileSystemTool(read_whitelist_paths=self.skill_dirs),
                 ImageRenderingTool(),
                 PythonCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
                 BashCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
@@ -948,6 +1033,7 @@ class BaseTaskManager:
             "* `/chat`: enter chat mode\n"
             "* `/monitor <task description>`: enter monitoring mode\n"
             "* `/skill`: display skills available to the agent\n"
+            "* `/skill <name>`: load a skill into the next model context\n"
             "* `/return`: return to upper level task\n"
         )
         if self.use_webui:
@@ -958,16 +1044,15 @@ class BaseTaskManager:
         return text
 
     def display_available_skills(self) -> str:
-        """Display skills available through the skill library tool."""
-        skill_catalog = self.skill_tool.skill_catalog if self.skill_tool is not None else []
-        if not skill_catalog:
+        """Display skills available to the task manager."""
+        if not self.skill_catalog:
             text = "No skills are available."
         else:
             text = "\n".join(
                 ["Skills available to the agent:"]
                 + [
                     f"{index}. {skill.name} - {skill.description} [{skill.path}]"
-                    for index, skill in enumerate(skill_catalog, start=1)
+                    for index, skill in enumerate(self.skill_catalog, start=1)
                 ]
             )
         if self.use_webui:

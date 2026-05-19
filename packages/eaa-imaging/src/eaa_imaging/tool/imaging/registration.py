@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 from skimage import feature
 from eaa_core.api.llm_config import LLMConfig
 from eaa_core.message_proc import generate_openai_message
-from eaa_core.skill import SkillMetadata
 from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.task_manager.skills import SkillMetadata, build_skill_context_message
 from eaa_core.tool.base import BaseTool, check, tool
 
 from eaa_imaging.image_proc import (
@@ -309,22 +309,17 @@ class ImageRegistration(BaseTool):
             use_coding_tools=False,
             build=True,
         )
-        if registration_task.skill_tool is None:
-            raise RuntimeError("Skill tool is unavailable on the registration task manager.")
-        registration_task.skill_tool.skill_catalog = [
-            SkillMetadata(
-                name="image-registration",
-                description="Instructions for image registration.",
-                path=str(skill_path.parent),
-            )
-        ]
-        skill_payload = registration_task.skill_tool.load_skill("image-registration")
-        for message in skill_payload["messages"]:
-            registration_task.update_message_history(
-                message,
-                update_context=True,
-                update_full_history=True,
-            )
+        registration_task.update_message_history(
+            build_skill_context_message(
+                SkillMetadata(
+                    name="image-registration",
+                    description="Instructions for image registration.",
+                    path=str(skill_path),
+                )
+            ),
+            update_context=True,
+            update_full_history=True,
+        )
         registration_task.run_conversation(
             message=generate_openai_message(
                 content=(

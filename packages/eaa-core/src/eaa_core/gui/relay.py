@@ -114,6 +114,16 @@ class SQLiteWebUIRelay:
         finally:
             connection.close()
 
+    def load_skill_catalog(self) -> list[dict[str, str]]:
+        """Load skill metadata published by the task manager."""
+        connection = self.open_connection()
+        try:
+            store = SQLiteMessageStore(self.db_path)
+            store.connection = connection
+            return store.load_skill_catalog()
+        finally:
+            connection.close()
+
     def ensure_upload_dir(self) -> str:
         """Ensure and return the configured upload directory.
 
@@ -243,6 +253,10 @@ class SQLiteWebUIRelay:
                 status_code=400,
             )
         return JSONResponse({"file_path": file_path}, status_code=201)
+
+    def skill_catalog_response(self) -> JSONResponse:
+        """Build a JSON response containing available skills."""
+        return JSONResponse({"skills": self.load_skill_catalog()})
 
 
 _message_db_path: Optional[str] = None

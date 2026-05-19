@@ -58,8 +58,13 @@ def parse_user_input_command(user_input: str) -> UserInputCommand:
         return UserInputCommand(kind="chat")
     if command_lower == "/help" and argument == "":
         return UserInputCommand(kind="help")
-    if command_lower == "/skill" and argument == "":
-        return UserInputCommand(kind="skill")
+    if command_lower == "/skill":
+        skill_name, _, remaining_text = argument.partition(" ")
+        return UserInputCommand(
+            kind="skill",
+            argument=skill_name.strip(),
+            text=remaining_text.strip(),
+        )
     if command_lower == "/monitor" and argument:
         return UserInputCommand(kind="monitor", argument=argument)
     return UserInputCommand(kind="message", text=user_input)

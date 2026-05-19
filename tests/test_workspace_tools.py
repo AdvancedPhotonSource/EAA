@@ -56,6 +56,37 @@ def test_filesystem_tool_approval_rules_for_workspace_paths(tmp_path):
     assert approvals[-1] == ("ls", {"path": "/"})
 
 
+def test_filesystem_tool_allows_reading_whitelisted_skill_dirs(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill_dir = tmp_path / "skills" / "example"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text("skill instructions")
+    approvals = []
+
+    executor = SerialToolExecutor(
+        approval_handler=lambda tool_name, arguments: approvals.append((tool_name, arguments)) or False
+    )
+    executor.register_tools(
+        FileSystemTool(
+            workspace_path=str(workspace),
+            read_whitelist_paths=[str(tmp_path / "skills")],
+        )
+    )
+
+    read_result = executor.execute_tool_call(
+        build_tool_call("read_file", {"file_path": str(skill_file)})
+    )
+    ls_result = executor.execute_tool_call(
+        build_tool_call("ls", {"path": str(skill_dir)})
+    )
+
+    assert "skill instructions" in parse_tool_content(read_result)["result"]
+    assert parse_tool_content(ls_result)["ok"] is True
+    assert approvals == []
+
+
 def test_approval_rule_errors_return_tool_error(tmp_path):
     executor = SerialToolExecutor(approval_handler=lambda tool_name, arguments: True)
     executor.register_tools(FileSystemTool(workspace_path=str(tmp_path)))

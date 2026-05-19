@@ -45,6 +45,7 @@ class NiceGUIWebUIBase:
 
     image_route = "/api/image"
     upload_route = "/api/upload-image"
+    skill_catalog_route = "/api/skill-catalog"
     markdown_extras = ["fenced-code-blocks", "tables", "code-friendly", "break-on-newline"]
     foldable_roles = {"user", "user_webui", "tool"}
     folded_message_line_limit = 10
@@ -72,6 +73,7 @@ class NiceGUIWebUIBase:
         self.input_status_label: Any | None = None
         self.image_dialog: Any | None = None
         self.image_dialog_image: Any | None = None
+        self.skill_catalog: list[dict[str, str]] = []
 
     def run(self, host: str = "127.0.0.1", port: int = 8008) -> None:
         """Run the NiceGUI WebUI.
@@ -106,6 +108,9 @@ class NiceGUIWebUIBase:
         async def upload_image(payload: dict[str, Any]) -> Any:
             return self.relay.upload_image_response(payload)
 
+        async def skill_catalog() -> Any:
+            return self.relay.skill_catalog_response()
+
         app.add_api_route(
             self.image_route,
             self.relay.image_response,
@@ -115,6 +120,11 @@ class NiceGUIWebUIBase:
             self.upload_route,
             upload_image,
             methods=["POST"],
+        )
+        app.add_api_route(
+            self.skill_catalog_route,
+            skill_catalog,
+            methods=["GET"],
         )
 
     def build_page(self) -> None:
@@ -139,6 +149,7 @@ class NiceGUIWebUIBase:
             self.build_input_area()
 
         self.build_image_dialog()
+        self.install_skill_autocomplete_handler()
 
         ui.timer(self.poll_interval, self.poll_once)
         ui.timer(0.1, self.poll_once, once=True)
@@ -199,6 +210,7 @@ class NiceGUIWebUIBase:
                         "<img /absolute/path/to/image.png>."
                     )
                 ).props("autogrow outlined").classes("eaa-input")
+                ui.html('<div class="eaa-skill-suggestions hidden"></div>')
                 with ui.row().classes("eaa-actions"):
                     self.build_extra_input_controls()
                     ui.button("Send", on_click=self.send_current_message).classes("eaa-send")
@@ -951,6 +963,94 @@ class NiceGUIWebUIBase:
 
         ui.add_body_html(f"<script>{self.keyboard_shortcuts_script()}</script>")
 
+    def install_skill_autocomplete_handler(self) -> None:
+        """Install browser JavaScript for ``/skill`` autocomplete."""
+        from nicegui import ui
+
+        try:
+            self.skill_catalog = self.relay.load_skill_catalog()
+        except Exception:
+            self.skill_catalog = []
+        skill_json = json.dumps(self.skill_catalog)
+        ui.add_body_html(f"<script>{self.skill_autocomplete_script(skill_json)}</script>")
+
+    def skill_autocomplete_script(self, skill_json: str) -> str:
+        """Return JavaScript used to suggest configured skills."""
+        return f"""
+            (() => {{
+              let skills = {skill_json};
+              let skillsLoaded = skills.length > 0;
+              const refreshSkills = async () => {{
+                if (skillsLoaded) return;
+                try {{
+                  const response = await fetch('{self.skill_catalog_route}');
+                  if (!response.ok) return;
+                  const payload = await response.json();
+                  skills = Array.isArray(payload.skills) ? payload.skills : [];
+                  skillsLoaded = skills.length > 0;
+                }} catch (_error) {{
+                  return;
+                }}
+              }};
+              const escapeHtml = (value) => String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+              const attachSkillAutocomplete = () => {{
+                const input = document.querySelector('.eaa-input textarea');
+                const panel = document.querySelector('.eaa-skill-suggestions');
+                if (!input || !panel) return false;
+                if (input.dataset.eaaSkillAutocompleteBound === '1') return true;
+                input.dataset.eaaSkillAutocompleteBound = '1';
+                const hide = () => {{
+                  panel.classList.add('hidden');
+                  panel.innerHTML = '';
+                }};
+                const render = async () => {{
+                  const value = input.value || '';
+                  if (!value.startsWith('/skill')) {{
+                    hide();
+                    return;
+                  }}
+                  await refreshSkills();
+                  const typed = value.slice('/skill'.length).trimStart().toLowerCase();
+                  const matches = skills
+                    .filter((skill) => !typed || String(skill.name || '').toLowerCase().startsWith(typed))
+                    .slice(0, 8);
+                  if (!matches.length) {{
+                    hide();
+                    return;
+                  }}
+                  panel.innerHTML = matches.map((skill) => `
+                    <button type="button" class="eaa-skill-suggestion" data-skill="${{escapeHtml(skill.name || '')}}">
+                      <span class="eaa-skill-name">${{escapeHtml(skill.name || '')}}</span>
+                      <span class="eaa-skill-description">${{escapeHtml(skill.description || '')}}</span>
+                    </button>
+                  `).join('');
+                  panel.classList.remove('hidden');
+                }};
+                input.addEventListener('input', render);
+                input.addEventListener('blur', () => setTimeout(hide, 150));
+                panel.addEventListener('mousedown', (event) => {{
+                  const button = event.target.closest('.eaa-skill-suggestion');
+                  if (!button) return;
+                  event.preventDefault();
+                  input.value = `/skill ${{button.dataset.skill}} `;
+                  input.focus();
+                  input.dispatchEvent(new Event('input', {{bubbles: true}}));
+                  hide();
+                }});
+                return true;
+              }};
+              if (attachSkillAutocomplete()) return;
+              const observer = new MutationObserver(() => {{
+                if (attachSkillAutocomplete()) observer.disconnect();
+              }});
+              observer.observe(document.body, {{childList: true, subtree: true}});
+            }})();
+            """.strip()
+
     def keyboard_shortcuts_script(self) -> str:
         """Return the JavaScript used to bind Enter-to-send behavior.
 
@@ -1301,10 +1401,51 @@ class NiceGUIWebUIBase:
             align-items: stretch;
             flex-wrap: nowrap;
             gap: 8px;
+            position: relative;
         }
         .eaa-input {
             flex: 1;
             min-width: 0;
+        }
+        .eaa-skill-suggestions {
+            position: absolute;
+            left: 0;
+            right: 104px;
+            bottom: 100%;
+            margin-bottom: 6px;
+            z-index: 20;
+            max-height: 260px;
+            overflow-y: auto;
+            background: #ffffff;
+            border: 1px solid #d8dde6;
+            border-radius: 8px;
+            box-shadow: 0 10px 24px rgba(21, 30, 45, 0.14);
+            padding: 6px;
+        }
+        .eaa-skill-suggestion {
+            display: block;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            text-align: left;
+            padding: 8px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .eaa-skill-suggestion:hover {
+            background: #eef3fb;
+        }
+        .eaa-skill-name {
+            display: block;
+            font-weight: 650;
+            color: #20242a;
+        }
+        .eaa-skill-description {
+            display: block;
+            margin-top: 2px;
+            color: #5f6b7a;
+            font-size: 12px;
+            line-height: 1.35;
         }
         .eaa-actions {
             align-items: stretch;

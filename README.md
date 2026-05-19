@@ -229,9 +229,9 @@ only ``{"url": ..., "transport": "http"}`` is not enough.
 ## Skills
 
 Skills are reusable, markdown-first task packages that EAA can discover and
-load at runtime. In the current implementation, each skill is a directory with
-at least a `SKILL.md` file. Additional markdown files and referenced images can
-live alongside it.
+load at runtime. Each skill is a directory with at least a `SKILL.md` file.
+Additional files can live alongside it for the agent to inspect with filesystem
+tools when needed.
 
 Bundled skills live under `packages/eaa-core/src/eaa/skills/` and
 `packages/eaa-imaging/src/eaa/skills/`. A typical layout looks like:
@@ -254,12 +254,12 @@ task_manager = BaseTaskManager(
 )
 ```
 
-At build time, EAA wires in the skill library tool. That tool scans the
-configured directories for `SKILL.md`, exposes a skill catalog to the agent,
-and loads the selected skill docs on demand. In an interactive chat session
-you can:
+At build time, EAA scans the configured directories for `SKILL.md` files and
+injects skill names, descriptions, and `SKILL.md` paths into the system prompt.
+In an interactive chat session you can:
 
 - run `/skill` to list the loaded skills
+- run `/skill <name>` to inject that skill's `SKILL.md` into the model context
 
 If you want to copy the bundled skills out of the package tree, use:
 

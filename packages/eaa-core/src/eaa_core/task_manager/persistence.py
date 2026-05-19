@@ -136,6 +136,11 @@ class PrunableSqliteSaver(SqliteSaver):
                 timestamp TEXT NOT NULL,
                 content TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS skill_catalog (
+                name TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                path TEXT NOT NULL
+            );
             """
         )
         self.conn.execute(
@@ -565,3 +570,64 @@ class SQLiteMessageStore:
         )
         self.connection.commit()
         return int(cursor.lastrowid)
+
+    def set_skill_catalog(self, skill_catalog: list[dict[str, str]]) -> None:
+        """Persist the skill catalog for WebUI autocomplete.
+
+        Parameters
+        ----------
+        skill_catalog : list[dict[str, str]]
+            Skill metadata dictionaries with ``name``, ``description``, and
+            ``path`` fields.
+        """
+        if self.connection is None:
+            self.connect()
+        if self.connection is None:
+            return
+        cursor = self.connection.cursor()
+        cursor.execute("DELETE FROM skill_catalog")
+        cursor.executemany(
+            """
+            INSERT INTO skill_catalog (name, description, path)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (
+                    str(skill.get("name", "")),
+                    str(skill.get("description", "")),
+                    str(skill.get("path", "")),
+                )
+                for skill in skill_catalog
+                if skill.get("name")
+            ],
+        )
+        self.connection.commit()
+
+    def load_skill_catalog(self) -> list[dict[str, str]]:
+        """Load the persisted skill catalog.
+
+        Returns
+        -------
+        list[dict[str, str]]
+            Skill metadata dictionaries.
+        """
+        if self.connection is None:
+            self.connect()
+        if self.connection is None:
+            return []
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """
+            SELECT name, description, path
+            FROM skill_catalog
+            ORDER BY lower(name)
+            """
+        )
+        return [
+            {
+                "name": str(name),
+                "description": str(description),
+                "path": str(path),
+            }
+            for name, description, path in cursor.fetchall()
+        ]

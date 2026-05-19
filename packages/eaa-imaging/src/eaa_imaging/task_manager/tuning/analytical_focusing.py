@@ -12,8 +12,8 @@ from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.message_proc import generate_openai_message
 from eaa_core.message_proc import print_message
-from eaa_core.skill import SkillMetadata
 from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.task_manager.skills import SkillMetadata, build_skill_context_message
 from eaa_core.tool.base import BaseTool
 
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
@@ -671,22 +671,17 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             use_coding_tools=False,
             build=True,
         )
-        if checker_task_manager.skill_tool is None:
-            raise RuntimeError("Skill tool is unavailable on the checker task manager.")
-        checker_task_manager.skill_tool.skill_catalog = [
-            SkillMetadata(
-                name="check-line-scan",
-                description="Instructions for checking a line scan.",
-                path=str(skill_path.parent),
-            )
-        ]
-        skill_payload = checker_task_manager.skill_tool.load_skill("check-line-scan")
-        for message in skill_payload["messages"]:
-            checker_task_manager.update_message_history(
-                message,
-                update_context=True,
-                update_full_history=True,
-            )
+        checker_task_manager.update_message_history(
+            build_skill_context_message(
+                SkillMetadata(
+                    name="check-line-scan",
+                    description="Instructions for checking a line scan.",
+                    path=str(skill_path),
+                )
+            ),
+            update_context=True,
+            update_full_history=True,
+        )
         fit_summary = (
             "Line-scan fit summary:\n"
             f"- fwhm: {line_scan_result.get('fwhm')}\n"

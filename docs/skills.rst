@@ -6,15 +6,16 @@ What skills are
 
 In EAA, a skill is a reusable, markdown-first task package that the agent can
 discover and use at runtime. Skills are not Python subclasses. Instead, they
-are directories of documentation that the agent can inspect through the
-``SkillLibraryTool``.
+are directories of documentation that the agent can inspect through normal
+filesystem tools.
 
 At load time, EAA:
 
-- makes the skill library tool available to the agent
 - scans the configured skill directories for ``SKILL.md``
-- extracts basic metadata such as the skill name and description
-- exposes a catalog tool plus a loader tool for fetching skill docs on demand
+- extracts metadata such as the skill name, description, and ``SKILL.md`` path
+- injects that metadata into the system prompt
+- injects only the selected ``SKILL.md`` into context when the user enters
+  ``/skill <name>``
 
 This lets the agent pull in focused instructions for a workflow without baking
 every workflow into one prompt or one task-manager class.
@@ -40,17 +41,16 @@ The current loader behavior is:
 - if a configured directory itself contains ``SKILL.md``, it is treated as one
   skill
 - otherwise, EAA recursively searches below that directory for ``SKILL.md``
-- markdown files are collected and returned to the agent as documentation
-- image references inside markdown are resolved relative to the markdown file
-
-Only markdown files are collected as skill docs by the built-in loader.
+- only ``SKILL.md`` is injected automatically when a user selects a skill
+- supporting files remain available for explicit inspection through tools such
+  as ``ls`` and ``read_file``
 
 How to use skills in EAA
 ------------------------
 
 1. Point the task manager at one or more skill directories with ``skill_dirs``.
 2. Build the task manager normally.
-3. Use the interactive chat commands or tool-calling flows to inspect skills.
+3. Use the interactive chat commands to list or select skills.
 
 Example:
 
@@ -67,9 +67,10 @@ Example:
 Once loaded, the base chat loop supports:
 
 - ``/skill`` to display the discovered skills
+- ``/skill <name>`` to inject the selected skill's ``SKILL.md``
 
 Skills are currently best understood as documented agent playbooks that can be
-loaded on demand through the skill library tool.
+loaded on demand through explicit user selection.
 
 Installing bundled skills elsewhere
 -----------------------------------
