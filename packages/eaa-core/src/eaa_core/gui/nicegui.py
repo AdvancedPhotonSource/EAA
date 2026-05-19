@@ -442,17 +442,17 @@ class NiceGUIWebUIBase:
             ui.markdown(content, extras=list(self.markdown_extras)).classes("eaa-markdown")
             return
 
-        preview_lines = lines[: self.folded_message_line_limit] + ["..."]
-        ui.markdown("\n".join(preview_lines), extras=list(self.markdown_extras)).classes(
-            "eaa-markdown eaa-markdown-preview"
+        markdown = ui.markdown(content, extras=list(self.markdown_extras)).classes(
+            "eaa-markdown eaa-markdown-folded"
         )
-        safe_content = html_module.escape(content)
-        ui.html(
-            "<details class=\"eaa-message-details\">"
-            "<summary>Show more</summary>"
-            f"<pre>{safe_content}</pre>"
-            "</details>"
-        )
+
+        def expand_message() -> None:
+            markdown.classes(remove="eaa-markdown-folded")
+            button.set_visibility(False)
+
+        button = ui.button("Show more", on_click=expand_message).props(
+            "flat dense no-caps"
+        ).classes("eaa-message-expand")
 
     def maybe_add_approval_actions(self, message: dict[str, Any]) -> None:
         """Render Yes/No buttons for tool-approval system prompts.
@@ -1242,29 +1242,13 @@ class NiceGUIWebUIBase:
         .eaa-clickable-image {
             cursor: zoom-in;
         }
-        .eaa-markdown-preview {
+        .eaa-markdown-folded {
             max-height: 16rem;
             overflow: hidden;
         }
-        .eaa-message-details {
-            width: 100%;
-            font-size: 14px;
-        }
-        .eaa-message-details summary {
+        .eaa-message-expand {
+            align-self: flex-start;
             color: #2563eb;
-            cursor: pointer;
-            user-select: none;
-        }
-        .eaa-message-details pre {
-            max-height: 32rem;
-            overflow: auto;
-            margin: 8px 0 0;
-            padding: 10px 12px;
-            white-space: pre-wrap;
-            overflow-wrap: anywhere;
-            background: #f3f4f6;
-            border: 1px solid #e5e7eb;
-            border-radius: 6px;
         }
         .eaa-tool-call-details {
             width: 100%;

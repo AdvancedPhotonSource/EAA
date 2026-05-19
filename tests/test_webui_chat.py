@@ -1,4 +1,6 @@
 import sqlite3
+import sys
+from types import SimpleNamespace
 
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState
@@ -163,10 +165,91 @@ def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):
     assert ".eaa-markdown pre" in styles
     assert ".eaa-markdown code:not(pre code)" in styles
     assert ".eaa-browser-image-preview" in styles
-    assert ".eaa-message-details" in styles
+    assert ".eaa-markdown-folded" in styles
+    assert ".eaa-message-expand" in styles
     assert ".eaa-tool-call-details" in styles
     assert ".eaa-approval-arguments" in styles
     assert ".eaa-approval-extracted-field" in styles
+
+
+def test_nicegui_webui_folds_long_messages_as_expandable_markdown(tmp_path, monkeypatch):
+    class FakeElement:
+        def __init__(self) -> None:
+            self.class_values: list[str] = []
+            self.props_value = ""
+            self.visible = True
+
+        def classes(
+            self,
+            add: str | None = None,
+            *,
+            remove: str | None = None,
+            toggle: str | None = None,
+            replace: str | None = None,
+        ) -> "FakeElement":
+            if add is not None:
+                self.class_values.append(add)
+            if remove is not None:
+                self.class_values = [
+                    " ".join(
+                        class_name
+                        for class_name in classes.split()
+                        if class_name != remove
+                    )
+                    for classes in self.class_values
+                ]
+            if replace is not None:
+                self.class_values = [replace]
+            return self
+
+        def props(self, value: str) -> "FakeElement":
+            self.props_value = value
+            return self
+
+        def set_visibility(self, visible: bool) -> None:
+            self.visible = visible
+
+    class FakeUI:
+        def __init__(self) -> None:
+            self.markdown_calls: list[tuple[str, list[str]]] = []
+            self.markdown_elements: list[FakeElement] = []
+            self.html_calls: list[str] = []
+            self.buttons: list[tuple[str, object, FakeElement]] = []
+
+        def markdown(self, content: str, *, extras: list[str]) -> FakeElement:
+            element = FakeElement()
+            self.markdown_calls.append((content, extras))
+            self.markdown_elements.append(element)
+            return element
+
+        def html(self, content: str) -> FakeElement:
+            self.html_calls.append(content)
+            return FakeElement()
+
+        def button(self, text: str, *, on_click: object) -> FakeElement:
+            element = FakeElement()
+            self.buttons.append((text, on_click, element))
+            return element
+
+    fake_ui = FakeUI()
+    monkeypatch.setitem(sys.modules, "nicegui", SimpleNamespace(ui=fake_ui))
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    content = "\n".join(f"line {index}" for index in range(20))
+
+    webui.render_message_content("user", content)
+
+    assert fake_ui.markdown_calls == [(content, list(webui.markdown_extras))]
+    assert fake_ui.html_calls == []
+    assert fake_ui.buttons[0][0] == "Show more"
+    assert fake_ui.markdown_elements[0].class_values == [
+        "eaa-markdown eaa-markdown-folded"
+    ]
+
+    _, on_click, button = fake_ui.buttons[0]
+    on_click()
+
+    assert fake_ui.markdown_elements[0].class_values == ["eaa-markdown"]
+    assert button.visible is False
 
 
 def test_nicegui_webui_formats_tool_calls_from_payload(tmp_path):
