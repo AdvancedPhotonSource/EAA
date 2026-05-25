@@ -46,6 +46,7 @@ from eaa_core.task_manager.state import (
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
 from eaa_core.tool.coding import BashCodingTool, PythonCodingTool
+from eaa_core.tool.subagent import SubagentTool
 from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
 
 logger = logging.getLogger(__name__)
@@ -242,6 +243,9 @@ class BaseTaskManager:
     build : bool, default=True
         Whether to initialize persistence, model, tools, memory, and graphs
         during construction.
+    is_subagent : bool, default=False
+        Whether this task manager is a subordinate agent. Subordinate agents do
+        not receive the subagent-launching tool.
     """
 
     def __init__(
@@ -256,6 +260,7 @@ class BaseTaskManager:
         run_codes_in_sandbox: bool = False,
         prune_checkpoints: bool = True,
         build: bool = True,
+        is_subagent: bool = False,
         *args,
         **kwargs,
     ):
@@ -275,6 +280,7 @@ class BaseTaskManager:
         self.use_coding_tools = use_coding_tools
         self.run_codes_in_sandbox = run_codes_in_sandbox
         self.prune_checkpoints = prune_checkpoints
+        self.is_subagent = is_subagent
         self.session_db_path = session_db_path
         self.memory_manager = MemoryManager(self)
         self.persistence = SQLiteMessageStore(self.session_db_path)
@@ -286,6 +292,10 @@ class BaseTaskManager:
         self.node_factory = NodeFactory(self)
         if not getattr(self, "assistant_system_message", None):
             self.assistant_system_message = self.get_default_system_prompt()
+        elif self.is_subagent:
+            self.assistant_system_message = "\n\n".join(
+                [self.assistant_system_message, self.get_subagent_system_prompt()]
+            )
         self.chat_graph = None
         self.feedback_loop_graph = None
         self.task_graph = None
@@ -299,12 +309,28 @@ class BaseTaskManager:
 
     def get_default_system_prompt(self) -> str:
         """Return the default system prompt for the task manager."""
-        return render_prompt_template(
+        prompt = render_prompt_template(
             "eaa_core.task_manager.prompts",
             "system_base.md",
             {
                 "available_skills_text": self.format_available_skills_for_prompt(),
             },
+        )
+        if self.is_subagent:
+            prompt = "\n\n".join(
+                [
+                    prompt,
+                    self.get_subagent_system_prompt(),
+                ]
+            )
+        return prompt
+
+    def get_subagent_system_prompt(self) -> str:
+        """Return the prompt addendum for subordinate task managers."""
+        return render_prompt_template(
+            "eaa_core.task_manager.prompts",
+            "subagent.md",
+            {},
         )
 
     def format_available_skills_for_prompt(self) -> str:
@@ -849,7 +875,7 @@ class BaseTaskManager:
             seen_names.update(tool_names)
 
     def _collect_tool_names(self, tools: list[BaseTool]) -> set[str]:
-        """Collect model-visible tool names from tool objects."""
+        """Collect model-visible exposed tool names from tool objects."""
         names: set[str] = set()
         for tool in tools:
             for exposed in tool.exposed_tools:
@@ -871,6 +897,8 @@ class BaseTaskManager:
                 UvTool(),
             ]
         )
+        if not self.is_subagent:
+            tools.append(SubagentTool(self))
         return tools
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:

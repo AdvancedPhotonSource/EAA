@@ -10,6 +10,16 @@ from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, FeedbackLoopState, TaskManagerState
 from eaa_core.tool.base import BaseTool, tool
+from eaa_core.tool.subagent import SubagentTool
+
+
+class EchoTool(BaseTool):
+    """Test helper tool."""
+
+    @tool(name="echo_test")
+    def echo(self, message: str) -> str:
+        """Return the provided test message."""
+        return message
 
 
 class CheckpointableTaskManager(BaseTaskManager):
@@ -134,6 +144,66 @@ def test_active_state_owns_context_and_history():
     assert task_manager.active_state is task_manager.chat_state
     assert task_manager.context == [{"role": "assistant", "content": "hi"}]
     assert not hasattr(task_manager, "common_state")
+
+
+def test_default_tools_include_subagent_tool():
+    task_manager = BaseTaskManager(
+        session_db_path=None,
+        use_coding_tools=True,
+    )
+
+    assert "launch_subagent" in task_manager.tool_executor.tool_specs
+
+
+def test_subagent_manager_omits_subagent_tool_and_appends_prompt():
+    task_manager = BaseTaskManager(
+        session_db_path=None,
+        use_coding_tools=True,
+        is_subagent=True,
+    )
+
+    assert "launch_subagent" not in task_manager.tool_executor.tool_specs
+    assert "You are running as a sub-task manager" in task_manager.assistant_system_message
+
+
+def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
+    parent = BaseTaskManager(
+        build=False,
+        tools=[EchoTool()],
+        use_coding_tools=False,
+        session_db_path=str(tmp_path / "session.sqlite"),
+        use_webui=True,
+    )
+    parent.model = object()
+    subagent_tool = SubagentTool(parent)
+    parent.register_tools([*parent.tools, subagent_tool])
+    captured = {}
+    original_build = BaseTaskManager.build
+
+    def capture_subagent_build(task_manager, *args, **kwargs):
+        if task_manager.is_subagent:
+            captured["session_db_path"] = task_manager.session_db_path
+            captured["use_webui"] = task_manager.use_webui
+        return original_build(task_manager, *args, **kwargs)
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        captured["messages"] = messages
+        captured["tool_names"] = [
+            schema["function"]["name"] for schema in tool_schemas
+        ]
+        return {"role": "assistant", "content": "subagent complete"}
+
+    monkeypatch.setattr(BaseTaskManager, "build", capture_subagent_build)
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    result = subagent_tool.launch_subagent("inspect this")
+
+    assert result == {"result": "subagent complete"}
+    assert captured["session_db_path"] == parent.session_db_path
+    assert captured["use_webui"] is True
+    assert "echo_test" in captured["tool_names"]
+    assert "launch_subagent" not in captured["tool_names"]
+    assert "You are running as a sub-task manager" in captured["messages"][0]["content"]
 
 
 def test_task_graph_can_own_feedback_loop_state(monkeypatch):
