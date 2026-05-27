@@ -2,6 +2,8 @@ import sqlite3
 import sys
 from types import SimpleNamespace
 
+import markdown2
+
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState
 from eaa_core.gui.chat import _parse_images_field
@@ -155,6 +157,70 @@ def test_nicegui_webui_base_consumes_matching_pending_message(tmp_path):
 
     assert consumed is True
     assert webui.pending_messages == {}
+
+
+def test_nicegui_webui_preserves_mathjax_delimiters_for_markdown(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    content = (
+        r"\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\]" "\n"
+        r"Inline: \(e^{i\pi} + 1 = 0\)"
+    )
+
+    preserved = webui.preserve_math_delimiters(content)
+
+    assert preserved == (
+        r"\\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\\]" "\n"
+        r"Inline: \\(e^{i\pi} + 1 = 0\\)"
+    )
+
+
+def test_nicegui_webui_keeps_multiline_display_math_in_one_markdown_text_run(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    content = (
+        r"\[" "\n"
+        r"x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}" "\n"
+        r"\]"
+    )
+
+    preserved = webui.preserve_math_delimiters(content)
+    rendered = markdown2.markdown(preserved, extras=webui.markdown_extras)
+
+    assert preserved == r"\\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\\]"
+    assert "<br" not in rendered
+    assert r"\[" in rendered
+    assert r"\]" in rendered
+
+
+def test_nicegui_webui_keeps_multiline_dollar_display_math_in_one_text_run(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    content = "$$\n" r"\sum_{n=0}^{\infty} x^{n}" "\n$$"
+
+    preserved = webui.preserve_math_delimiters(content)
+    rendered = markdown2.markdown(preserved, extras=webui.markdown_extras)
+
+    assert preserved == r"$$\sum_{n=0}^{\infty} x^{n}$$"
+    assert "<br" not in rendered
+
+
+def test_nicegui_webui_does_not_preserve_mathjax_delimiters_in_code(tmp_path):
+    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+    content = (
+        r"Text \[x\]" "\n"
+        r"`code \[x\]`" "\n"
+        "```" "\n"
+        r"block \[x\]" "\n"
+        "```"
+    )
+
+    preserved = webui.preserve_math_delimiters(content)
+
+    assert preserved == (
+        r"Text \\[x\\]" "\n"
+        r"`code \[x\]`" "\n"
+        "```" "\n"
+        r"block \[x\]" "\n"
+        "```"
+    )
 
 
 def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):

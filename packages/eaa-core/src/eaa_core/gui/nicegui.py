@@ -9,12 +9,15 @@ import json
 import re
 import subprocess
 import sys
+from importlib.resources import files
 from typing import Any
 from urllib.parse import quote
 
 from eaa_core.gui.relay import SQLiteWebUIRelay, set_message_db_path
 
 IMAGE_TAG_PATTERN = re.compile(r"<img\s+([^>\s]+)>")
+MATH_DELIMITER_PATTERN = re.compile(r"(?<!\\)\\([\[\]\(\)])")
+INLINE_CODE_PATTERN = re.compile(r"(`+[^`]*?`+)")
 APPROVAL_PATTERN = re.compile(r"Approve\?\s*\[y/N\]:", re.IGNORECASE)
 APPROVAL_ARGUMENTS_PATTERN = re.compile(
     r"Arguments:\s*(?P<arguments>.*?)\nApprove\?\s*\[y/N\]:",
@@ -47,6 +50,7 @@ class NiceGUIWebUIBase:
     image_route = "/api/image"
     upload_route = "/api/upload-image"
     skill_catalog_route = "/api/skill-catalog"
+    mathjax_route = "/static/mathjax"
     markdown_extras = ["fenced-code-blocks", "tables", "code-friendly", "break-on-newline"]
     foldable_roles = {"user", "user_webui", "tool"}
     folded_message_line_limit = 10
@@ -130,6 +134,15 @@ class NiceGUIWebUIBase:
         async def skill_catalog() -> Any:
             return self.relay.skill_catalog_response()
 
+        if not any(getattr(route, "path", None) == self.mathjax_route for route in app.routes):
+            from starlette.staticfiles import StaticFiles
+
+            mathjax_dir = files("eaa_core").joinpath("gui/static/mathjax")
+            app.mount(
+                self.mathjax_route,
+                StaticFiles(directory=str(mathjax_dir)),
+                name="eaa_mathjax",
+            )
         app.add_api_route(
             self.image_route,
             self.relay.image_response,
@@ -151,6 +164,7 @@ class NiceGUIWebUIBase:
         from nicegui import ui
 
         ui.add_head_html(self.styles())
+        self.install_mathjax()
         self.install_keyboard_shortcuts()
         self.install_clipboard_handler()
         self.install_image_preview_handler()
@@ -285,9 +299,66 @@ class NiceGUIWebUIBase:
                 self.last_message_id = raw_id
         if rendered_any:
             self.scroll_messages_to_bottom()
+            self.typeset_math()
         if rendered_images:
             self.scroll_images_to_bottom()
         self.on_messages_loaded(messages)
+
+    def install_mathjax(self) -> None:
+        """Load the vendored MathJax renderer for chat markdown content."""
+        from nicegui import ui
+
+        script_src = f"{self.mathjax_route}/es5/tex-svg-full.js"
+        ui.add_head_html(
+            f"""
+            <script>
+            window.__eaaMathJaxTypesetPending = false;
+            window.__eaaTypesetMath = function() {{
+              const container = document.querySelector('.eaa-messages');
+              if (!container) return Promise.resolve();
+              if (!window.MathJax || !window.MathJax.typesetPromise) {{
+                window.__eaaMathJaxTypesetPending = true;
+                return Promise.resolve();
+              }}
+              window.__eaaMathJaxTypesetPending = false;
+              return window.MathJax.typesetPromise([container]).catch((error) => {{
+                console.warn('MathJax typesetting failed:', error);
+              }});
+            }};
+            window.MathJax = {{
+              tex: {{
+                inlineMath: [['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                processEscapes: true
+              }},
+              svg: {{
+                fontCache: 'global'
+              }},
+              startup: {{
+                pageReady: () => MathJax.startup.defaultPageReady().then(() => {{
+                  if (window.__eaaMathJaxTypesetPending) {{
+                    return window.__eaaTypesetMath();
+                  }}
+                }})
+              }}
+            }};
+            </script>
+            <script defer src="{script_src}"></script>
+            """
+        )
+
+    def typeset_math(self) -> None:
+        """Typeset math in dynamically appended transcript messages."""
+        from nicegui import ui
+
+        ui.run_javascript(
+            """
+            (() => {
+              if (!window.__eaaTypesetMath) return;
+              window.__eaaTypesetMath();
+            })();
+            """
+        )
 
     def scroll_messages_to_bottom(self) -> None:
         """Auto-scroll the message container to the bottom while in follow mode."""
@@ -459,12 +530,15 @@ class NiceGUIWebUIBase:
         """
         from nicegui import ui
 
+        markdown_content = self.preserve_math_delimiters(content)
         lines = content.replace("\r\n", "\n").splitlines()
         if role not in self.foldable_roles or len(lines) <= self.folded_message_line_limit:
-            ui.markdown(content, extras=list(self.markdown_extras)).classes("eaa-markdown")
+            ui.markdown(markdown_content, extras=list(self.markdown_extras)).classes(
+                "eaa-markdown"
+            )
             return
 
-        markdown = ui.markdown(content, extras=list(self.markdown_extras)).classes(
+        markdown = ui.markdown(markdown_content, extras=list(self.markdown_extras)).classes(
             "eaa-markdown eaa-markdown-folded"
         )
 
@@ -475,6 +549,76 @@ class NiceGUIWebUIBase:
         button = ui.button("Show more", on_click=expand_message).props(
             "flat dense no-caps"
         ).classes("eaa-message-expand")
+
+    @classmethod
+    def preserve_math_delimiters(cls, content: str) -> str:
+        """Preserve MathJax delimiters that Markdown would otherwise consume."""
+        lines = content.replace("\r\n", "\n").split("\n")
+        preserved_lines: list[str] = []
+        in_fenced_code = False
+        fence_marker = ""
+        display_math_opening = ""
+        display_math_marker = ""
+        display_math_lines: list[str] = []
+        for line in lines:
+            stripped = line.lstrip()
+            if display_math_marker:
+                if stripped.strip() == display_math_marker:
+                    preserved_lines.append(
+                        cls.format_display_math_block(
+                            display_math_marker,
+                            display_math_lines,
+                        )
+                    )
+                    display_math_opening = ""
+                    display_math_marker = ""
+                    display_math_lines = []
+                else:
+                    display_math_lines.append(line)
+                continue
+            if in_fenced_code:
+                preserved_lines.append(line)
+                if stripped.startswith(fence_marker):
+                    in_fenced_code = False
+                    fence_marker = ""
+                continue
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fenced_code = True
+                fence_marker = stripped[:3]
+                preserved_lines.append(line)
+                continue
+            if stripped.strip() in {r"\[", "$$"}:
+                display_math_opening = stripped.strip()
+                display_math_marker = r"\]" if stripped.strip() == r"\[" else "$$"
+                display_math_lines = []
+                continue
+            preserved_lines.append(cls.preserve_math_delimiters_in_line(line))
+        if display_math_marker:
+            preserved_lines.append(
+                cls.preserve_math_delimiters_in_line(
+                    "\n".join([display_math_opening, *display_math_lines])
+                )
+            )
+        return "\n".join(preserved_lines)
+
+    @staticmethod
+    def format_display_math_block(marker: str, lines: list[str]) -> str:
+        """Format display math as one Markdown line so delimiters remain adjacent."""
+        body = " ".join(line.strip() for line in lines).strip()
+        if marker == "$$":
+            return f"$${body}$$"
+        return f"\\\\[{body}\\\\]"
+
+    @staticmethod
+    def preserve_math_delimiters_in_line(line: str) -> str:
+        """Preserve MathJax delimiters outside inline code spans."""
+        parts = INLINE_CODE_PATTERN.split(line)
+        for index in range(0, len(parts), 2):
+            parts[index] = MATH_DELIMITER_PATTERN.sub(
+                lambda match: "\\\\" + match.group(1),
+                parts[index],
+            )
+        return "".join(parts)
 
     def maybe_add_approval_actions(self, message: dict[str, Any]) -> None:
         """Render Yes/No buttons for tool-approval system prompts.
