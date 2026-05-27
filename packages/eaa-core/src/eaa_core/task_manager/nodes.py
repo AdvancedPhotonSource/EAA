@@ -210,12 +210,18 @@ class NodeFactory:
             context=context,
             return_outgoing_message=True,
         )
-        if outgoing is not None:
+        if outgoing is None:
+            outgoing_messages = []
+        elif isinstance(outgoing, list):
+            outgoing_messages = outgoing
+        else:
+            outgoing_messages = [outgoing]
+        for outgoing_message in outgoing_messages:
             if not self.task_manager.use_webui:
-                print_message(outgoing)
+                print_message(outgoing_message)
             self.update_message_history_for_state(
                 state,
-                outgoing,
+                outgoing_message,
                 update_context=update_context,
                 update_full_history=update_full_history,
             )

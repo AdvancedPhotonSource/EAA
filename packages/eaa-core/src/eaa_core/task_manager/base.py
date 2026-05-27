@@ -995,7 +995,7 @@ class BaseTaskManager:
 
         Returns
         -------
-        dict or tuple[dict, dict | None]
+        dict or tuple[dict, dict | list[dict] | None]
             Assistant response, or `(response, outgoing_message)` when
             `return_outgoing_message` is `True`.
         """
@@ -1015,6 +1015,7 @@ class BaseTaskManager:
                 outgoing_message = message
                 effective_context.append(outgoing_message)
             elif isinstance(message, list):
+                outgoing_message = list(message)
                 effective_context.extend(message)
             else:
                 raise ValueError("Unsupported message payload type.")
