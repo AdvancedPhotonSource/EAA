@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from eaa_core.task_manager.persistence import (
     PrunableSqliteSaver,
     SQLiteMessageStore,
+    configure_sqlite_connection,
     parse_persisted_images,
 )
 
@@ -40,7 +41,7 @@ class SQLiteWebUIRelay:
         sqlite3.Connection
             Open SQLite connection.
         """
-        connection = sqlite3.connect(self.db_path)
+        connection = configure_sqlite_connection(sqlite3.connect(self.db_path))
         PrunableSqliteSaver(connection).setup()
         return connection
 

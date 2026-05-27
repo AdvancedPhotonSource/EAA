@@ -24,7 +24,11 @@ from eaa_core.message_proc import (
 from eaa_core.task_manager.commands import parse_user_input_command
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
-from eaa_core.task_manager.persistence import PrunableSqliteSaver, SQLiteMessageStore
+from eaa_core.task_manager.persistence import (
+    PrunableSqliteSaver,
+    SQLiteMessageStore,
+    configure_sqlite_connection,
+)
 from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.task_manager.skills import (
     SkillMetadata,
@@ -766,7 +770,9 @@ class BaseTaskManager:
         )
         cache_key = (graph_name, resolved_checkpoint_path)
         if cache_key not in self.checkpoint_graphs:
-            connection = sqlite3.connect(resolved_checkpoint_path, check_same_thread=False)
+            connection = configure_sqlite_connection(
+                sqlite3.connect(resolved_checkpoint_path, check_same_thread=False)
+            )
             saver = PrunableSqliteSaver(
                 connection,
                 prune_checkpoints=self.prune_checkpoints,

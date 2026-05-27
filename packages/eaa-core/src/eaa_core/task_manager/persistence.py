@@ -10,6 +10,24 @@ from eaa_core.message_proc import get_message_elements_as_text
 from eaa_core.util import get_timestamp
 
 
+def configure_sqlite_connection(connection: sqlite3.Connection) -> sqlite3.Connection:
+    """Apply shared SQLite settings for session/checkpoint databases.
+
+    Parameters
+    ----------
+    connection : sqlite3.Connection
+        Open SQLite connection to configure.
+
+    Returns
+    -------
+    sqlite3.Connection
+        The configured connection.
+    """
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA journal_mode = WAL")
+    return connection
+
+
 def parse_persisted_images(image_value: Any) -> list[str]:
     """Normalize persisted WebUI/session DB image values to data URLs.
 
@@ -414,7 +432,7 @@ class SQLiteMessageStore:
             return
         if self.connection is not None:
             return
-        self.connection = sqlite3.connect(self.path)
+        self.connection = configure_sqlite_connection(sqlite3.connect(self.path))
         PrunableSqliteSaver(self.connection).setup()
 
     def append_message(self, message: dict[str, Any]) -> int:
