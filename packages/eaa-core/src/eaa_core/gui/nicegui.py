@@ -70,6 +70,7 @@ class NiceGUIWebUIBase:
         self.messages_container: Any | None = None
         self.images_container: Any | None = None
         self.input_box: Any | None = None
+        self.send_button: Any | None = None
         self.connection_status_label: Any | None = None
         self.input_status_label: Any | None = None
         self.image_dialog: Any | None = None
@@ -85,6 +86,7 @@ class NiceGUIWebUIBase:
         self.messages_container = None
         self.images_container = None
         self.input_box = None
+        self.send_button = None
         self.connection_status_label = None
         self.input_status_label = None
         self.image_dialog = None
@@ -230,7 +232,10 @@ class NiceGUIWebUIBase:
                 ui.html('<div class="eaa-skill-suggestions hidden"></div>')
                 with ui.row().classes("eaa-actions"):
                     self.build_extra_input_controls()
-                    ui.button("Send", on_click=self.send_current_message).classes("eaa-send")
+                    self.send_button = ui.button(
+                        "Send",
+                        on_click=self.send_current_message,
+                    ).classes("eaa-send")
 
     def build_extra_input_controls(self) -> None:
         """Hook for subclasses to add controls beside the Send button."""
@@ -851,9 +856,13 @@ class NiceGUIWebUIBase:
         if user_input_requested == 0:
             self.input_status_label.text = "Agent is processing..."
             self.input_status_label.classes(remove="hidden")
+            if self.send_button is not None:
+                self.send_button.disable()
         else:
             self.input_status_label.text = ""
             self.input_status_label.classes(add="hidden")
+            if self.send_button is not None:
+                self.send_button.enable()
 
     def send_current_message(self) -> None:
         """Queue the current input box value for the task manager."""
@@ -1455,6 +1464,13 @@ class NiceGUIWebUIBase:
         .eaa-send {
             min-width: 96px;
             height: 100%;
+        }
+        .eaa-send.disabled,
+        .eaa-send[disabled] {
+            background: #e5e7eb !important;
+            color: #8a94a3 !important;
+            opacity: 1 !important;
+            cursor: not-allowed;
         }
         @media (max-width: 800px) {
             .eaa-main {
