@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import html as html_module
 import json
 import re
@@ -75,6 +76,20 @@ class NiceGUIWebUIBase:
         self.image_dialog_image: Any | None = None
         self.skill_catalog: list[dict[str, str]] = []
 
+    def reset_page_state(self) -> None:
+        """Reset browser-local UI state for one NiceGUI page instance."""
+        self.last_message_id = None
+        self.rendered_message_ids = set()
+        self.pending_messages = {}
+        self.pending_message_counter = 0
+        self.messages_container = None
+        self.images_container = None
+        self.input_box = None
+        self.connection_status_label = None
+        self.input_status_label = None
+        self.image_dialog = None
+        self.image_dialog_image = None
+
     def run(self, host: str = "127.0.0.1", port: int = 8008) -> None:
         """Run the NiceGUI WebUI.
 
@@ -91,7 +106,9 @@ class NiceGUIWebUIBase:
 
         @ui.page("/")
         def index() -> None:
-            self.build_page()
+            page = copy.copy(self)
+            page.reset_page_state()
+            page.build_page()
 
         print(f"EAA NiceGUI WebUI running at http://{host}:{port} (DB: {self.session_db_path})")
         ui.run(host=host, port=port, title=self.title, reload=False)
