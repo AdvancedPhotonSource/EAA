@@ -117,7 +117,7 @@ class NiceGUIWebUIBase:
             page.build_page()
 
         print(f"EAA NiceGUI WebUI running at http://{host}:{port} (DB: {self.session_db_path})")
-        ui.run(host=host, port=port, title=self.title, reload=False)
+        ui.run(host=host, port=port, title=self.title, favicon="🔬", reload=False)
 
     def register_api_routes(self, app: Any) -> None:
         """Register image routes on a NiceGUI/FastAPI app.
