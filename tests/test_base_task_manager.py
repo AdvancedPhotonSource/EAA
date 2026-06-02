@@ -9,6 +9,7 @@ from eaa_core.api.llm_config import OpenAIConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, FeedbackLoopState, TaskManagerState
+from eaa_core.tool.base import BaseTool, tool
 
 
 class CheckpointableTaskManager(BaseTaskManager):
@@ -90,6 +91,31 @@ class TaskChatRequestTaskManager(BaseTaskManager):
         graph_builder.add_node("mark_chat_requested", mark_chat_requested)
         graph_builder.add_edge(START, "mark_chat_requested")
         return graph_builder.compile(checkpointer=checkpointer)
+
+
+def test_merge_tools_ignores_hidden_tool_name_clashes():
+    class FirstTool(BaseTool):
+        @tool(name="first")
+        def first(self):
+            return "first"
+
+    class SecondTool(BaseTool):
+        @tool(name="second")
+        def second(self):
+            return "second"
+
+    class DuplicateSecondTool(BaseTool):
+        @tool(name="second")
+        def second(self):
+            return "duplicate"
+
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    tools = [FirstTool()]
+
+    task_manager._merge_tools(tools, [SecondTool(), DuplicateSecondTool()])
+
+    assert [type(tool) for tool in tools] == [FirstTool, SecondTool]
+    assert task_manager._collect_tool_names(tools) == {"first", "second"}
 
 
 def test_active_state_owns_context_and_history():

@@ -827,11 +827,12 @@ class BaseTaskManager:
             seen_names.update(tool_names)
 
     def _collect_tool_names(self, tools: list[BaseTool]) -> set[str]:
-        """Collect exposed tool names from tool objects."""
+        """Collect model-visible tool names from tool objects."""
         names: set[str] = set()
         for tool in tools:
             for exposed in tool.exposed_tools:
-                names.add(exposed.name)
+                if exposed.model_visible:
+                    names.add(exposed.name)
         return names
 
     def _build_default_tools(self) -> list[BaseTool]:

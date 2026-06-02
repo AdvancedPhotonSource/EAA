@@ -47,6 +47,8 @@ class SerialToolExecutor:
                 raise ValueError("Input should be a BaseTool or a list of BaseTool objects.")
             self.tools.append(tool)
             for exposed in tool.exposed_tools:
+                if not exposed.model_visible:
+                    continue
                 spec = ExposedToolSpec(
                     name=exposed.name,
                     function=exposed.function,

@@ -228,8 +228,9 @@ def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():
         schema["function"]["name"]
         for schema in executor.list_tool_schemas()
     ] == ["visible"]
+    assert list(executor.tool_specs) == ["visible"]
 
-    with pytest.raises(ValueError, match="not available for model tool calls"):
+    with pytest.raises(ValueError, match="Unknown tool requested"):
         executor.execute_tool_call(
             {
                 "id": "call-hidden",
