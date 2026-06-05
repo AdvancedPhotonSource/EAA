@@ -13,7 +13,6 @@ dependencies = [
     "langchain-openai",
     "fastapi",
     "matplotlib",
-    "nicegui",
     "numpy",
     "openai",
     "pillow",

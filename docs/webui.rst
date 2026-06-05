@@ -25,18 +25,18 @@ Then start the WebUI process:
 
 .. code-block:: python
 
-   from eaa_core.gui.nicegui import run_nicegui_webui
+   from eaa_core.gui.html import run_html_webui
 
-   run_nicegui_webui("session.sqlite", host="127.0.0.1", port=8008)
+   run_html_webui("session.sqlite", host="127.0.0.1", port=8008)
 
-To launch the NiceGUI WebUI without blocking the current Python process, use
+To launch the WebUI without blocking the current Python process, use
 the subprocess launcher:
 
 .. code-block:: python
 
-   from eaa_core.gui.nicegui import launch_nicegui_webui_subprocess
+   from eaa_core.gui.html import launch_html_webui_subprocess
 
-   process = launch_nicegui_webui_subprocess(
+   process = launch_html_webui_subprocess(
        "session.sqlite",
        host="127.0.0.1",
        port=8008,
@@ -48,7 +48,7 @@ the subprocess launcher:
 Communication mechanism
 -----------------------
 
-The browser-facing NiceGUI process reads and writes a shared SQLite file. The
+The browser-facing FastAPI process reads and writes a shared SQLite file. The
 main tables involved are:
 
 ``webui_messages``
@@ -73,7 +73,7 @@ Brief design introduction
 The current WebUI has a deliberately small design:
 
 - reusable SQLite relay helpers in ``eaa_core.gui.relay``
-- reusable NiceGUI base class in ``eaa_core.gui.nicegui``
+- reusable HTML/JavaScript WebUI class in ``eaa_core.gui.html``
 - polling-based message/status updates
 - clipboard image upload support
 - no tight coupling to a specific task-manager subclass
@@ -81,21 +81,21 @@ The current WebUI has a deliberately small design:
 This design keeps the UI process simple and lets the task manager remain the
 source of truth for workflow execution.
 
-Extending the NiceGUI WebUI
----------------------------
+Extending the WebUI
+-------------------
 
-Task-specific packages can subclass ``NiceGUIWebUIBase`` and override layout
-hooks without changing the SQL relay contract:
+Task-specific packages can subclass ``HTMLWebUIBase`` and override
+``page_html()``, ``styles()``, ``script()``, or ``build_app()`` without changing
+the SQL relay contract:
 
 .. code-block:: python
 
-   from nicegui import ui
-   from eaa_core.gui.nicegui import NiceGUIWebUIBase
+   from eaa_core.gui.html import HTMLWebUIBase
 
 
-   class FocusingWebUI(NiceGUIWebUIBase):
-       def build_before_messages(self) -> None:
-           ui.label("Focusing controls")
+   class FocusingWebUI(HTMLWebUIBase):
+       def styles(self) -> str:
+           return super().styles() + "<style>.eaa-title::after { content: ' focusing'; }</style>"
 
 
    FocusingWebUI("session.sqlite").run(host="127.0.0.1", port=8008)

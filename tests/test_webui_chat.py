@@ -1,29 +1,23 @@
 import sqlite3
-import sys
-from types import SimpleNamespace
-
-import markdown2
 
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState
-from eaa_core.gui.chat import _parse_images_field
-from eaa_core.gui.chat import _insert_user_message, _query_messages, set_message_db_path
-from eaa_core.gui.nicegui import (
-    NiceGUIWebUIBase,
+from eaa_core.gui.html import (
+    HTMLWebUIBase,
     build_parser,
-    launch_nicegui_webui_subprocess,
+    launch_html_webui_subprocess,
 )
 from eaa_core.gui.relay import SQLiteWebUIRelay
 
 
 def test_parse_images_field_single_data_url():
     image = "data:image/png;base64,AAA"
-    assert _parse_images_field(image) == [image]
+    assert SQLiteWebUIRelay.parse_images(image) == [image]
 
 
 def test_parse_images_field_json_list():
     image = '["data:image/png;base64,AAA","data:image/png;base64,BBB"]'
-    assert _parse_images_field(image) == [
+    assert SQLiteWebUIRelay.parse_images(image) == [
         "data:image/png;base64,AAA",
         "data:image/png;base64,BBB",
     ]
@@ -31,7 +25,7 @@ def test_parse_images_field_json_list():
 
 def test_parse_images_field_python_literal_list():
     image = "['data:image/png;base64,AAA','data:image/png;base64,BBB']"
-    assert _parse_images_field(image) == [
+    assert SQLiteWebUIRelay.parse_images(image) == [
         "data:image/png;base64,AAA",
         "data:image/png;base64,BBB",
     ]
@@ -39,7 +33,7 @@ def test_parse_images_field_python_literal_list():
 
 def test_parse_images_field_double_encoded_json_list():
     image = '"[\\"data:image/png;base64,AAA\\", \\"data:image/png;base64,BBB\\"]"'
-    assert _parse_images_field(image) == [
+    assert SQLiteWebUIRelay.parse_images(image) == [
         "data:image/png;base64,AAA",
         "data:image/png;base64,BBB",
     ]
@@ -83,8 +77,7 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
         "chat_graph",
     )
 
-    set_message_db_path(str(shared_db))
-    messages = _query_messages()
+    messages = SQLiteWebUIRelay(str(shared_db)).load_messages()
 
     assert len(messages) == len(task_manager.full_history)
     assert messages[-1]["content"] == "Checkpoint response"
@@ -92,9 +85,7 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
 
 def test_insert_user_message_writes_to_webui_inputs_table(tmp_path):
     shared_db = tmp_path / "shared.sqlite"
-    set_message_db_path(str(shared_db))
-
-    _insert_user_message("submitted from browser")
+    SQLiteWebUIRelay(str(shared_db)).enqueue_user_input("submitted from browser")
 
     connection = sqlite3.connect(shared_db)
     input_rows = connection.execute(
@@ -116,8 +107,7 @@ def test_query_messages_reads_explicit_webui_messages(tmp_path):
     task_manager.build_db()
     task_manager.add_webui_message_to_db({"role": "system", "content": "display now"})
 
-    set_message_db_path(str(shared_db))
-    messages = _query_messages()
+    messages = SQLiteWebUIRelay(str(shared_db)).load_messages()
 
     assert len(messages) == 1
     assert messages[0]["role"] == "system"
@@ -139,18 +129,18 @@ def test_sqlite_webui_relay_queues_user_input(tmp_path):
     assert input_rows == ("queued through relay",)
 
 
-def test_nicegui_webui_base_uses_sqlite_relay(tmp_path):
+def test_html_webui_base_uses_sqlite_relay(tmp_path):
     shared_db = tmp_path / "shared.sqlite"
-    webui = NiceGUIWebUIBase(str(shared_db), title="Custom UI")
+    webui = HTMLWebUIBase(str(shared_db), title="Custom UI")
 
     assert webui.title == "Custom UI"
     assert isinstance(webui.relay, SQLiteWebUIRelay)
     assert webui.relay.db_path == str(shared_db)
 
 
-def test_nicegui_webui_base_consumes_matching_pending_message(tmp_path):
+def test_html_webui_base_consumes_matching_pending_message(tmp_path):
     shared_db = tmp_path / "shared.sqlite"
-    webui = NiceGUIWebUIBase(str(shared_db))
+    webui = HTMLWebUIBase(str(shared_db))
     webui.pending_messages["pending-0"] = "hello"
 
     consumed = webui.consume_pending_message({"role": "user", "content": "hello"})
@@ -159,8 +149,8 @@ def test_nicegui_webui_base_consumes_matching_pending_message(tmp_path):
     assert webui.pending_messages == {}
 
 
-def test_nicegui_webui_preserves_mathjax_delimiters_for_markdown(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_preserves_mathjax_delimiters_for_markdown(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     content = (
         r"\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\]" "\n"
         r"Inline: \(e^{i\pi} + 1 = 0\)"
@@ -174,8 +164,8 @@ def test_nicegui_webui_preserves_mathjax_delimiters_for_markdown(tmp_path):
     )
 
 
-def test_nicegui_webui_keeps_multiline_display_math_in_one_markdown_text_run(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_keeps_multiline_display_math_in_one_markdown_text_run(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     content = (
         r"\[" "\n"
         r"x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}" "\n"
@@ -183,27 +173,21 @@ def test_nicegui_webui_keeps_multiline_display_math_in_one_markdown_text_run(tmp
     )
 
     preserved = webui.preserve_math_delimiters(content)
-    rendered = markdown2.markdown(preserved, extras=webui.markdown_extras)
 
     assert preserved == r"\\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\\]"
-    assert "<br" not in rendered
-    assert r"\[" in rendered
-    assert r"\]" in rendered
 
 
-def test_nicegui_webui_keeps_multiline_dollar_display_math_in_one_text_run(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_keeps_multiline_dollar_display_math_in_one_text_run(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     content = "$$\n" r"\sum_{n=0}^{\infty} x^{n}" "\n$$"
 
     preserved = webui.preserve_math_delimiters(content)
-    rendered = markdown2.markdown(preserved, extras=webui.markdown_extras)
 
     assert preserved == r"$$\sum_{n=0}^{\infty} x^{n}$$"
-    assert "<br" not in rendered
 
 
-def test_nicegui_webui_does_not_preserve_mathjax_delimiters_in_code(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_does_not_preserve_mathjax_delimiters_in_code(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     content = (
         r"Text \[x\]" "\n"
         r"`code \[x\]`" "\n"
@@ -223,8 +207,8 @@ def test_nicegui_webui_does_not_preserve_mathjax_delimiters_in_code(tmp_path):
     )
 
 
-def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_styles_include_input_and_code_block_rules(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     styles = webui.styles()
 
     assert ".eaa-input-panel" in styles
@@ -238,88 +222,17 @@ def test_nicegui_webui_styles_include_input_and_code_block_rules(tmp_path):
     assert ".eaa-approval-extracted-field" in styles
 
 
-def test_nicegui_webui_folds_long_messages_as_expandable_markdown(tmp_path, monkeypatch):
-    class FakeElement:
-        def __init__(self) -> None:
-            self.class_values: list[str] = []
-            self.props_value = ""
-            self.visible = True
+def test_html_webui_page_includes_long_message_folding_script(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
+    page = webui.page_html()
 
-        def classes(
-            self,
-            add: str | None = None,
-            *,
-            remove: str | None = None,
-            toggle: str | None = None,
-            replace: str | None = None,
-        ) -> "FakeElement":
-            if add is not None:
-                self.class_values.append(add)
-            if remove is not None:
-                self.class_values = [
-                    " ".join(
-                        class_name
-                        for class_name in classes.split()
-                        if class_name != remove
-                    )
-                    for classes in self.class_values
-                ]
-            if replace is not None:
-                self.class_values = [replace]
-            return self
-
-        def props(self, value: str) -> "FakeElement":
-            self.props_value = value
-            return self
-
-        def set_visibility(self, visible: bool) -> None:
-            self.visible = visible
-
-    class FakeUI:
-        def __init__(self) -> None:
-            self.markdown_calls: list[tuple[str, list[str]]] = []
-            self.markdown_elements: list[FakeElement] = []
-            self.html_calls: list[str] = []
-            self.buttons: list[tuple[str, object, FakeElement]] = []
-
-        def markdown(self, content: str, *, extras: list[str]) -> FakeElement:
-            element = FakeElement()
-            self.markdown_calls.append((content, extras))
-            self.markdown_elements.append(element)
-            return element
-
-        def html(self, content: str) -> FakeElement:
-            self.html_calls.append(content)
-            return FakeElement()
-
-        def button(self, text: str, *, on_click: object) -> FakeElement:
-            element = FakeElement()
-            self.buttons.append((text, on_click, element))
-            return element
-
-    fake_ui = FakeUI()
-    monkeypatch.setitem(sys.modules, "nicegui", SimpleNamespace(ui=fake_ui))
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
-    content = "\n".join(f"line {index}" for index in range(20))
-
-    webui.render_message_content("user", content)
-
-    assert fake_ui.markdown_calls == [(content, list(webui.markdown_extras))]
-    assert fake_ui.html_calls == []
-    assert fake_ui.buttons[0][0] == "Show more"
-    assert fake_ui.markdown_elements[0].class_values == [
-        "eaa-markdown eaa-markdown-folded"
-    ]
-
-    _, on_click, button = fake_ui.buttons[0]
-    on_click()
-
-    assert fake_ui.markdown_elements[0].class_values == ["eaa-markdown"]
-    assert button.visible is False
+    assert "eaa-markdown-folded" in page
+    assert "Show more" in page
+    assert "lines.length > 10" in page
 
 
-def test_nicegui_webui_formats_tool_calls_from_payload(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_formats_tool_calls_from_payload(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
 
     tool_calls = webui.format_message_tool_calls(
         {
@@ -332,8 +245,8 @@ def test_nicegui_webui_formats_tool_calls_from_payload(tmp_path):
     assert tool_calls == 'call_1: acquire_image\nArguments: {"x": 1}'
 
 
-def test_nicegui_webui_ignores_missing_tool_calls(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_ignores_missing_tool_calls(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
 
     tool_calls = webui.format_message_tool_calls(
         {
@@ -345,8 +258,8 @@ def test_nicegui_webui_ignores_missing_tool_calls(tmp_path):
     assert tool_calls == ""
 
 
-def test_nicegui_webui_formats_approval_arguments_with_extracted_code(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_formats_approval_arguments_with_extracted_code(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     prompt = (
         "Tool 'python' requires approval before execution.\n"
         'Arguments: {"code": "print(1)\\nprint(2)", "timeout": 5}\n'
@@ -364,8 +277,8 @@ def test_nicegui_webui_formats_approval_arguments_with_extracted_code(tmp_path):
     ]
 
 
-def test_nicegui_webui_formats_nested_approval_content_fields(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_formats_nested_approval_content_fields(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     prompt = (
         "Tool 'write_file' requires approval before execution.\n"
         'Arguments: {"file_path": "a.py", "payload": {"content": "a\\nb"}}\n'
@@ -381,8 +294,8 @@ def test_nicegui_webui_formats_nested_approval_content_fields(tmp_path):
     ]
 
 
-def test_nicegui_webui_returns_none_for_unparseable_approval_arguments(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_returns_none_for_unparseable_approval_arguments(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     prompt = (
         "Tool 'python' requires approval before execution.\n"
         "Arguments: not-json\n"
@@ -392,8 +305,8 @@ def test_nicegui_webui_returns_none_for_unparseable_approval_arguments(tmp_path)
     assert webui.format_approval_message(prompt) is None
 
 
-def test_nicegui_webui_image_html_uses_lazy_loading(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
+def test_html_webui_image_html_uses_lazy_loading(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     html = webui.image_html("/tmp/image.png?a=1&b=2", "example-image")
 
     assert 'loading="lazy"' in html
@@ -402,9 +315,9 @@ def test_nicegui_webui_image_html_uses_lazy_loading(tmp_path):
     assert "&amp;" in html
 
 
-def test_nicegui_webui_keyboard_shortcuts_script_is_bound_to_textarea(tmp_path):
-    webui = NiceGUIWebUIBase(str(tmp_path / "shared.sqlite"))
-    script = webui.keyboard_shortcuts_script()
+def test_html_webui_script_binds_keyboard_shortcuts_to_textarea(tmp_path):
+    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
+    script = webui.script()
 
     assert "keydown" in script
     assert "event.shiftKey" in script
@@ -423,7 +336,7 @@ def test_sqlite_webui_relay_image_response_sets_cache_headers(tmp_path):
     assert response.headers["last-modified"]
 
 
-def test_nicegui_webui_parser_reads_launch_arguments():
+def test_html_webui_parser_reads_launch_arguments():
     parser = build_parser()
 
     args = parser.parse_args(
@@ -450,7 +363,7 @@ def test_nicegui_webui_parser_reads_launch_arguments():
     assert args.poll_interval == 0.5
 
 
-def test_launch_nicegui_webui_subprocess_returns_popen(tmp_path, monkeypatch):
+def test_launch_html_webui_subprocess_returns_popen(tmp_path, monkeypatch):
     shared_db = tmp_path / "shared.sqlite"
     popen_calls = []
 
@@ -460,9 +373,9 @@ def test_launch_nicegui_webui_subprocess_returns_popen(tmp_path, monkeypatch):
             self.kwargs = kwargs
             popen_calls.append((command, kwargs))
 
-    monkeypatch.setattr("eaa_core.gui.nicegui.subprocess.Popen", FakePopen)
+    monkeypatch.setattr("eaa_core.gui.html.subprocess.Popen", FakePopen)
 
-    process = launch_nicegui_webui_subprocess(
+    process = launch_html_webui_subprocess(
         str(shared_db),
         host="0.0.0.0",
         port=9000,
@@ -480,7 +393,7 @@ def test_launch_nicegui_webui_subprocess_returns_popen(tmp_path, monkeypatch):
             [
                 "/usr/bin/python",
                 "-m",
-                "eaa_core.gui.nicegui",
+                "eaa_core.gui.html",
                 str(shared_db),
                 "--host",
                 "0.0.0.0",

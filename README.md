@@ -16,7 +16,7 @@ as a workspace with multiple installable packages, currently `eaa-core` and
   server/client helpers
 - Long-term memory: optional chat-memory layer configured through
   `MemoryManagerConfig`
-- WebUI: NiceGUI frontend, connected to the agent through a shared
+- WebUI: HTML/JavaScript frontend, connected to the agent through a shared
   SQLite database
 
 ## Installation
@@ -94,7 +94,7 @@ For a workflow-oriented manager, see `examples/roi_search.py`.
 - `SerialToolExecutor` runs tool calls one at a time. This is intentional:
   many experiment tools are stateful, should not be driven concurrently, or not thread-safe.
 - `MemoryManager` adds optional long-term memory retrieval/saving on chat turns.
-- The WebUI is a separate NiceGUI process. It communicates with the agent
+- The WebUI is a separate FastAPI process. It communicates with the agent
   through the same SQLite database used for WebUI relay state and checkpointing.
 
 ## Built-In Graphs and Workflows
@@ -117,9 +117,9 @@ Set `use_webui=True` on the task manager and give it a `session_db_path`. Then
 launch the standalone WebUI process against the same SQLite file:
 
 ```python
-from eaa_core.gui.nicegui import run_nicegui_webui
+from eaa_core.gui.html import run_html_webui
 
-run_nicegui_webui("session.sqlite", host="127.0.0.1", port=8008)
+run_html_webui("session.sqlite", host="127.0.0.1", port=8008)
 ```
 
 You can also launch the WebUI from the same run script as the task manager. The
@@ -127,7 +127,7 @@ subprocess launcher returns immediately, so the main agent workflow can continue
 in the parent process:
 
 ```python
-from eaa_core.gui.nicegui import launch_nicegui_webui_subprocess
+from eaa_core.gui.html import launch_html_webui_subprocess
 
 session_db_path = "session.sqlite"
 
@@ -137,7 +137,7 @@ task_manager = BaseTaskManager(
     use_webui=True,
 )
 
-webui_process = launch_nicegui_webui_subprocess(
+webui_process = launch_html_webui_subprocess(
     session_db_path,
     host="127.0.0.1",
     port=8008,
