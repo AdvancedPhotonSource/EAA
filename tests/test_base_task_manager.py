@@ -410,6 +410,102 @@ def test_interruption_resume_adds_fake_tool_response_for_unmatched_tool_call(mon
     assert "Please call the tool again" in task_manager.context[1]["content"]
 
 
+def test_checkpointed_tool_interruption_skips_execute_tools_on_resume(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    assistant_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "acquire_image",
+                    "arguments": "{}",
+                },
+            }
+        ],
+    }
+    checkpoint_state = TaskManagerState(
+        messages=[assistant_message],
+        full_history=[assistant_message],
+    )
+    checkpoint_config = {"configurable": {"thread_id": "task_graph"}}
+
+    class DummyGraph:
+        def __init__(self):
+            self.invoke_count = 0
+            self.updated_values = None
+            self.updated_as_node = None
+
+        def get_state(self, config):
+            return SimpleNamespace(
+                created_at="2026-06-04T00:00:00Z",
+                values=checkpoint_state.model_dump(),
+                next=("execute_tools",),
+            )
+
+        def update_state(self, config, values, **kwargs):
+            self.updated_values = values
+            self.updated_as_node = kwargs.get("as_node")
+
+        def invoke(self, graph_input, **kwargs):
+            self.invoke_count += 1
+            if self.invoke_count == 1:
+                raise KeyboardInterrupt()
+            return self.updated_values
+
+    graph = DummyGraph()
+
+    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume")
+    monkeypatch.setattr("eaa_core.task_manager.base.print_message", lambda *args, **kwargs: None)
+
+    result = task_manager.invoke_graph_with_interruption_recovery(
+        graph=graph,
+        graph_input=checkpoint_state,
+        graph_kwargs={"config": checkpoint_config},
+        graph_name="task_graph",
+        state_model=TaskManagerState,
+        interruption_message="Keyboard interrupt detected.",
+    )
+
+    assert result.command == "completed"
+    assert graph.invoke_count == 2
+    assert graph.updated_as_node == "execute_tools"
+    assert [message["role"] for message in graph.updated_values["messages"]] == [
+        "assistant",
+        "tool",
+        "system",
+        "user",
+    ]
+    assert graph.updated_values["messages"][1]["tool_call_id"] == "call_1"
+    assert "interrupted before it completed" in graph.updated_values["messages"][1]["content"]
+
+
+def test_non_tool_checkpointed_interruption_does_not_force_resume_node():
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    checkpoint_state = TaskManagerState(
+        messages=[{"role": "user", "content": "seed"}],
+        full_history=[{"role": "user", "content": "seed"}],
+    )
+    checkpoint_config = {"configurable": {"thread_id": "task_graph"}}
+
+    class DummyGraph:
+        def get_state(self, config):
+            return SimpleNamespace(
+                created_at="2026-06-04T00:00:00Z",
+                values=checkpoint_state.model_dump(),
+                next=("call_model",),
+            )
+
+    resume_node = task_manager.get_interrupted_checkpoint_resume_node(
+        graph=DummyGraph(),
+        checkpoint_config=checkpoint_config,
+    )
+
+    assert resume_node is None
+
+
 def test_run_feedback_loop_keyboard_interrupt_chat_command_enters_chat(monkeypatch):
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
     task_manager.model = object()

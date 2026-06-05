@@ -612,6 +612,20 @@ class BaseTaskManager:
             self.active_state.messages[original_context_length:]
         )
 
+    def get_interrupted_checkpoint_resume_node(
+        self,
+        graph: Any,
+        checkpoint_config: Optional[dict[str, Any]],
+    ) -> Optional[str]:
+        """Return the graph node to mark as completed after interruption recovery."""
+        if graph is None or checkpoint_config is None:
+            return None
+        snapshot = graph.get_state(checkpoint_config)
+        next_nodes = getattr(snapshot, "next", ()) or ()
+        if "execute_tools" in next_nodes:
+            return "execute_tools"
+        return None
+
     def invoke_graph_with_interruption_recovery(
         self,
         graph: Any,
@@ -661,6 +675,10 @@ class BaseTaskManager:
                     graph_name=graph_name,
                     state_model=state_model,
                 )
+                resume_as_node = self.get_interrupted_checkpoint_resume_node(
+                    graph=graph,
+                    checkpoint_config=checkpoint_config,
+                )
                 command = self.append_interruption_resume_input(
                     interruption_message,
                     checkpoint_recovered=checkpoint_recovered,
@@ -670,9 +688,13 @@ class BaseTaskManager:
                 if checkpoint_config is None:
                     active_input = self.active_state
                     continue
+                update_kwargs = {}
+                if resume_as_node is not None:
+                    update_kwargs["as_node"] = resume_as_node
                 graph.update_state(
                     checkpoint_config,
                     self.active_state.model_dump(),
+                    **update_kwargs,
                 )
                 active_input = None
 
