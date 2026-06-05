@@ -104,6 +104,20 @@ access to raw image data stored on disk in formats such as NPY, TIFF, or HDF5.
 The acquisition tool might return paths to these raw data files, but this is
 not guaranteed.
 
+## Tips
+
+### Visualization
+
+Use your Python coding tool to create visualizations that help you understand
+the search state. For example, if you have access to the raw image data,
+you can generate a script that creates a large image buffer, and place the
+acquired images into that buffer at their respective locations, stitching
+them together into a panorama of the searched area, and update the image
+after each acquisition. This can help you see which areas have been covered and
+identify promising regions to focus on in subsequent search passes.
+See `update_and_view_panorama.py` in the skill directory for an example of how 
+to do this.
+
 ## Finalization
 
 When the feature begins to appear in the image, refine the search more
