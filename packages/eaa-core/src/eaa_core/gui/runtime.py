@@ -1,0 +1,354 @@
+"""Agent-side WebUI runtime controller and FastAPI adapter."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import os
+import queue
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime
+from email.utils import formatdate
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+from eaa_core.task_manager.skills import skill_catalog_to_dicts
+
+
+@dataclass
+class RuntimeEvent:
+    """One WebUI runtime event."""
+
+    type: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+class WebUIRuntimeController:
+    """Thread-safe runtime state and command bus for one task manager."""
+
+    def __init__(
+        self,
+        task_manager: Any,
+        *,
+        upload_dir: str = ".tmp",
+    ) -> None:
+        self.task_manager = task_manager
+        self.upload_dir = upload_dir
+        self.input_queue: queue.Queue[str] = queue.Queue()
+        self.approval_queue: queue.Queue[bool] = queue.Queue()
+        self.interrupt_event = threading.Event()
+        self.lock = threading.Lock()
+        self.subscribers: set[queue.Queue[RuntimeEvent]] = set()
+        self.messages: list[dict[str, Any]] = []
+        self.message_event_counter = 0
+        self.status = "idle"
+        self.input_requested = False
+        self.pending_approval: dict[str, Any] | None = None
+
+    def build(self) -> None:
+        """Initialize runtime state."""
+
+    def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        """Publish one event to connected browser streams.
+
+        Supported event types are:
+
+        - ``message.created``: a live display message was added.
+          Payload: ``{"message": <message dict>}``.
+        - ``status.changed``: runtime status or input/interrupt flags changed.
+          Payload: ``{"status": str, "input_requested": bool,
+          "interrupt_requested": bool}``.
+        - ``input.requested``: the agent is waiting for user input.
+          Payload: ``{"prompt": str}``.
+        - ``approval.requested``: a tool call is waiting for approval.
+          Payload: ``{"tool_name": str, "arguments": dict}``.
+        - ``interrupt.requested``: cooperative interruption was requested.
+          Payload matches ``status.changed``.
+        - ``interrupt.cleared``: the pending interrupt flag was cleared.
+          Payload matches ``status.changed``.
+
+        Planned but not yet emitted event types are ``tool.started``,
+        ``tool.finished``, and ``ui.tab.opened``.
+        """
+        event = RuntimeEvent(event_type, payload or {})
+        with self.lock:
+            subscribers = list(self.subscribers)
+        for subscriber in subscribers:
+            subscriber.put(event)
+
+    def subscribe(self) -> queue.Queue[RuntimeEvent]:
+        """Register and return an event queue for one SSE client."""
+        subscriber: queue.Queue[RuntimeEvent] = queue.Queue()
+        with self.lock:
+            self.subscribers.add(subscriber)
+        return subscriber
+
+    def unsubscribe(self, subscriber: queue.Queue[RuntimeEvent]) -> None:
+        """Remove an SSE client event queue."""
+        with self.lock:
+            self.subscribers.discard(subscriber)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return current server-owned WebUI state."""
+        with self.lock:
+            messages = list(self.messages)
+            status = self.status
+            input_requested = self.input_requested
+            interrupt_requested = self.interrupt_event.is_set()
+            pending_approval = self.pending_approval
+        return {
+            "messages": messages,
+            "status": status,
+            "input_requested": input_requested,
+            "interrupt_requested": interrupt_requested,
+            "pending_approval": pending_approval,
+        }
+
+    def publish_message(self, message: dict[str, Any]) -> None:
+        """Publish one message to live WebUI clients."""
+        payload = dict(message)
+        with self.lock:
+            if "id" not in payload:
+                self.message_event_counter += 1
+                payload["id"] = f"runtime-{self.message_event_counter}"
+            self.messages.append(payload)
+        self.publish("message.created", {"message": payload})
+
+    def status_payload(self) -> dict[str, Any]:
+        """Return the current runtime status payload."""
+        with self.lock:
+            return {
+                "status": self.status,
+                "input_requested": self.input_requested,
+                "interrupt_requested": self.interrupt_event.is_set(),
+            }
+
+    def set_status(self, status: str, *, input_requested: bool | None = None) -> None:
+        """Update session status and publish it."""
+        with self.lock:
+            self.status = status
+            if input_requested is not None:
+                self.input_requested = input_requested
+        self.publish("status.changed", self.status_payload())
+
+    def request_input(self, prompt: str | None = None) -> str:
+        """Block until the WebUI submits ordered user input."""
+        with self.lock:
+            previous_status = self.status
+        self.set_status("waiting_for_input", input_requested=True)
+        if prompt:
+            self.publish("input.requested", {"prompt": prompt})
+        value = self.input_queue.get()
+        self.set_status(previous_status, input_requested=False)
+        return value
+
+    def submit_input(self, content: str) -> None:
+        """Queue user input from the WebUI."""
+        self.input_queue.put(content)
+
+    def request_interrupt(self) -> None:
+        """Request cooperative interruption."""
+        self.interrupt_event.set()
+        payload = self.status_payload()
+        self.publish("interrupt.requested", payload)
+        self.publish("status.changed", payload)
+
+    def clear_interrupt(self) -> None:
+        """Clear the cooperative interrupt flag."""
+        self.interrupt_event.clear()
+        payload = self.status_payload()
+        self.publish("interrupt.cleared", payload)
+        self.publish("status.changed", payload)
+
+    def check_interrupt(self) -> None:
+        """Raise ``KeyboardInterrupt`` if a WebUI interrupt is pending."""
+        if self.interrupt_event.is_set():
+            self.clear_interrupt()
+            raise KeyboardInterrupt
+
+    def request_approval(self, tool_name: str, tool_kwargs: dict[str, Any]) -> bool:
+        """Publish an approval request and wait for an ordered response."""
+        with self.lock:
+            previous_status = self.status
+            self.pending_approval = {"tool_name": tool_name, "arguments": tool_kwargs}
+            pending_approval = dict(self.pending_approval)
+        self.publish("approval.requested", pending_approval)
+        self.set_status("waiting_for_approval", input_requested=True)
+        approved = self.approval_queue.get()
+        with self.lock:
+            self.pending_approval = None
+        self.set_status(previous_status, input_requested=False)
+        return approved
+
+    def submit_approval(self, approved: bool) -> None:
+        """Queue a tool approval decision."""
+        self.approval_queue.put(approved)
+
+    def ensure_upload_dir(self) -> str:
+        """Ensure and return the configured upload directory."""
+        os.makedirs(self.upload_dir, exist_ok=True)
+        return self.upload_dir
+
+    def save_base64_image(self, image_data: str) -> str:
+        """Save a browser-submitted base64 image."""
+        if image_data.startswith("data:image"):
+            image_data = image_data.split(",", 1)[1]
+        image_bytes = base64.b64decode(image_data)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        path = os.path.join(self.ensure_upload_dir(), f"pasted_image_{timestamp}.png")
+        with open(path, "wb") as image_file:
+            image_file.write(image_bytes)
+        return path
+
+    @staticmethod
+    def guess_mime_type_from_path(path: str) -> str:
+        """Return a basic image MIME type."""
+        lower = path.lower()
+        if lower.endswith(".png"):
+            return "image/png"
+        if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+            return "image/jpeg"
+        if lower.endswith(".gif"):
+            return "image/gif"
+        if lower.endswith(".webp"):
+            return "image/webp"
+        return "application/octet-stream"
+
+    def image_response(self, path: str = Query(...)) -> FileResponse:
+        """Build an image file response."""
+        normalized_path = os.path.abspath(path)
+        if not os.path.exists(normalized_path):
+            raise HTTPException(status_code=404, detail=f"Image not found: {normalized_path}")
+        stat_result = os.stat(normalized_path)
+        headers = {
+            "Cache-Control": "public, max-age=3600",
+            "ETag": f'"{stat_result.st_mtime_ns:x}-{stat_result.st_size:x}"',
+            "Last-Modified": formatdate(stat_result.st_mtime, usegmt=True),
+        }
+        return FileResponse(
+            normalized_path,
+            media_type=self.guess_mime_type_from_path(normalized_path),
+            headers=headers,
+        )
+
+    def upload_image_response(self, payload: dict[str, Any]) -> JSONResponse:
+        """Build an upload response."""
+        image_data = payload.get("image_data", "")
+        if not image_data:
+            return JSONResponse({"error": "No image data provided"}, status_code=400)
+        try:
+            return JSONResponse({"file_path": self.save_base64_image(str(image_data))}, status_code=201)
+        except Exception as exc:
+            return JSONResponse({"error": f"Invalid image data: {exc}"}, status_code=400)
+
+
+class WebUIRuntimeServer:
+    """FastAPI runtime server owned by the task-manager process."""
+
+    def __init__(
+        self,
+        controller: WebUIRuntimeController,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 8010,
+    ) -> None:
+        self.controller = controller
+        self.host = host
+        self.port = port
+        self._server: Any | None = None
+        self._thread: threading.Thread | None = None
+
+    def build_app(self) -> FastAPI:
+        """Build the FastAPI runtime API."""
+        app = FastAPI(title="EAA WebUI Runtime")
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        @app.get("/api/state")
+        async def state() -> dict[str, Any]:
+            return self.controller.snapshot()
+
+        @app.get("/api/events")
+        async def events() -> StreamingResponse:
+            subscriber = self.controller.subscribe()
+
+            async def stream() -> Any:
+                try:
+                    while True:
+                        event = await asyncio.to_thread(subscriber.get)
+                        payload = json.dumps(event.payload)
+                        yield f"event: {event.type}\ndata: {payload}\n\n"
+                finally:
+                    self.controller.unsubscribe(subscriber)
+
+            return StreamingResponse(stream(), media_type="text/event-stream")
+
+        @app.post("/api/input")
+        async def submit_input(payload: dict[str, Any]) -> JSONResponse:
+            content = str(payload.get("content") or "").strip()
+            if not content:
+                return JSONResponse({"error": "No content provided"}, status_code=400)
+            self.controller.submit_input(content)
+            return JSONResponse({"ok": True}, status_code=201)
+
+        @app.post("/api/interrupt")
+        async def interrupt() -> dict[str, bool]:
+            self.controller.request_interrupt()
+            return {"ok": True}
+
+        @app.post("/api/approval")
+        async def approval(payload: dict[str, Any]) -> dict[str, bool]:
+            self.controller.submit_approval(bool(payload.get("approved")))
+            return {"ok": True}
+
+        @app.get("/api/skill-catalog")
+        async def skill_catalog() -> dict[str, list[dict[str, str]]]:
+            return {
+                "skills": skill_catalog_to_dicts(
+                    self.controller.task_manager.skill_catalog
+                )
+            }
+
+        @app.get("/api/image")
+        def image(path: str) -> Any:
+            return self.controller.image_response(path=path)
+
+        @app.post("/api/upload-image")
+        async def upload_image(payload: dict[str, Any]) -> Any:
+            return self.controller.upload_image_response(payload)
+
+        return app
+
+    def start(self) -> None:
+        """Start the runtime API in a background thread."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+        import uvicorn
+
+        config = uvicorn.Config(
+            self.build_app(),
+            host=self.host,
+            port=self.port,
+            log_level="info",
+        )
+        self._server = uvicorn.Server(config)
+        self._thread = threading.Thread(target=self._server.run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the runtime API if it is running."""
+        if self._server is not None:
+            self._server.should_exit = True
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self._server = None
+        self._thread = None

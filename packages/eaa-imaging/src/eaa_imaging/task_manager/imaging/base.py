@@ -20,7 +20,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         llm_config: LLMConfig = None,
         memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (), 
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         *args, **kwargs
     ) -> None:
@@ -35,7 +35,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             Memory configuration forwarded to the agent.
         tools : list[BaseTool]
             A list of tools provided to the agent.
-        session_db_path : Optional[str]
+        checkpoint_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -47,7 +47,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
             llm_config=llm_config,
             memory_config=memory_config,
             tools=tools, 
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args, **kwargs
         )

@@ -101,7 +101,7 @@ class XANESAdaptiveSamplingTaskManager(BayesianOptimizationTaskManager):
         initial_points: Optional[torch.Tensor] = None,
         n_initial_points: int = 10,
         stopping_criteria: Optional[list[BayesianOptimizationStoppingCriterion]] = None,
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         *args,
         **kwargs,
@@ -135,7 +135,7 @@ class XANESAdaptiveSamplingTaskManager(BayesianOptimizationTaskManager):
         stopping_criteria : list[BayesianOptimizationStoppingCriterion], optional
             Additional stopping criteria checked after initialization and after
             each adaptive update.
-        session_db_path : str, optional
+        checkpoint_db_path : str, optional
             Optional SQLite path used to persist the shared session state.
         build : bool, optional
             Whether to build the internal task-manager state during
@@ -161,7 +161,7 @@ class XANESAdaptiveSamplingTaskManager(BayesianOptimizationTaskManager):
             objective_function=measurement_tool,
             objective_function_method="measure",
             stopping_criteria=stopping_criteria,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args,
             **kwargs,

@@ -57,7 +57,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         optimization_tool: Optional[BaseSequentialOptimizationTool] = None,
         initial_parameters: dict[str, float] = None,
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         line_scan_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         line_scan_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
@@ -113,7 +113,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             2 tuples, where the first tuple gives the lower bounds and the
             second tuple gives the upper bounds. The order of the parameters
             should match the order of the initial parameters.
-        session_db_path : Optional[str], optional
+        checkpoint_db_path : Optional[str], optional
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -242,7 +242,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             param_setting_tool=param_setting_tool,
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args, **kwargs
         )
@@ -667,7 +667,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             llm_config=self.llm_config,
             memory_config=self.memory_config,
             tools=[self.acquisition_tool],
-            session_db_path=None,
+            checkpoint_db_path=None,
             use_coding_tools=False,
             build=True,
         )

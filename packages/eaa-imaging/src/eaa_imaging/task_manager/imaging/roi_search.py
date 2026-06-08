@@ -90,7 +90,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (),
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         embed_intermediate_images: bool = False,
         *args,
@@ -110,7 +110,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             Optional registration tool available during ROI search.
         additional_tools : list[BaseTool], optional
             Additional tools to register alongside the imaging tools.
-        session_db_path : str, optional
+        checkpoint_db_path : str, optional
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
@@ -132,7 +132,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             image_acquisition_tool=image_acquisition_tool,
             image_registration_tool=image_registration_tool,
             additional_tools=additional_tools,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             args=args,
             kwargs=kwargs,
@@ -237,7 +237,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         ----------
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and updates instead of
-            ``self.session_db_path``.
+            ``self.checkpoint_db_path``.
         """
         self.prerun_check()
         self.run_feedback_loop_from_checkpoint(checkpoint_db_path=checkpoint_db_path)
@@ -253,7 +253,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (),
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         embed_intermediate_images: bool = False,
         *args,
@@ -273,7 +273,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             Optional registration tool available during final centering.
         additional_tools : list[BaseTool], optional
             Additional tools to register alongside the imaging tools.
-        session_db_path : str, optional
+        checkpoint_db_path : str, optional
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
@@ -295,7 +295,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             image_acquisition_tool=image_acquisition_tool,
             image_registration_tool=image_registration_tool,
             additional_tools=additional_tools,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             args=args,
             kwargs=kwargs,
@@ -398,7 +398,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
 
         graph = self.task_graph
         graph_kwargs: dict[str, Any] = {}
-        if self.session_db_path is not None:
+        if self.checkpoint_db_path is not None:
             graph, checkpoint_config, _ = self.get_checkpointed_graph(
                 "task_graph",
                 load_state=False,
@@ -452,7 +452,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         ----------
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and updates instead of
-            ``self.session_db_path``.
+            ``self.checkpoint_db_path``.
         """
         self.prerun_check()
         graph, checkpoint_config, _ = self.get_checkpointed_graph(

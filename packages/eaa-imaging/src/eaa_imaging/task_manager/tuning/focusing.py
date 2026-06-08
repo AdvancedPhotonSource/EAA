@@ -161,7 +161,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         parameter_ranges: list[tuple[float, ...], tuple[float, ...]] = None,
         use_feature_tracking_subtask: bool = False,
         feature_tracking_kwargs: Optional[dict] = None,
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         *args, **kwargs
     ):
@@ -225,7 +225,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
 
             Initial positions should not be included in the dictionary because
             they will be determined by the logic.
-        session_db_path : Optional[str], optional
+        checkpoint_db_path : Optional[str], optional
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -257,7 +257,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             additional_tools=[acquisition_tool, *additional_tools],
             initial_parameters=initial_parameters,
             parameter_ranges=parameter_ranges,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args, **kwargs
         )
@@ -520,7 +520,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             memory_config=self.memory_config,
             image_acquisition_tool=copy.deepcopy(self.acquisition_tool),
             image_registration_tool=copy.deepcopy(self.image_registration_tool),
-            session_db_path=self.session_db_path,
+            checkpoint_db_path=self.checkpoint_db_path,
         )
         
         try:
@@ -766,7 +766,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         ----------
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and updates instead of
-            ``self.session_db_path``.
+            ``self.checkpoint_db_path``.
         use_registration_in_workflow : Optional[bool], optional
             Override for whether registration follow-up should be routed
             through the dedicated node.

@@ -22,7 +22,7 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
         llm_config: LLMConfig = None,
         memory_config: Optional[MemoryManagerConfig] = None,
         image_acquisition_tool: AcquireImage = None,
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         image_acquisition_tool_x_coordinate_args: Tuple[str, ...] = ("x_center",),
         image_acquisition_tool_y_coordinate_args: Tuple[str, ...] = ("y_center",),
@@ -39,7 +39,7 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
             Memory configuration forwarded to the agent.
         image_acquisition_tool : AcquireImage
             The tool to use to acquire images.
-        session_db_path : Optional[str]
+        checkpoint_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -67,7 +67,7 @@ class AnalyticalFeatureTrackingTaskManager(ImagingBaseTaskManager):
             llm_config=llm_config,
             memory_config=memory_config,
             tools=[], 
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args, **kwargs
         )

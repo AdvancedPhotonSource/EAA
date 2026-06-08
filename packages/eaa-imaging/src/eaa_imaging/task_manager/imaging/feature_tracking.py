@@ -19,7 +19,7 @@ def initialize_feature_tracking_task_manager(
     image_acquisition_tool: AcquireImage = None,
     image_registration_tool: ImageRegistration = None,
     additional_tools: list[BaseTool] = (),
-    session_db_path: Optional[str] = "session.sqlite",
+    checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
     build: bool = True,
     args: tuple = (),
     kwargs: Optional[dict] = None,
@@ -40,7 +40,7 @@ def initialize_feature_tracking_task_manager(
         Optional registration tool used by the workflow.
     additional_tools : list[BaseTool], optional
         Additional tools to register alongside the imaging tools.
-    session_db_path : str, optional
+    checkpoint_db_path : str, optional
         SQLite path used for transcript persistence.
     build : bool, optional
         Whether to build the task manager immediately.
@@ -67,7 +67,7 @@ def initialize_feature_tracking_task_manager(
         llm_config=llm_config,
         memory_config=memory_config,
         tools=tools,
-        session_db_path=session_db_path,
+        checkpoint_db_path=checkpoint_db_path,
         build=build,
         *(args or ()),
         **(kwargs or {}),
@@ -83,7 +83,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         image_acquisition_tool: AcquireImage = None,
         image_registration_tool: ImageRegistration = None,
         additional_tools: list[BaseTool] = (),
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         *args,
         **kwargs,
@@ -102,7 +102,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             Optional registration tool used during feature tracking.
         additional_tools : list[BaseTool], optional
             Additional tools to register alongside the imaging tools.
-        session_db_path : str, optional
+        checkpoint_db_path : str, optional
             SQLite path used for transcript persistence.
         build : bool, optional
             Whether to build the task manager immediately.
@@ -118,7 +118,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             image_acquisition_tool=image_acquisition_tool,
             image_registration_tool=image_registration_tool,
             additional_tools=additional_tools,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             args=args,
             kwargs=kwargs,
@@ -220,7 +220,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         ----------
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and updates instead of
-            ``self.session_db_path``.
+            ``self.checkpoint_db_path``.
         """
         self.prerun_check()
         self.run_feedback_loop_from_checkpoint(checkpoint_db_path=checkpoint_db_path)

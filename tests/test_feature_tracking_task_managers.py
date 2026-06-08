@@ -26,7 +26,7 @@ def test_roi_search_task_manager_run_uses_feedback_loop(monkeypatch):
         build=False,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     captured = {}
 
@@ -53,7 +53,7 @@ def test_roi_search_task_manager_can_embed_intermediate_images(monkeypatch):
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         memory_config=MemoryManagerConfig(enabled=False),
-        session_db_path=None,
+        checkpoint_db_path=None,
         embed_intermediate_images=True,
     )
     captured = {}
@@ -81,7 +81,7 @@ def test_roi_search_task_manager_requires_memory_config_for_intermediate_embeddi
             build=False,
             use_coding_tools=False,
             image_acquisition_tool=DummyAcquireImageTool(),
-            session_db_path=None,
+            checkpoint_db_path=None,
             embed_intermediate_images=True,
         )
 
@@ -91,7 +91,7 @@ def test_multi_agent_roi_search_uses_dedicated_graph_then_feedback_loop(monkeypa
         build=True,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     task_manager.model = object()
 
@@ -156,7 +156,7 @@ def test_multi_agent_roi_search_can_embed_intermediate_centering_images(monkeypa
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         memory_config=MemoryManagerConfig(enabled=False),
-        session_db_path=None,
+        checkpoint_db_path=None,
         embed_intermediate_images=True,
     )
     task_manager.model = object()
@@ -217,7 +217,7 @@ def test_multi_agent_roi_search_requires_memory_config_for_intermediate_embeddin
             build=False,
             use_coding_tools=False,
             image_acquisition_tool=DummyAcquireImageTool(),
-            session_db_path=None,
+            checkpoint_db_path=None,
             embed_intermediate_images=True,
         )
 
@@ -227,7 +227,7 @@ def test_multi_agent_roi_search_repeats_until_feature_present(monkeypatch):
         build=True,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     task_manager.model = object()
 
@@ -303,7 +303,7 @@ def test_multi_agent_roi_search_reprompts_position_proposer_on_bad_response(monk
         build=True,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     task_manager.model = object()
 
@@ -358,7 +358,7 @@ def test_multi_agent_roi_search_reprompts_image_checker_on_invalid_json(monkeypa
         build=True,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     task_manager.model = object()
 
@@ -416,7 +416,7 @@ def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
         build=False,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     captured = {}
 
@@ -446,7 +446,7 @@ def test_multi_agent_roi_search_keyboard_interrupt_resumes_same_graph(monkeypatc
         build=False,
         use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     invoke_calls = {"count": 0}
 

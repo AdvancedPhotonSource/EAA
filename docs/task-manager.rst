@@ -19,7 +19,7 @@ Construction options that matter most in practice are:
 - ``memory_config``
 - ``tools``
 - ``skill_dirs``
-- ``session_db_path``
+- ``checkpoint_db_path``
 - ``use_webui``
 - ``use_coding_tools``
 - ``run_codes_in_sandbox``
@@ -92,7 +92,7 @@ it and implement ``run()`` or ``run_from_checkpoint()`` around it.
            )
            graph = self.task_graph
            graph_kwargs = {}
-           if self.session_db_path is not None:
+           if self.checkpoint_db_path is not None:
                graph, checkpoint_config, _ = self.get_checkpointed_graph(
                    "task_graph",
                    load_state=False,
@@ -112,13 +112,13 @@ Custom workflow without a graph
 
 Several analytical task managers in the repository do not rely on a custom
 LangGraph workflow. Instead, they orchestrate the experiment directly in Python
-and keep the shared transcript/WebUI updated through task-manager helpers.
+and keep the agent-owned transcript updated through task-manager helpers.
 
 The relevant helpers are:
 
 - ``record_system_message()`` for narrative progress updates
 - ``update_message_history()`` for explicit transcript mutations
-- ``add_webui_message_to_db()`` for display-only WebUI messages
+- ``add_webui_message_to_db()`` for display-only transcript messages
 - ``run_conversation()`` if control should fall back to free-form chat after
   the analytical workflow finishes
 
@@ -130,15 +130,15 @@ end.
 Checkpointing and resume
 ------------------------
 
-Checkpointing uses the same SQLite database referenced by ``session_db_path`` by
+Checkpointing uses the same SQLite database referenced by ``checkpoint_db_path`` by
 default. The ``run_*_from_checkpoint()`` methods also accept a
 ``checkpoint_db_path`` override when you need to resume from a different SQLite
 file. The checkpoint database can hold:
 
 - LangGraph checkpoints
-- explicit WebUI display messages
-- queued WebUI input
-- WebUI status flags
+
+WebUI display messages live in ``transcript_db_path``. Browser input and status
+live in the task-manager-owned runtime controller.
 
 The base task manager exposes three resume paths:
 
@@ -150,5 +150,5 @@ Important details:
 
 - ``prune_checkpoints=True`` keeps only the newest checkpoint per graph thread
 - chat, feedback loop, and task graph each get their own checkpoint thread id
-- the WebUI can read the transcript from explicit WebUI messages or, if needed,
-  directly from the latest checkpointed state
+- the WebUI reads transcript messages from ``transcript_db_path`` through the
+  agent runtime API

@@ -58,7 +58,7 @@ class SubagentTool(BaseTool):
             memory_config=self.task_manager.memory_config,
             tools=inherited_tools,
             skill_dirs=self.task_manager.skill_dirs,
-            session_db_path=self.task_manager.session_db_path,
+            checkpoint_db_path=self.task_manager.checkpoint_db_path,
             use_webui=self.task_manager.use_webui,
             use_coding_tools=self.task_manager.use_coding_tools,
             run_codes_in_sandbox=self.task_manager.run_codes_in_sandbox,

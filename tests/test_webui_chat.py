@@ -1,23 +1,28 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from fastapi.testclient import TestClient
+from fastapi.responses import Response
 
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState
+from eaa_core.task_manager.persistence import SQLiteTranscriptStore, parse_persisted_images
 from eaa_core.gui.html import (
     HTMLWebUIBase,
     build_parser,
     launch_html_webui_subprocess,
 )
-from eaa_core.gui.relay import SQLiteWebUIRelay
+from eaa_core.gui.runtime import WebUIRuntimeController
+from eaa_core.gui.runtime import WebUIRuntimeServer
 
 
 def test_parse_images_field_single_data_url():
     image = "data:image/png;base64,AAA"
-    assert SQLiteWebUIRelay.parse_images(image) == [image]
+    assert parse_persisted_images(image) == [image]
 
 
 def test_parse_images_field_json_list():
     image = '["data:image/png;base64,AAA","data:image/png;base64,BBB"]'
-    assert SQLiteWebUIRelay.parse_images(image) == [
+    assert parse_persisted_images(image) == [
         "data:image/png;base64,AAA",
         "data:image/png;base64,BBB",
     ]
@@ -25,7 +30,7 @@ def test_parse_images_field_json_list():
 
 def test_parse_images_field_python_literal_list():
     image = "['data:image/png;base64,AAA','data:image/png;base64,BBB']"
-    assert SQLiteWebUIRelay.parse_images(image) == [
+    assert parse_persisted_images(image) == [
         "data:image/png;base64,AAA",
         "data:image/png;base64,BBB",
     ]
@@ -33,7 +38,7 @@ def test_parse_images_field_python_literal_list():
 
 def test_parse_images_field_double_encoded_json_list():
     image = '"[\\"data:image/png;base64,AAA\\", \\"data:image/png;base64,BBB\\"]"'
-    assert SQLiteWebUIRelay.parse_images(image) == [
+    assert parse_persisted_images(image) == [
         "data:image/png;base64,AAA",
         "data:image/png;base64,BBB",
     ]
@@ -48,7 +53,7 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(shared_db),
+        checkpoint_db_path=str(shared_db),
     )
     task_manager.model = object()
     checkpointed_graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
@@ -77,134 +82,330 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
         "chat_graph",
     )
 
-    messages = SQLiteWebUIRelay(str(shared_db)).load_messages()
+    messages = SQLiteTranscriptStore(str(shared_db)).load_messages()
 
-    assert len(messages) == len(task_manager.full_history)
-    assert messages[-1]["content"] == "Checkpoint response"
-
-
-def test_insert_user_message_writes_to_webui_inputs_table(tmp_path):
-    shared_db = tmp_path / "shared.sqlite"
-    SQLiteWebUIRelay(str(shared_db)).enqueue_user_input("submitted from browser")
-
-    connection = sqlite3.connect(shared_db)
-    input_rows = connection.execute(
-        "SELECT content FROM webui_inputs ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    connection.close()
-
-    assert input_rows == ("submitted from browser",)
+    assert messages == []
 
 
-def test_query_messages_reads_explicit_webui_messages(tmp_path):
+def test_runtime_controller_queues_user_input(tmp_path):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    controller = WebUIRuntimeController(task_manager)
+    controller.submit_input("submitted from browser")
+
+    assert controller.input_queue.get_nowait() == "submitted from browser"
+
+
+def test_transcript_messages_are_agent_owned_without_webui(tmp_path):
+    transcript_db = tmp_path / "shared.sqlite"
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=False,
+        transcript_db_path=str(transcript_db),
+    )
+    task_manager.build_db()
+
+    task_manager.update_message_history({"role": "system", "content": "agent side"})
+
+    messages = SQLiteTranscriptStore(str(transcript_db)).load_messages()
+    assert len(messages) == 1
+    assert messages[0]["content"] == "agent side"
+
+
+def test_query_messages_reads_explicit_transcript_messages(tmp_path):
     shared_db = tmp_path / "shared.sqlite"
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
         use_webui=True,
-        session_db_path=str(shared_db),
+        transcript_db_path=str(shared_db),
     )
     task_manager.build_db()
-    task_manager.add_webui_message_to_db({"role": "system", "content": "display now"})
+    task_manager.record_transcript_message({"role": "system", "content": "display now"})
 
-    messages = SQLiteWebUIRelay(str(shared_db)).load_messages()
+    messages = SQLiteTranscriptStore(str(shared_db)).load_messages()
 
     assert len(messages) == 1
     assert messages[0]["role"] == "system"
     assert messages[0]["content"] == "display now"
 
 
-def test_sqlite_webui_relay_queues_user_input(tmp_path):
-    shared_db = tmp_path / "shared.sqlite"
-    relay = SQLiteWebUIRelay(str(shared_db))
+def test_webui_publish_does_not_persist_transcript(tmp_path):
+    transcript_db = tmp_path / "shared.sqlite"
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        transcript_db_path=str(transcript_db),
+    )
+    task_manager.build_db()
 
-    relay.enqueue_user_input("queued through relay")
+    task_manager.update_message_history(
+        {"role": "system", "content": "display only"},
+        update_context=False,
+        update_full_history=False,
+        write_to_webui=True,
+    )
 
-    connection = sqlite3.connect(shared_db)
-    input_rows = connection.execute(
-        "SELECT content FROM webui_inputs ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    connection.close()
-
-    assert input_rows == ("queued through relay",)
+    assert SQLiteTranscriptStore(str(transcript_db)).load_messages() == []
 
 
-def test_html_webui_base_uses_sqlite_relay(tmp_path):
-    shared_db = tmp_path / "shared.sqlite"
-    webui = HTMLWebUIBase(str(shared_db), title="Custom UI")
+def test_webui_publish_does_not_use_transcript_payload(tmp_path, monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        transcript_db_path=str(tmp_path / "shared.sqlite"),
+    )
+    task_manager.build_db()
+    published = []
+
+    monkeypatch.setattr(
+        task_manager.runtime_controller,
+        "publish_message",
+        lambda message: published.append(message),
+    )
+
+    message = {"role": "system", "content": "display and persist"}
+    task_manager.update_message_history(message)
+
+    assert published == [message]
+    assert "id" not in published[0]
+
+
+def test_webui_publish_does_not_wait_for_transcript_write(tmp_path, monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        transcript_db_path=str(tmp_path / "shared.sqlite"),
+    )
+    task_manager.build_db()
+    published = []
+
+    monkeypatch.setattr(
+        task_manager.runtime_controller,
+        "publish_message",
+        lambda message: published.append(message),
+    )
+    monkeypatch.setattr(
+        task_manager,
+        "record_transcript_message",
+        lambda message: (_ for _ in ()).throw(RuntimeError("transcript failed")),
+    )
+
+    message = {"role": "system", "content": "live first"}
+    try:
+        task_manager.update_message_history(message)
+    except RuntimeError:
+        pass
+
+    assert published == [message]
+
+
+def test_runtime_transcript_store_uses_transcript_table(tmp_path):
+    transcript_db = tmp_path / "transcript.sqlite"
+    store = SQLiteTranscriptStore(str(transcript_db))
+    store.append_message({"role": "system", "content": "stored"})
+
+    assert store.load_messages()[0]["content"] == "stored"
+
+
+def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+    controller = WebUIRuntimeController(
+        task_manager,
+        upload_dir=str(tmp_path),
+    )
+    controller.build()
+    server = WebUIRuntimeServer(controller)
+    client = TestClient(server.build_app())
+
+    state = client.get("/api/state")
+    assert state.status_code == 200
+    assert state.json()["messages"] == []
+    assert state.json()["status"] == "idle"
+
+    input_response = client.post("/api/input", json={"content": "hello"})
+    assert input_response.status_code == 201
+    assert controller.input_queue.get_nowait() == "hello"
+
+    interrupt_response = client.post("/api/interrupt")
+    assert interrupt_response.status_code == 200
+    assert controller.interrupt_event.is_set()
+
+    approval_response = client.post("/api/approval", json={"approved": True})
+    assert approval_response.status_code == 200
+    assert controller.approval_queue.get_nowait() is True
+
+    catalog_response = client.get("/api/skill-catalog")
+    assert catalog_response.status_code == 200
+    assert catalog_response.json() == {"skills": []}
+
+    upload_response = client.post(
+        "/api/upload-image",
+        json={"image_data": "data:image/png;base64,cG5nLWRhdGE="},
+    )
+    assert upload_response.status_code == 201
+    image_response = client.get(
+        "/api/image",
+        params={"path": upload_response.json()["file_path"]},
+    )
+    assert image_response.status_code == 200
+
+
+def test_runtime_state_uses_live_messages_not_transcript_db(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+    task_manager.record_transcript_message(
+        {"role": "system", "content": "persisted only"}
+    )
+    controller = WebUIRuntimeController(task_manager)
+    client = TestClient(WebUIRuntimeServer(controller).build_app())
+
+    assert client.get("/api/state").json()["messages"] == []
+
+    controller.publish_message({"role": "system", "content": "live only"})
+
+    assert client.get("/api/state").json()["messages"] == [
+        {"role": "system", "content": "live only", "id": "runtime-1"}
+    ]
+
+
+def test_record_transcript_message_does_not_read_back_row(tmp_path, monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+    load_calls = []
+
+    monkeypatch.setattr(
+        task_manager.transcript_store,
+        "load_messages",
+        lambda *args, **kwargs: load_calls.append((args, kwargs)),
+    )
+
+    result = task_manager.record_transcript_message(
+        {"role": "system", "content": "stored"}
+    )
+
+    assert result is None
+    assert load_calls == []
+
+
+def test_runtime_message_ids_are_unique_under_concurrent_publish():
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    controller = WebUIRuntimeController(task_manager)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(
+            executor.map(
+                lambda index: controller.publish_message(
+                    {"role": "system", "content": f"message {index}"}
+                ),
+                range(50),
+            )
+        )
+
+    ids = [message["id"] for message in controller.snapshot()["messages"]]
+    assert len(ids) == 50
+    assert len(set(ids)) == 50
+
+
+def test_runtime_interrupt_publishes_explicit_event():
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    controller = WebUIRuntimeController(task_manager)
+    subscriber = controller.subscribe()
+
+    controller.request_interrupt()
+
+    interrupt_event = subscriber.get_nowait()
+    status_event = subscriber.get_nowait()
+    assert interrupt_event.type == "interrupt.requested"
+    assert interrupt_event.payload["interrupt_requested"] is True
+    assert status_event.type == "status.changed"
+
+
+def test_runtime_input_and_approval_restore_previous_status():
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    controller = WebUIRuntimeController(task_manager)
+
+    controller.submit_input("queued")
+    assert controller.request_input("Prompt") == "queued"
+    assert controller.snapshot()["status"] == "idle"
+
+    controller.set_status("running", input_requested=False)
+    controller.submit_approval(True)
+    assert controller.request_approval("tool", {}) is True
+    assert controller.snapshot()["status"] == "running"
+
+
+def test_html_webui_base_uses_runtime_url():
+    webui = HTMLWebUIBase("http://127.0.0.1:9999", title="Custom UI")
 
     assert webui.title == "Custom UI"
-    assert isinstance(webui.relay, SQLiteWebUIRelay)
-    assert webui.relay.db_path == str(shared_db)
+    assert webui.runtime_url == "http://127.0.0.1:9999"
 
 
-def test_html_webui_base_consumes_matching_pending_message(tmp_path):
-    shared_db = tmp_path / "shared.sqlite"
-    webui = HTMLWebUIBase(str(shared_db))
-    webui.pending_messages["pending-0"] = "hello"
+def test_html_webui_page_uses_same_origin_runtime_routes():
+    webui = HTMLWebUIBase("http://127.0.0.1:9999")
+    page = webui.page_html()
 
-    consumed = webui.consume_pending_message({"role": "user", "content": "hello"})
+    assert '"state": "/api/state"' in page
+    assert '"events": "/api/events"' in page
+    assert '"send": "/api/input"' in page
+    assert '"http://127.0.0.1:9999/api/state"' not in page
 
-    assert consumed is True
-    assert webui.pending_messages == {}
+
+def test_html_webui_proxies_runtime_api(monkeypatch):
+    webui = HTMLWebUIBase("http://127.0.0.1:9999")
+    calls = []
+
+    def fake_proxy_request(self, *, method, url, body, headers):
+        calls.append((method, url, body, headers))
+        return Response(content=b'{"ok": true}', media_type="application/json")
+
+    monkeypatch.setattr(HTMLWebUIBase, "blocking_proxy_request", fake_proxy_request)
+    client = TestClient(webui.build_app())
+
+    response = client.post("/api/input?x=1", json={"content": "hello"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert calls == [
+        (
+            "POST",
+            "http://127.0.0.1:9999/api/input?x=1",
+            b'{"content":"hello"}',
+            {"Content-Type": "application/json"},
+        )
+    ]
 
 
-def test_html_webui_preserves_mathjax_delimiters_for_markdown(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    content = (
-        r"\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\]" "\n"
-        r"Inline: \(e^{i\pi} + 1 = 0\)"
+def test_html_webui_proxies_event_stream(monkeypatch):
+    webui = HTMLWebUIBase("http://127.0.0.1:9999")
+
+    monkeypatch.setattr(
+        webui,
+        "proxy_event_stream",
+        lambda: iter([b"event: status.changed\n", b"data: {}\n\n"]),
     )
+    client = TestClient(webui.build_app())
 
-    preserved = webui.preserve_math_delimiters(content)
-
-    assert preserved == (
-        r"\\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\\]" "\n"
-        r"Inline: \\(e^{i\pi} + 1 = 0\\)"
-    )
-
-
-def test_html_webui_keeps_multiline_display_math_in_one_markdown_text_run(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    content = (
-        r"\[" "\n"
-        r"x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}" "\n"
-        r"\]"
-    )
-
-    preserved = webui.preserve_math_delimiters(content)
-
-    assert preserved == r"\\[x = \frac{-b \pm \sqrt{b^{2} - 4ac}}{2a}\\]"
-
-
-def test_html_webui_keeps_multiline_dollar_display_math_in_one_text_run(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    content = "$$\n" r"\sum_{n=0}^{\infty} x^{n}" "\n$$"
-
-    preserved = webui.preserve_math_delimiters(content)
-
-    assert preserved == r"$$\sum_{n=0}^{\infty} x^{n}$$"
-
-
-def test_html_webui_does_not_preserve_mathjax_delimiters_in_code(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    content = (
-        r"Text \[x\]" "\n"
-        r"`code \[x\]`" "\n"
-        "```" "\n"
-        r"block \[x\]" "\n"
-        "```"
-    )
-
-    preserved = webui.preserve_math_delimiters(content)
-
-    assert preserved == (
-        r"Text \\[x\\]" "\n"
-        r"`code \[x\]`" "\n"
-        "```" "\n"
-        r"block \[x\]" "\n"
-        "```"
-    )
+    with client.stream("GET", "/api/events") as response:
+        assert response.status_code == 200
+        assert "event: status.changed" in response.read().decode()
 
 
 def test_html_webui_styles_include_input_and_code_block_rules(tmp_path):
@@ -231,90 +432,6 @@ def test_html_webui_page_includes_long_message_folding_script(tmp_path):
     assert "lines.length > 10" in page
 
 
-def test_html_webui_formats_tool_calls_from_payload(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-
-    tool_calls = webui.format_message_tool_calls(
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": "call_1: acquire_image\nArguments: {\"x\": 1}",
-        }
-    )
-
-    assert tool_calls == 'call_1: acquire_image\nArguments: {"x": 1}'
-
-
-def test_html_webui_ignores_missing_tool_calls(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-
-    tool_calls = webui.format_message_tool_calls(
-        {
-            "role": "assistant",
-            "content": "no tools",
-        }
-    )
-
-    assert tool_calls == ""
-
-
-def test_html_webui_formats_approval_arguments_with_extracted_code(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    prompt = (
-        "Tool 'python' requires approval before execution.\n"
-        'Arguments: {"code": "print(1)\\nprint(2)", "timeout": 5}\n'
-        "Approve? [y/N]: "
-    )
-
-    formatted = webui.format_approval_message(prompt)
-
-    assert formatted is not None
-    assert formatted["summary"] == "Tool `python` requires approval before execution."
-    assert '"code": "<code rendered below>"' in formatted["arguments_json"]
-    assert '"timeout": 5' in formatted["arguments_json"]
-    assert formatted["extracted_fields"] == [
-        {"label": "code", "value": "print(1)\nprint(2)"}
-    ]
-
-
-def test_html_webui_formats_nested_approval_content_fields(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    prompt = (
-        "Tool 'write_file' requires approval before execution.\n"
-        'Arguments: {"file_path": "a.py", "payload": {"content": "a\\nb"}}\n'
-        "Approve? [y/N]: "
-    )
-
-    formatted = webui.format_approval_message(prompt)
-
-    assert formatted is not None
-    assert '"content": "<payload.content rendered below>"' in formatted["arguments_json"]
-    assert formatted["extracted_fields"] == [
-        {"label": "payload.content", "value": "a\nb"}
-    ]
-
-
-def test_html_webui_returns_none_for_unparseable_approval_arguments(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    prompt = (
-        "Tool 'python' requires approval before execution.\n"
-        "Arguments: not-json\n"
-        "Approve? [y/N]: "
-    )
-
-    assert webui.format_approval_message(prompt) is None
-
-
-def test_html_webui_image_html_uses_lazy_loading(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    html = webui.image_html("/tmp/image.png?a=1&b=2", "example-image")
-
-    assert 'loading="lazy"' in html
-    assert 'decoding="async"' in html
-    assert 'data-eaa-full-src=' in html
-    assert "&amp;" in html
-
-
 def test_html_webui_script_binds_keyboard_shortcuts_to_textarea(tmp_path):
     webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     script = webui.script()
@@ -324,12 +441,13 @@ def test_html_webui_script_binds_keyboard_shortcuts_to_textarea(tmp_path):
     assert "Enter" in script
 
 
-def test_sqlite_webui_relay_image_response_sets_cache_headers(tmp_path):
+def test_runtime_image_response_sets_cache_headers(tmp_path):
     image_path = tmp_path / "image.png"
     image_path.write_bytes(b"png-data")
-    relay = SQLiteWebUIRelay(str(tmp_path / "shared.sqlite"))
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    controller = WebUIRuntimeController(task_manager)
 
-    response = relay.image_response(str(image_path))
+    response = controller.image_response(str(image_path))
 
     assert response.headers["cache-control"] == "public, max-age=3600"
     assert response.headers["etag"]
@@ -341,30 +459,27 @@ def test_html_webui_parser_reads_launch_arguments():
 
     args = parser.parse_args(
         [
-            "session.sqlite",
+            "--runtime-url",
+            "http://127.0.0.1:9999",
             "--host",
             "0.0.0.0",
             "--port",
             "9000",
             "--title",
             "Beamline UI",
-            "--upload-dir",
-            "uploads",
             "--poll-interval",
             "0.5",
         ]
     )
 
-    assert args.session_db_path == "session.sqlite"
+    assert args.runtime_url == "http://127.0.0.1:9999"
     assert args.host == "0.0.0.0"
     assert args.port == 9000
     assert args.title == "Beamline UI"
-    assert args.upload_dir == "uploads"
     assert args.poll_interval == 0.5
 
 
 def test_launch_html_webui_subprocess_returns_popen(tmp_path, monkeypatch):
-    shared_db = tmp_path / "shared.sqlite"
     popen_calls = []
 
     class FakePopen:
@@ -376,11 +491,10 @@ def test_launch_html_webui_subprocess_returns_popen(tmp_path, monkeypatch):
     monkeypatch.setattr("eaa_core.gui.html.subprocess.Popen", FakePopen)
 
     process = launch_html_webui_subprocess(
-        str(shared_db),
+        "http://127.0.0.1:9999",
         host="0.0.0.0",
         port=9000,
         title="Beamline UI",
-        upload_dir="uploads",
         poll_interval=0.5,
         python_executable="/usr/bin/python",
         cwd="/tmp",
@@ -394,15 +508,14 @@ def test_launch_html_webui_subprocess_returns_popen(tmp_path, monkeypatch):
                 "/usr/bin/python",
                 "-m",
                 "eaa_core.gui.html",
-                str(shared_db),
+                "--runtime-url",
+                "http://127.0.0.1:9999",
                 "--host",
                 "0.0.0.0",
                 "--port",
                 "9000",
                 "--title",
                 "Beamline UI",
-                "--upload-dir",
-                "uploads",
                 "--poll-interval",
                 "0.5",
             ],

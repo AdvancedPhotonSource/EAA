@@ -119,7 +119,7 @@ def test_chat_input_preserves_trailing_skill_command_text(tmp_path):
         ["/skill demo what does this skill talk about?"],
         skill_dirs=[str(tmp_path / "skills")],
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         build=True,
     )
     state = ChatGraphState(await_user_input=True)
@@ -146,7 +146,7 @@ def test_feedback_human_gate_preserves_trailing_skill_command_text(tmp_path):
         ["/skill demo what does this skill talk about?"],
         skill_dirs=[str(tmp_path / "skills")],
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         build=True,
     )
     captured_context = []

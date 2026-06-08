@@ -108,15 +108,15 @@ class NodeFactory:
         update_full_history : bool, default=True
             Whether to append the message to ``state.full_history``.
         write_to_webui : bool, default=True
-            Whether to mirror the message to the explicit WebUI display store
-            when a session database is configured.
+            Whether to publish the message to live WebUI clients.
         """
         if update_context:
             state.messages.append(message)
+        if write_to_webui:
+            self.task_manager.publish_webui_message(message)
         if update_full_history:
             state.full_history.append(message)
-        if write_to_webui and self.task_manager.session_db_path is not None:
-            self.task_manager.persistence.append_message(message)
+            self.task_manager.record_transcript_message(message)
 
     def apply_followup_messages_for_state(
         self,
@@ -204,6 +204,8 @@ class NodeFactory:
         dict[str, object]
             Dumped state payload after the exchange is recorded.
         """
+        if self.task_manager.runtime_controller is not None:
+            self.task_manager.runtime_controller.check_interrupt()
         response, outgoing = self.task_manager.invoke_model_raw(
             message=message,
             image_path=image_path,
@@ -252,6 +254,8 @@ class NodeFactory:
             Dumped state payload after tool messages have been appended and
             the tool transcript has been refreshed.
         """
+        if self.task_manager.runtime_controller is not None:
+            self.task_manager.runtime_controller.check_interrupt()
         response = state.latest_response
         tool_messages = self.task_manager.tool_executor.execute_tool_calls_from_message(response)
         for tool_message in tool_messages:

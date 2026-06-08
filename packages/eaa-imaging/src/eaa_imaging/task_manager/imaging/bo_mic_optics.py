@@ -33,7 +33,7 @@ class MicroscopyOpticsTuningBOTaskManager(
         n_initial_points: int = 20,
         image_acquisition_kwargs: dict = {},
         feature_tracking_kwargs: dict = {},
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         *args, **kwargs
     ):
         """The Bayesian optimization task manager for microscopy optics tuning.
@@ -65,7 +65,7 @@ class MicroscopyOpticsTuningBOTaskManager(
             when acquiring images for evaluating the objective function.
         feature_tracking_kwargs : dict, optional
             The arguments of the feature tracking task manager's `run` method.
-        session_db_path : Optional[str]
+        checkpoint_db_path : Optional[str]
             If provided, the entire chat history will be stored in 
             a SQLite database at the given path. This is essential
             if you want to use the WebUI, which polls the database
@@ -103,7 +103,7 @@ class MicroscopyOpticsTuningBOTaskManager(
             initial_points=initial_points,
             n_initial_points=n_initial_points,
             objective_function=self.objective_function,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=False,
             *args, **kwargs
         )

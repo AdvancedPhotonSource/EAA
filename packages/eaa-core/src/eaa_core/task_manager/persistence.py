@@ -11,7 +11,7 @@ from eaa_core.util import get_timestamp
 
 
 def configure_sqlite_connection(connection: sqlite3.Connection) -> sqlite3.Connection:
-    """Apply shared SQLite settings for session/checkpoint databases.
+    """Apply shared SQLite settings for transcript/checkpoint databases.
 
     Parameters
     ----------
@@ -29,12 +29,12 @@ def configure_sqlite_connection(connection: sqlite3.Connection) -> sqlite3.Conne
 
 
 def parse_persisted_images(image_value: Any) -> list[str]:
-    """Normalize persisted WebUI/session DB image values to data URLs.
+    """Normalize persisted transcript image values to data URLs.
 
     Parameters
     ----------
     image_value : Any
-        Serialized image payload read from the shared SQLite session database.
+        Serialized image payload read from transcript persistence.
 
     Returns
     -------
@@ -80,8 +80,18 @@ def parse_persisted_images(image_value: Any) -> list[str]:
     return image_urls
 
 
+def normalize_message_content(content: Optional[str]) -> str:
+    """Strip transport-only placeholders from message text."""
+    content_text = (content or "").strip()
+    if not content_text:
+        return ""
+    return "\n".join(
+        line for line in content_text.splitlines() if line.strip() != "<image>"
+    ).strip()
+
+
 class PrunableSqliteSaver(SqliteSaver):
-    """SQLite checkpoint saver with optional pruning and WebUI relay tables.
+    """SQLite checkpoint saver with optional pruning.
 
     Parameters
     ----------
@@ -92,19 +102,6 @@ class PrunableSqliteSaver(SqliteSaver):
         When enabled, older checkpoints and their writes are deleted after each
         successful checkpoint save.
 
-    Notes
-    -----
-    The shared SQLite session database contains the following tables:
-
-    ==============  ==========================================================
-    Table           Purpose
-    ==============  ==========================================================
-    checkpoints     LangGraph checkpoint snapshots for each graph thread.
-    writes          LangGraph intermediate writes associated with checkpoints.
-    webui_messages  Explicit agent-to-WebUI display messages.
-    webui_inputs    WebUI-to-agent user input queue.
-    status          WebUI status flags such as `user_input_requested`.
-    ==============  ==========================================================
     """
 
     def __init__(
@@ -127,45 +124,11 @@ class PrunableSqliteSaver(SqliteSaver):
         """
         super().__init__(conn, serde=serde)
         self.prune_checkpoints = prune_checkpoints
-        self.webui_tables_setup = False
 
     def setup(self) -> None:
-        """Create checkpoint tables plus the shared WebUI relay tables."""
+        """Create checkpoint tables."""
         if not self.is_setup:
             super().setup()
-        if self.webui_tables_setup:
-            return
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS webui_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT,
-                tool_calls TEXT,
-                image TEXT
-            );
-            CREATE TABLE IF NOT EXISTS status (
-                id INTEGER PRIMARY KEY,
-                user_input_requested INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS webui_inputs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                content TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS skill_catalog (
-                name TEXT PRIMARY KEY,
-                description TEXT NOT NULL,
-                path TEXT NOT NULL
-            );
-            """
-        )
-        self.conn.execute(
-            "INSERT OR IGNORE INTO status (id, user_input_requested) VALUES (1, 0)"
-        )
-        self.conn.commit()
-        self.webui_tables_setup = True
 
     def put(
         self,
@@ -214,44 +177,6 @@ class PrunableSqliteSaver(SqliteSaver):
                 """,
                 (thread_id, checkpoint_id),
             )
-
-    def load_latest_checkpoint_messages(
-        self,
-        since_id: Optional[int] = None,
-    ) -> list[dict[str, Any]]:
-        """Return WebUI-formatted messages from the newest checkpointed state.
-
-        Parameters
-        ----------
-        since_id : Optional[int], optional
-            Return only messages whose synthetic message id is greater than this
-            value.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            Messages extracted from the newest checkpoint state. Synthetic ids
-            are assigned from the message index in `full_history`.
-        """
-        latest_state, checkpoint_timestamp = self.load_latest_checkpoint_state()
-        if latest_state is None:
-            return []
-        history = latest_state.get("full_history")
-        if not isinstance(history, list) or len(history) == 0:
-            history = latest_state.get("messages", [])
-        messages: list[dict[str, Any]] = []
-        start_id = 1 if since_id is None else since_id + 1
-        for message_id, message in enumerate(history, start=1):
-            if message_id < start_id or not isinstance(message, dict):
-                continue
-            messages.append(
-                self.format_message_for_webui(
-                    message=message,
-                    message_id=message_id,
-                    timestamp=checkpoint_timestamp,
-                )
-            )
-        return messages
 
     def load_latest_checkpoint_state(
         self,
@@ -345,81 +270,9 @@ class PrunableSqliteSaver(SqliteSaver):
             return model_dump()
         return None
 
-    @classmethod
-    def format_message_for_webui(
-        cls,
-        message: dict[str, Any],
-        message_id: int,
-        timestamp: Optional[str] = None,
-    ) -> dict[str, Any]:
-        """Convert one checkpointed message into the WebUI response shape.
 
-        Parameters
-        ----------
-        message : dict[str, Any]
-            OpenAI-style message payload.
-        message_id : int
-            Synthetic message id used by the WebUI polling API.
-        timestamp : Optional[str], optional
-            Timestamp associated with the checkpoint snapshot.
-
-        Returns
-        -------
-        dict[str, Any]
-            WebUI-formatted message payload.
-        """
-        elements = get_message_elements_as_text(message)
-        image_urls = cls.parse_images(elements["image"])
-        return {
-            "id": message_id,
-            "timestamp": timestamp,
-            "role": elements["role"],
-            "content": cls.normalize_content(elements["content"]),
-            "tool_calls": elements["tool_calls"],
-            "image": image_urls[0] if len(image_urls) > 0 else None,
-            "images": image_urls,
-        }
-
-    @staticmethod
-    def normalize_content(content: Optional[str]) -> str:
-        """Strip transport-only placeholders from message text.
-
-        Parameters
-        ----------
-        content : Optional[str]
-            Raw message text.
-
-        Returns
-        -------
-        str
-            Cleaned message text.
-        """
-        content_text = (content or "").strip()
-        if not content_text:
-            return ""
-        return "\n".join(
-            line for line in content_text.splitlines() if line.strip() != "<image>"
-        ).strip()
-
-    @staticmethod
-    def parse_images(image_value: Any) -> list[str]:
-        """Parse one or multiple image values from persisted message data.
-
-        Parameters
-        ----------
-        image_value : Any
-            Serialized image value from a message payload.
-
-        Returns
-        -------
-        list[str]
-            Normalized image data URLs.
-        """
-        return parse_persisted_images(image_value)
-
-
-class SQLiteMessageStore:
-    """Adapter for the shared SQLite WebUI relay tables."""
+class SQLiteTranscriptStore:
+    """SQLite store for durable transcript messages."""
 
     def __init__(self, path: Optional[str] = None):
         """Initialize the store."""
@@ -432,11 +285,31 @@ class SQLiteMessageStore:
             return
         if self.connection is not None:
             return
-        self.connection = configure_sqlite_connection(sqlite3.connect(self.path))
-        PrunableSqliteSaver(self.connection).setup()
+        self.connection = configure_sqlite_connection(
+            sqlite3.connect(self.path, check_same_thread=False)
+        )
+        self.setup()
+
+    def setup(self) -> None:
+        """Create transcript tables."""
+        if self.connection is None:
+            return
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS transcript_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                tool_calls TEXT,
+                image TEXT
+            );
+            """
+        )
+        self.connection.commit()
 
     def append_message(self, message: dict[str, Any]) -> int:
-        """Persist one display message for the WebUI.
+        """Persist one transcript message.
 
         Parameters
         ----------
@@ -446,7 +319,7 @@ class SQLiteMessageStore:
         Returns
         -------
         int
-            Inserted WebUI message row id.
+            Inserted transcript message row id.
         """
         if self.connection is None:
             self.connect()
@@ -459,7 +332,7 @@ class SQLiteMessageStore:
         cursor = self.connection.cursor()
         cursor.execute(
             """
-            INSERT INTO webui_messages (timestamp, role, content, tool_calls, image)
+            INSERT INTO transcript_messages (timestamp, role, content, tool_calls, image)
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -473,8 +346,8 @@ class SQLiteMessageStore:
         self.connection.commit()
         return int(cursor.lastrowid)
 
-    def load_webui_messages(self, since_id: Optional[int] = None) -> list[dict[str, Any]]:
-        """Load persisted WebUI display messages.
+    def load_messages(self, since_id: Optional[int] = None) -> list[dict[str, Any]]:
+        """Load persisted transcript messages.
 
         Parameters
         ----------
@@ -484,8 +357,10 @@ class SQLiteMessageStore:
         Returns
         -------
         list[dict[str, Any]]
-            WebUI-formatted display messages.
+            Transcript messages in display-friendly form.
         """
+        if self.connection is None:
+            self.connect()
         if self.connection is None:
             return []
         cursor = self.connection.cursor()
@@ -493,7 +368,7 @@ class SQLiteMessageStore:
             cursor.execute(
                 """
                 SELECT id, timestamp, role, content, tool_calls, image
-                FROM webui_messages
+                FROM transcript_messages
                 ORDER BY id
                 """
             )
@@ -501,7 +376,7 @@ class SQLiteMessageStore:
             cursor.execute(
                 """
                 SELECT id, timestamp, role, content, tool_calls, image
-                FROM webui_messages
+                FROM transcript_messages
                 WHERE id > ?
                 ORDER BY id
                 """,
@@ -510,142 +385,16 @@ class SQLiteMessageStore:
         rows = cursor.fetchall()
         messages: list[dict[str, Any]] = []
         for message_id, timestamp, role, content, tool_calls, image in rows:
-            image_urls = PrunableSqliteSaver.parse_images(image)
+            image_urls = parse_persisted_images(image)
             messages.append(
                 {
                     "id": int(message_id),
                     "timestamp": timestamp,
                     "role": role,
-                    "content": PrunableSqliteSaver.normalize_content(content),
+                    "content": normalize_message_content(content),
                     "tool_calls": tool_calls,
                     "image": image_urls[0] if len(image_urls) > 0 else None,
                     "images": image_urls,
                 }
             )
         return messages
-
-    def set_user_input_requested(self, requested: bool) -> None:
-        """Update the WebUI input request flag."""
-        if self.connection is None:
-            return
-        self.connection.execute(
-            "UPDATE status SET user_input_requested = ? WHERE id = 1",
-            (1 if requested else 0,),
-        )
-        self.connection.commit()
-
-    def dequeue_webui_input(self) -> Optional[str]:
-        """Remove and return the next queued WebUI input.
-
-        Returns
-        -------
-        Optional[str]
-            The oldest queued input message, or `None` when the queue is
-            empty.
-        """
-        if self.connection is None:
-            return None
-        cursor = self.connection.cursor()
-        cursor.execute("BEGIN IMMEDIATE")
-        cursor.execute(
-            """
-            SELECT id, content
-            FROM webui_inputs
-            ORDER BY id ASC
-            LIMIT 1
-            """
-        )
-        row = cursor.fetchone()
-        if row is None:
-            self.connection.commit()
-            return None
-        cursor.execute(
-            "DELETE FROM webui_inputs WHERE id = ?",
-            (int(row[0]),),
-        )
-        self.connection.commit()
-        return str(row[1])
-
-    def enqueue_webui_input(self, content: str) -> int:
-        """Insert a new WebUI-originated user message into the relay queue.
-
-        Parameters
-        ----------
-        content : str
-            Message text submitted from the WebUI.
-
-        Returns
-        -------
-        int
-            Inserted row id.
-        """
-        if self.connection is None:
-            raise RuntimeError("The SQLite message store is not connected.")
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "INSERT INTO webui_inputs (timestamp, content) VALUES (?, ?)",
-            (str(get_timestamp(as_int=True)), content),
-        )
-        self.connection.commit()
-        return int(cursor.lastrowid)
-
-    def set_skill_catalog(self, skill_catalog: list[dict[str, str]]) -> None:
-        """Persist the skill catalog for WebUI autocomplete.
-
-        Parameters
-        ----------
-        skill_catalog : list[dict[str, str]]
-            Skill metadata dictionaries with ``name``, ``description``, and
-            ``path`` fields.
-        """
-        if self.connection is None:
-            self.connect()
-        if self.connection is None:
-            return
-        cursor = self.connection.cursor()
-        cursor.execute("DELETE FROM skill_catalog")
-        cursor.executemany(
-            """
-            INSERT INTO skill_catalog (name, description, path)
-            VALUES (?, ?, ?)
-            """,
-            [
-                (
-                    str(skill.get("name", "")),
-                    str(skill.get("description", "")),
-                    str(skill.get("path", "")),
-                )
-                for skill in skill_catalog
-                if skill.get("name")
-            ],
-        )
-        self.connection.commit()
-
-    def load_skill_catalog(self) -> list[dict[str, str]]:
-        """Load the persisted skill catalog.
-
-        Returns
-        -------
-        list[dict[str, str]]
-            Skill metadata dictionaries.
-        """
-        if self.connection is None:
-            self.connect()
-        if self.connection is None:
-            return []
-        cursor = self.connection.cursor()
-        cursor.execute(
-            """
-            SELECT name, description, path
-            FROM skill_catalog
-            ORDER BY lower(name)
-            """
-        )
-        return [
-            {
-                "name": str(name),
-                "description": str(description),
-                "path": str(path),
-            }
-            for name, description, path in cursor.fetchall()
-        ]

@@ -58,7 +58,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         objective_function: BaseTool | Callable | None = None,
         objective_function_method: str | None = None,
         stopping_criteria: Optional[list[BayesianOptimizationStoppingCriterion]] = None,
-        session_db_path: Optional[str] = "session.sqlite",
+        checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
         *args,
         **kwargs,
@@ -92,7 +92,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
         stopping_criteria : list[BayesianOptimizationStoppingCriterion], optional
             Additional stopping criteria checked after initialization and each
             update.
-        session_db_path : Optional[str]
+        checkpoint_db_path : Optional[str]
             Optional SQLite path used by the shared chat/task-manager session.
         build : bool, optional
             Whether to build the internal state of the task manager.
@@ -128,7 +128,7 @@ class BayesianOptimizationTaskManager(BaseTaskManager):
             llm_config=llm_config,
             memory_config=memory_config,
             tools=tools,
-            session_db_path=session_db_path,
+            checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args,
             **kwargs,

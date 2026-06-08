@@ -5,52 +5,37 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from importlib.resources import files
 from typing import Any
-from urllib.parse import quote
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from starlette.staticfiles import StaticFiles
-
-from eaa_core.gui.relay import SQLiteWebUIRelay, set_message_db_path
-
-IMAGE_TAG_PATTERN = re.compile(r"<img\s+([^>\s]+)>")
-MATH_DELIMITER_PATTERN = re.compile(r"(?<!\\)\\([\[\]\(\)])")
-INLINE_CODE_PATTERN = re.compile(r"(`+[^`]*?`+)")
-APPROVAL_PATTERN = re.compile(r"Approve\?\s*\[y/N\]:", re.IGNORECASE)
-APPROVAL_ARGUMENTS_PATTERN = re.compile(
-    r"Arguments:\s*(?P<arguments>.*?)\nApprove\?\s*\[y/N\]:",
-    re.IGNORECASE | re.DOTALL,
-)
-APPROVAL_TOOL_PATTERN = re.compile(
-    r"Tool\s+'(?P<tool_name>[^']+)'\s+requires approval",
-    re.IGNORECASE,
-)
 
 
 class HTMLWebUIBase:
-    """Browser chat UI backed by the shared EAA SQLite relay.
+    """Browser chat UI backed by the agent-side WebUI runtime API.
 
     Parameters
     ----------
-    session_db_path : str
-        SQLite session database shared with the task manager.
+    runtime_url : str
+        Base URL of the agent-side WebUI runtime API.
     title : str, default="EAA WebUI"
         Browser and header title.
-    upload_dir : str, default=".tmp"
-        Directory used to store pasted images.
     poll_interval : float, default=1.0
-        Message and status polling interval in seconds.
+        Reconnect backoff interval in seconds.
     """
 
     image_route = "/api/image"
-    messages_route = "/api/messages"
-    status_route = "/api/status"
-    send_route = "/api/send"
+    events_route = "/api/events"
+    state_route = "/api/state"
+    send_route = "/api/input"
+    interrupt_route = "/api/interrupt"
+    approval_route = "/api/approval"
     upload_route = "/api/upload-image"
     skill_catalog_route = "/api/skill-catalog"
     mathjax_route = "/static/mathjax"
@@ -60,20 +45,17 @@ class HTMLWebUIBase:
 
     def __init__(
         self,
-        session_db_path: str,
+        runtime_url: str = "http://127.0.0.1:8010",
         *,
         title: str = "EAA WebUI",
-        upload_dir: str = ".tmp",
         poll_interval: float = 1.0,
     ) -> None:
-        self.session_db_path = session_db_path
+        self.runtime_url = runtime_url.rstrip("/")
         self.title = title
         self.poll_interval = poll_interval
-        self.relay = SQLiteWebUIRelay(session_db_path, upload_dir=upload_dir)
-        self.pending_messages: dict[str, str] = {}
 
     def build_app(self) -> FastAPI:
-        """Build the FastAPI application serving the WebUI and relay APIs."""
+        """Build the FastAPI application serving the WebUI shell."""
         app = FastAPI(title=self.title)
         mathjax_dir = files("eaa_core").joinpath("gui/static/mathjax")
         app.mount(
@@ -86,55 +68,157 @@ class HTMLWebUIBase:
         async def index() -> HTMLResponse:
             return HTMLResponse(self.page_html())
 
-        @app.get(self.messages_route)
-        async def messages(since_id: int | None = None) -> JSONResponse:
-            return JSONResponse({"messages": self.relay.load_messages(since_id=since_id)})
-
-        @app.get(self.status_route)
-        async def status() -> JSONResponse:
-            return JSONResponse(
-                {"user_input_requested": self.relay.get_user_input_requested()}
+        @app.get(self.events_route)
+        def events() -> StreamingResponse:
+            return StreamingResponse(
+                self.proxy_event_stream(),
+                media_type="text/event-stream",
             )
 
-        @app.post(self.send_route)
-        async def send(payload: dict[str, Any]) -> JSONResponse:
-            content = str(payload.get("content") or "").strip()
-            if not content:
-                return JSONResponse({"error": "No content provided"}, status_code=400)
-            row_id = self.relay.enqueue_user_input(content)
-            return JSONResponse({"id": row_id}, status_code=201)
-
-        @app.get(self.image_route)
-        def image(path: str) -> Any:
-            return self.relay.image_response(path=path)
-
-        @app.post(self.upload_route)
-        async def upload_image(payload: dict[str, Any]) -> Any:
-            return self.relay.upload_image_response(payload)
-
-        @app.get(self.skill_catalog_route)
-        async def skill_catalog() -> Any:
-            return self.relay.skill_catalog_response()
+        @app.api_route("/api/{runtime_path:path}", methods=["GET", "POST"])
+        async def runtime_proxy(runtime_path: str, request: Request) -> Response:
+            return await self.proxy_runtime_request(runtime_path, request)
 
         return app
+
+    def runtime_api_url(self, runtime_path: str, query: str = "") -> str:
+        """Return the runtime API URL for one proxied path."""
+        url = f"{self.runtime_url}/api/{runtime_path}"
+        if query:
+            url = f"{url}?{query}"
+        return url
+
+    async def proxy_runtime_request(
+        self,
+        runtime_path: str,
+        request: Request,
+    ) -> Response:
+        """Forward one browser API request to the agent runtime."""
+        body = await request.body()
+        url = self.runtime_api_url(runtime_path, request.url.query)
+        headers = {}
+        content_type = request.headers.get("content-type")
+        if content_type:
+            headers["Content-Type"] = content_type
+        return await self.run_blocking_proxy_request(
+            method=request.method,
+            url=url,
+            body=body or None,
+            headers=headers,
+        )
+
+    async def run_blocking_proxy_request(
+        self,
+        *,
+        method: str,
+        url: str,
+        body: bytes | None,
+        headers: dict[str, str],
+    ) -> Response:
+        """Run a standard-library HTTP proxy request off the event loop."""
+        import asyncio
+
+        return await asyncio.to_thread(
+            self.blocking_proxy_request,
+            method=method,
+            url=url,
+            body=body,
+            headers=headers,
+        )
+
+    @staticmethod
+    def response_headers(upstream_headers: Any) -> dict[str, str]:
+        """Return response headers safe to pass through the proxy."""
+        allowed = {
+            "cache-control",
+            "etag",
+            "last-modified",
+            "content-disposition",
+        }
+        return {
+            key: value
+            for key, value in upstream_headers.items()
+            if key.lower() in allowed
+        }
+
+    def blocking_proxy_request(
+        self,
+        *,
+        method: str,
+        url: str,
+        body: bytes | None,
+        headers: dict[str, str],
+    ) -> Response:
+        """Forward one non-streaming request to the runtime."""
+        runtime_request = urllib.request.Request(
+            url,
+            data=body,
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(runtime_request, timeout=30) as upstream:
+                content = upstream.read()
+                content_type = upstream.headers.get("content-type")
+                return Response(
+                    content=content,
+                    status_code=upstream.status,
+                    media_type=content_type,
+                    headers=self.response_headers(upstream.headers),
+                )
+        except urllib.error.HTTPError as error:
+            content = error.read()
+            return Response(
+                content=content,
+                status_code=error.code,
+                media_type=error.headers.get("content-type"),
+                headers=self.response_headers(error.headers),
+            )
+        except urllib.error.URLError as error:
+            return Response(
+                content=json.dumps({"error": f"Runtime unavailable: {error.reason}"}),
+                status_code=502,
+                media_type="application/json",
+            )
+
+    def proxy_event_stream(self) -> Any:
+        """Yield SSE bytes from the agent runtime."""
+        runtime_request = urllib.request.Request(
+            self.runtime_api_url("events"),
+            headers={"Accept": "text/event-stream"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(runtime_request, timeout=None) as upstream:
+                while True:
+                    chunk = upstream.readline()
+                    if not chunk:
+                        break
+                    yield chunk
+        except urllib.error.URLError as error:
+            payload = json.dumps({"error": f"Runtime unavailable: {error.reason}"})
+            yield f"event: error\ndata: {payload}\n\n".encode("utf-8")
 
     def run(self, host: str = "127.0.0.1", port: int = 8008) -> None:
         """Run the WebUI server."""
         import uvicorn
 
-        print(f"EAA WebUI running at http://{host}:{port} (DB: {self.session_db_path})")
+        print(f"EAA WebUI running at http://{host}:{port} (runtime: {self.runtime_url})")
         uvicorn.run(self.build_app(), host=host, port=port)
 
     def page_html(self) -> str:
         """Return the complete HTML document for the browser UI."""
         config = {
             "title": self.title,
+            "runtimeUrl": self.runtime_url,
             "pollIntervalMs": max(100, int(self.poll_interval * 1000)),
             "routes": {
+                "events": self.events_route,
+                "state": self.state_route,
                 "image": self.image_route,
-                "messages": self.messages_route,
-                "status": self.status_route,
                 "send": self.send_route,
+                "interrupt": self.interrupt_route,
+                "approval": self.approval_route,
                 "upload": self.upload_route,
                 "skillCatalog": self.skill_catalog_route,
                 "mathjax": self.mathjax_route,
@@ -164,7 +248,10 @@ class HTMLWebUIBase:
   <div class="eaa-page">
     <header class="eaa-header">
       <div class="eaa-title">{html.escape(self.title)}</div>
-      <div id="connection-status" class="eaa-status">Connecting...</div>
+      <div class="eaa-header-actions">
+        <button id="interrupt-button" class="eaa-interrupt" type="button">Interrupt</button>
+        <div id="connection-status" class="eaa-status">Connecting...</div>
+      </div>
     </header>
     <main class="eaa-main">
       <section class="eaa-chat" aria-label="Chat transcript">
@@ -197,191 +284,6 @@ class HTMLWebUIBase:
 </body>
 </html>"""
 
-    @classmethod
-    def preserve_math_delimiters(cls, content: str) -> str:
-        """Preserve MathJax delimiters that Markdown would otherwise consume."""
-        lines = content.replace("\r\n", "\n").split("\n")
-        preserved_lines: list[str] = []
-        in_fenced_code = False
-        fence_marker = ""
-        display_math_opening = ""
-        display_math_marker = ""
-        display_math_lines: list[str] = []
-        for line in lines:
-            stripped = line.lstrip()
-            if display_math_marker:
-                if stripped.strip() == display_math_marker:
-                    preserved_lines.append(
-                        cls.format_display_math_block(
-                            display_math_marker,
-                            display_math_lines,
-                        )
-                    )
-                    display_math_opening = ""
-                    display_math_marker = ""
-                    display_math_lines = []
-                else:
-                    display_math_lines.append(line)
-                continue
-            if in_fenced_code:
-                preserved_lines.append(line)
-                if stripped.startswith(fence_marker):
-                    in_fenced_code = False
-                    fence_marker = ""
-                continue
-            if stripped.startswith("```") or stripped.startswith("~~~"):
-                in_fenced_code = True
-                fence_marker = stripped[:3]
-                preserved_lines.append(line)
-                continue
-            if stripped.strip() in {r"\[", "$$"}:
-                display_math_opening = stripped.strip()
-                display_math_marker = r"\]" if stripped.strip() == r"\[" else "$$"
-                display_math_lines = []
-                continue
-            preserved_lines.append(cls.preserve_math_delimiters_in_line(line))
-        if display_math_marker:
-            preserved_lines.append(
-                cls.preserve_math_delimiters_in_line(
-                    "\n".join([display_math_opening, *display_math_lines])
-                )
-            )
-        return "\n".join(preserved_lines)
-
-    @staticmethod
-    def format_display_math_block(marker: str, lines: list[str]) -> str:
-        """Format display math as one Markdown line."""
-        body = " ".join(line.strip() for line in lines).strip()
-        if marker == "$$":
-            return f"$${body}$$"
-        return f"\\\\[{body}\\\\]"
-
-    @staticmethod
-    def preserve_math_delimiters_in_line(line: str) -> str:
-        """Preserve MathJax delimiters outside inline code spans."""
-        parts = INLINE_CODE_PATTERN.split(line)
-        for index in range(0, len(parts), 2):
-            parts[index] = MATH_DELIMITER_PATTERN.sub(
-                lambda match: "\\\\" + match.group(1),
-                parts[index],
-            )
-        return "".join(parts)
-
-    @staticmethod
-    def parse_content_image_paths(content: Any) -> list[str]:
-        """Return image paths embedded as ``<img path>`` tags in text."""
-        if not content:
-            return []
-        return [match.group(1) for match in IMAGE_TAG_PATTERN.finditer(str(content))]
-
-    @staticmethod
-    def image_html(src: str, class_name: str) -> str:
-        """Return lazy image HTML for transcript and sidebar images."""
-        safe_src = html.escape(src, quote=True)
-        safe_class = html.escape(class_name, quote=True)
-        return (
-            f'<img src="{safe_src}" class="{safe_class}" '
-            f'data-eaa-full-src="{safe_src}" loading="lazy" decoding="async" alt="">'
-        )
-
-    def image_source(self, image: str) -> str:
-        """Return a browser-loadable image source."""
-        if image.startswith("data:image"):
-            return image
-        return f"{self.image_route}?path={quote(image)}"
-
-    @staticmethod
-    def format_message_tool_calls(message: dict[str, Any]) -> str:
-        """Return display text for tool calls attached to a message."""
-        tool_calls = message.get("tool_calls")
-        if tool_calls is None:
-            return ""
-        if isinstance(tool_calls, str):
-            return tool_calls.strip()
-        return str(tool_calls).strip()
-
-    @staticmethod
-    def is_approval_message(message: dict[str, Any]) -> bool:
-        """Return whether a message is a tool-approval system prompt."""
-        return str(message.get("role") or "") == "system" and bool(
-            APPROVAL_PATTERN.search(str(message.get("content") or ""))
-        )
-
-    def format_approval_message(self, content: str) -> dict[str, Any] | None:
-        """Parse and format a tool-approval prompt for display."""
-        arguments_match = APPROVAL_ARGUMENTS_PATTERN.search(content)
-        if arguments_match is None:
-            return None
-        try:
-            arguments = json.loads(arguments_match.group("arguments"))
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(arguments, dict):
-            return None
-
-        scrubbed_arguments, extracted_fields = self.extract_approval_text_fields(
-            arguments
-        )
-        tool_match = APPROVAL_TOOL_PATTERN.search(content)
-        tool_name = tool_match.group("tool_name") if tool_match is not None else "tool"
-        return {
-            "summary": f"Tool `{tool_name}` requires approval before execution.",
-            "arguments_json": json.dumps(scrubbed_arguments, indent=2, default=str),
-            "extracted_fields": extracted_fields,
-        }
-
-    def extract_approval_text_fields(
-        self,
-        value: Any,
-        *,
-        path: str = "",
-    ) -> tuple[Any, list[dict[str, str]]]:
-        """Replace large text fields in approval arguments with placeholders."""
-        extracted_fields: list[dict[str, str]] = []
-        if isinstance(value, dict):
-            scrubbed: dict[str, Any] = {}
-            for key, item in value.items():
-                child_path = f"{path}.{key}" if path else str(key)
-                if key.lower() in {"code", "content"} and isinstance(item, str):
-                    extracted_fields.append({"label": child_path, "value": item})
-                    scrubbed[key] = f"<{child_path} rendered below>"
-                    continue
-                scrubbed_item, child_fields = self.extract_approval_text_fields(
-                    item,
-                    path=child_path,
-                )
-                scrubbed[key] = scrubbed_item
-                extracted_fields.extend(child_fields)
-            return scrubbed, extracted_fields
-        if isinstance(value, list):
-            scrubbed_list: list[Any] = []
-            for index, item in enumerate(value):
-                child_path = f"{path}[{index}]" if path else f"[{index}]"
-                scrubbed_item, child_fields = self.extract_approval_text_fields(
-                    item,
-                    path=child_path,
-                )
-                scrubbed_list.append(scrubbed_item)
-                extracted_fields.extend(child_fields)
-            return scrubbed_list, extracted_fields
-        return value, extracted_fields
-
-    def consume_pending_message(self, message: dict[str, Any]) -> bool:
-        """Forget an optimistic local message once it appears in the relay."""
-        role = message.get("role")
-        if role not in {"user", "user_webui"}:
-            return False
-        content = str(message.get("content") or "").strip()
-        matched_id = None
-        for pending_id, pending_content in self.pending_messages.items():
-            if pending_content == content:
-                matched_id = pending_id
-                break
-        if matched_id is not None:
-            del self.pending_messages[matched_id]
-            return True
-        return False
-
     def script(self) -> str:
         """Return browser JavaScript for the WebUI."""
         return r"""
@@ -395,7 +297,8 @@ class HTMLWebUIBase:
     pendingCounter: 0,
     skills: [],
     skillsLoaded: false,
-    processing: false
+    processing: false,
+    eventSource: null
   };
 
   const messagesEl = document.getElementById('messages');
@@ -403,6 +306,7 @@ class HTMLWebUIBase:
   const inputEl = document.getElementById('message-input');
   const formEl = document.getElementById('input-form');
   const sendButton = document.getElementById('send-button');
+  const interruptButton = document.getElementById('interrupt-button');
   const connectionStatus = document.getElementById('connection-status');
   const processingStatus = document.getElementById('processing-status');
   const skillPanel = document.getElementById('skill-suggestions');
@@ -630,8 +534,11 @@ class HTMLWebUIBase:
     row.className = 'eaa-approval-actions';
     const submit = async (value) => {
       for (const button of row.querySelectorAll('button')) button.disabled = true;
-      await queueMessage(value);
-      appendPendingMessage(value);
+      await fetch(routes.approval, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({approved: value === 'yes'})
+      });
     };
     for (const [label, value, cls] of [['Yes', 'yes', 'eaa-approval-yes'], ['No', 'no', 'eaa-approval-no']]) {
       const button = document.createElement('button');
@@ -756,27 +663,60 @@ class HTMLWebUIBase:
     if (rendered) followScroll(messagesEl);
   };
 
-  const poll = async () => {
+  const applyStatus = (payload) => {
+    updateProcessingStatus(Boolean(payload.input_requested), payload.status || 'idle');
+    if (payload.interrupt_requested) connectionStatus.textContent = 'Interrupt requested';
+  };
+
+  const loadState = async () => {
     try {
-      const params = state.lastMessageId === null ? '' : `?since_id=${encodeURIComponent(state.lastMessageId)}`;
-      const [messagesResponse, statusResponse] = await Promise.all([
-        fetch(`${routes.messages}${params}`),
-        fetch(routes.status)
-      ]);
-      if (!messagesResponse.ok || !statusResponse.ok) throw new Error('Poll failed');
-      const messagesPayload = await messagesResponse.json();
-      const statusPayload = await statusResponse.json();
-      renderMessages(Array.isArray(messagesPayload.messages) ? messagesPayload.messages : []);
-      updateProcessingStatus(statusPayload.user_input_requested);
+      const response = await fetch(routes.state);
+      if (!response.ok) throw new Error('State fetch failed');
+      const payload = await response.json();
+      renderMessages(Array.isArray(payload.messages) ? payload.messages : []);
+      applyStatus(payload);
       connectionStatus.textContent = 'Connected';
     } catch (_error) {
       connectionStatus.textContent = 'Reconnecting...';
     }
   };
 
-  const updateProcessingStatus = (userInputRequested) => {
-    state.processing = userInputRequested === 0;
+  const connectEvents = () => {
+    if (state.eventSource) state.eventSource.close();
+    state.eventSource = new EventSource(routes.events);
+    state.eventSource.onopen = () => {
+      connectionStatus.textContent = 'Connected';
+    };
+    state.eventSource.onerror = () => {
+      connectionStatus.textContent = 'Reconnecting...';
+    };
+    state.eventSource.addEventListener('message.created', (event) => {
+      const payload = JSON.parse(event.data || '{}');
+      if (payload.message) renderMessages([payload.message]);
+    });
+    state.eventSource.addEventListener('status.changed', (event) => {
+      applyStatus(JSON.parse(event.data || '{}'));
+    });
+    state.eventSource.addEventListener('interrupt.requested', (event) => {
+      applyStatus(JSON.parse(event.data || '{}'));
+    });
+    state.eventSource.addEventListener('interrupt.cleared', (event) => {
+      applyStatus(JSON.parse(event.data || '{}'));
+    });
+    state.eventSource.addEventListener('input.requested', () => {
+      updateProcessingStatus(true, 'waiting_for_input');
+    });
+    state.eventSource.addEventListener('approval.requested', (event) => {
+      const payload = JSON.parse(event.data || '{}');
+      const content = `Tool '${payload.tool_name || 'tool'}' requires approval before execution.\nArguments: ${JSON.stringify(payload.arguments || {}, null, 2)}\nApprove? [y/N]: `;
+      renderMessage({id: `approval-${Date.now()}`, role: 'system', content});
+    });
+  };
+
+  const updateProcessingStatus = (inputRequested, statusText = 'idle') => {
+    state.processing = !inputRequested && statusText !== 'idle';
     sendButton.disabled = state.processing;
+    interruptButton.disabled = statusText === 'idle';
     if (state.processing) {
       processingStatus.textContent = 'Agent is processing...';
       processingStatus.classList.remove('hidden');
@@ -785,6 +725,11 @@ class HTMLWebUIBase:
       processingStatus.classList.add('hidden');
     }
   };
+
+  interruptButton.addEventListener('click', async () => {
+    interruptButton.disabled = true;
+    await fetch(routes.interrupt, {method: 'POST'});
+  });
 
   const queueMessage = async (content) => {
     const response = await fetch(routes.send, {
@@ -934,8 +879,8 @@ class HTMLWebUIBase:
     hideSkillSuggestions();
   });
 
-  poll();
-  setInterval(poll, config.pollIntervalMs);
+  loadState();
+  connectEvents();
 })();
 """
 
@@ -956,7 +901,13 @@ button, textarea { font: inherit; }
   padding: 0 18px; border-bottom: 1px solid #d9dde3; background: #ffffff;
 }
 .eaa-title { font-size: 18px; font-weight: 650; }
+.eaa-header-actions { display: flex; align-items: center; gap: 10px; }
 .eaa-status { color: #586170; font-size: 13px; }
+.eaa-interrupt {
+  padding: 6px 10px; border: 1px solid #c2410c; border-radius: 6px;
+  background: #fff7ed; color: #9a3412; cursor: pointer;
+}
+.eaa-interrupt:disabled { border-color: #e5e7eb; background: #f3f4f6; color: #8a94a3; cursor: not-allowed; }
 .eaa-main { flex: 1; min-height: 0; display: flex; }
 .eaa-chat { flex: 1; min-width: 0; height: 100%; border-right: 1px solid #d9dde3; }
 .eaa-messages { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 16px; box-sizing: border-box; }
@@ -1068,32 +1019,28 @@ button, textarea { font: inherit; }
 
 
 def run_html_webui(
-    session_db_path: str,
+    runtime_url: str = "http://127.0.0.1:8010",
     *,
     host: str = "127.0.0.1",
     port: int = 8008,
     title: str = "EAA WebUI",
-    upload_dir: str = ".tmp",
     poll_interval: float = 1.0,
 ) -> None:
     """Run the default HTML/JavaScript WebUI."""
-    set_message_db_path(session_db_path)
     webui = HTMLWebUIBase(
-        session_db_path,
+        runtime_url,
         title=title,
-        upload_dir=upload_dir,
         poll_interval=poll_interval,
     )
     webui.run(host=host, port=port)
 
 
 def launch_html_webui_subprocess(
-    session_db_path: str,
+    runtime_url: str = "http://127.0.0.1:8010",
     *,
     host: str = "127.0.0.1",
     port: int = 8008,
     title: str = "EAA WebUI",
-    upload_dir: str = ".tmp",
     poll_interval: float = 1.0,
     python_executable: str | None = None,
     cwd: str | None = None,
@@ -1107,15 +1054,14 @@ def launch_html_webui_subprocess(
         executable,
         "-m",
         "eaa_core.gui.html",
-        session_db_path,
+        "--runtime-url",
+        runtime_url,
         "--host",
         host,
         "--port",
         str(port),
         "--title",
         title,
-        "--upload-dir",
-        upload_dir,
         "--poll-interval",
         str(poll_interval),
     ]
@@ -1131,15 +1077,14 @@ def launch_html_webui_subprocess(
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for the WebUI module."""
     parser = argparse.ArgumentParser(prog="python -m eaa_core.gui.html")
-    parser.add_argument("session_db_path", help="Shared SQLite session database.")
+    parser.add_argument(
+        "--runtime-url",
+        default="http://127.0.0.1:8010",
+        help="Agent-side WebUI runtime URL.",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Bind host.")
     parser.add_argument("--port", default=8008, type=int, help="Bind port.")
     parser.add_argument("--title", default="EAA WebUI", help="Browser and header title.")
-    parser.add_argument(
-        "--upload-dir",
-        default=".tmp",
-        help="Directory used for pasted image uploads.",
-    )
     parser.add_argument(
         "--poll-interval",
         default=1.0,
@@ -1153,11 +1098,10 @@ def main() -> None:
     """Run the WebUI from command-line arguments."""
     args = build_parser().parse_args()
     run_html_webui(
-        args.session_db_path,
+        args.runtime_url,
         host=args.host,
         port=args.port,
         title=args.title,
-        upload_dir=args.upload_dir,
         poll_interval=args.poll_interval,
     )
 

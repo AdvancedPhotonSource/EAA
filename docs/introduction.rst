@@ -30,10 +30,10 @@ At a high level the pieces connect like this:
         |
         +--> MemoryManager --> vector store (Chroma in the current built-in path)
         |
-        +--> SQLite session DB --> checkpoints + WebUI relay tables
+        +--> checkpoint SQLite DB + transcript SQLite DB
                                       |
                                       v
-                                   FastAPI WebUI
+                         WebUI runtime API + FastAPI WebUI
 
 Key components
 --------------

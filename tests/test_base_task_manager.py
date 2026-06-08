@@ -1,4 +1,5 @@
 import httpx
+import pytest
 import sqlite3
 from langgraph.graph import START, StateGraph
 from openai import UnprocessableEntityError
@@ -119,7 +120,7 @@ def test_merge_tools_ignores_hidden_tool_name_clashes():
         def second(self):
             return "duplicate"
 
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     tools = [FirstTool()]
 
     task_manager._merge_tools(tools, [SecondTool(), DuplicateSecondTool()])
@@ -129,7 +130,7 @@ def test_merge_tools_ignores_hidden_tool_name_clashes():
 
 
 def test_active_state_owns_context_and_history():
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     message = {"role": "user", "content": "hello"}
 
     task_manager.update_message_history(message)
@@ -148,7 +149,7 @@ def test_active_state_owns_context_and_history():
 
 def test_default_tools_include_subagent_tool():
     task_manager = BaseTaskManager(
-        session_db_path=None,
+        checkpoint_db_path=None,
         use_coding_tools=True,
     )
 
@@ -157,7 +158,7 @@ def test_default_tools_include_subagent_tool():
 
 def test_subagent_manager_omits_subagent_tool_and_appends_prompt():
     task_manager = BaseTaskManager(
-        session_db_path=None,
+        checkpoint_db_path=None,
         use_coding_tools=True,
         is_subagent=True,
     )
@@ -171,7 +172,7 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
         build=False,
         tools=[EchoTool()],
         use_coding_tools=False,
-        session_db_path=str(tmp_path / "session.sqlite"),
+        checkpoint_db_path=str(tmp_path / "checkpoint.sqlite"),
         use_webui=True,
     )
     parent.model = object()
@@ -182,7 +183,7 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
 
     def capture_subagent_build(task_manager, *args, **kwargs):
         if task_manager.is_subagent:
-            captured["session_db_path"] = task_manager.session_db_path
+            captured["checkpoint_db_path"] = task_manager.checkpoint_db_path
             captured["use_webui"] = task_manager.use_webui
         return original_build(task_manager, *args, **kwargs)
 
@@ -199,7 +200,7 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
     result = subagent_tool.launch_subagent("inspect this")
 
     assert result == {"result": "subagent complete"}
-    assert captured["session_db_path"] == parent.session_db_path
+    assert captured["checkpoint_db_path"] == parent.checkpoint_db_path
     assert captured["use_webui"] is True
     assert "echo_test" in captured["tool_names"]
     assert "launch_subagent" not in captured["tool_names"]
@@ -210,7 +211,7 @@ def test_task_graph_can_own_feedback_loop_state(monkeypatch):
     task_manager = FeedbackStateTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     task_manager.task_graph = task_manager.build_task_graph()
     task_manager.set_active_state(
@@ -244,7 +245,7 @@ def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
     task_manager = TaskChatRequestTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     task_manager.task_graph = task_manager.build_task_graph()
     task_manager.set_active_state(
@@ -275,8 +276,17 @@ def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
     }
 
 
+def test_session_db_path_raises_with_new_database_guidance(tmp_path):
+    with pytest.raises(ValueError, match="transcript_db_path.*checkpoint_db_path"):
+        BaseTaskManager(
+            build=False,
+            use_coding_tools=False,
+            session_db_path=str(tmp_path / "session.sqlite"),
+        )
+
+
 def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
     task_manager.chat_graph = task_manager.build_chat_graph()
 
@@ -302,7 +312,7 @@ def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch)
 
 
 def test_feedback_initial_response_sets_await_user_input(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
 
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
@@ -320,7 +330,7 @@ def test_feedback_initial_response_sets_await_user_input(monkeypatch):
 
 
 def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
     task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
 
@@ -349,7 +359,7 @@ def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch)
 
 
 def test_run_conversation_keyboard_interrupt_resumes_same_graph(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
 
     invoke_calls = {"count": 0}
@@ -386,7 +396,7 @@ def test_run_conversation_keyboard_interrupt_resumes_same_graph(monkeypatch):
 
 
 def test_run_feedback_loop_keyboard_interrupt_resumes_same_graph(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
     invoke_calls = {"count": 0}
 
@@ -422,7 +432,7 @@ def test_run_feedback_loop_keyboard_interrupt_resumes_same_graph(monkeypatch):
 
 
 def test_interruption_resume_adds_fake_tool_response_for_unmatched_tool_call(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.set_active_state(
         TaskManagerState(
             messages=[
@@ -481,7 +491,7 @@ def test_interruption_resume_adds_fake_tool_response_for_unmatched_tool_call(mon
 
 
 def test_checkpointed_tool_interruption_skips_execute_tools_on_resume(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     assistant_message = {
         "role": "assistant",
         "content": "",
@@ -553,7 +563,7 @@ def test_checkpointed_tool_interruption_skips_execute_tools_on_resume(monkeypatc
 
 
 def test_non_tool_checkpointed_interruption_does_not_force_resume_node():
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     checkpoint_state = TaskManagerState(
         messages=[{"role": "user", "content": "seed"}],
         full_history=[{"role": "user", "content": "seed"}],
@@ -577,7 +587,7 @@ def test_non_tool_checkpointed_interruption_does_not_force_resume_node():
 
 
 def test_run_feedback_loop_keyboard_interrupt_chat_command_enters_chat(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
 
     class DummyGraph:
@@ -610,7 +620,7 @@ def test_interruption_message_preview_uses_checkpoint_state_and_image_placeholde
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     graph, checkpoint_config, _ = task_manager.get_checkpointed_graph(
         "chat_graph",
@@ -666,7 +676,7 @@ def test_checkpointed_interruption_recovery_survives_multiple_interruptions(tmp_
     task_manager = InterruptibleCheckpointTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     task_manager.task_graph = task_manager.build_task_graph()
     task_manager.set_active_state(
@@ -695,7 +705,7 @@ def test_checkpointed_interruption_recovery_survives_multiple_interruptions(tmp_
 
 
 def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
     task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
 
@@ -733,7 +743,7 @@ def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
 
 
 def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.chat_graph = task_manager.build_chat_graph()
 
     captured: dict[str, Any] = {}
@@ -754,7 +764,7 @@ def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch)
     assert captured["state"].full_history == []
 
 def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
-    checkpoint_base = tmp_path / "session.sqlite"
+    checkpoint_base = tmp_path / "checkpoint.sqlite"
 
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
         return {"role": "assistant", "content": "Hello! How can I help you today?"}
@@ -762,7 +772,7 @@ def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     first_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
 
@@ -773,7 +783,7 @@ def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     resumed_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     resumed_manager.model = object()
 
@@ -801,7 +811,7 @@ def test_run_conversation_can_resume_from_override_checkpoint_path(tmp_path, mon
     first_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
 
@@ -812,7 +822,7 @@ def test_run_conversation_can_resume_from_override_checkpoint_path(tmp_path, mon
     resumed_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     resumed_manager.model = object()
 
@@ -842,7 +852,7 @@ def test_run_conversation_can_seed_from_feedback_checkpoint(tmp_path, monkeypatc
     first_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
 
@@ -853,7 +863,7 @@ def test_run_conversation_can_seed_from_feedback_checkpoint(tmp_path, monkeypatc
     resumed_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     resumed_manager.model = object()
 
@@ -885,7 +895,7 @@ def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypa
     first_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
     monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
@@ -900,7 +910,7 @@ def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypa
     resumed_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     resumed_manager.model = object()
 
@@ -929,7 +939,7 @@ def test_run_feedback_loop_can_resume_from_override_checkpoint_path(tmp_path, mo
     first_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
     monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
@@ -940,7 +950,7 @@ def test_run_feedback_loop_can_resume_from_override_checkpoint_path(tmp_path, mo
     resumed_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     resumed_manager.model = object()
 
@@ -969,7 +979,7 @@ def test_run_feedback_loop_can_seed_from_chat_checkpoint(tmp_path, monkeypatch):
     first_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     first_manager.model = object()
     monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
@@ -980,7 +990,7 @@ def test_run_feedback_loop_can_seed_from_chat_checkpoint(tmp_path, monkeypatch):
     resumed_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     resumed_manager.model = object()
 
@@ -1007,7 +1017,7 @@ def test_run_task_graph_can_resume_from_override_checkpoint_path(tmp_path):
     first_manager = CheckpointableTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(checkpoint_base),
+        checkpoint_db_path=str(checkpoint_base),
     )
     checkpointed_graph, checkpoint_config, _ = first_manager.get_checkpointed_graph(
         "task_graph"
@@ -1023,7 +1033,7 @@ def test_run_task_graph_can_resume_from_override_checkpoint_path(tmp_path):
     resumed_manager = CheckpointableTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
     )
     resumed_manager.run_from_checkpoint(checkpoint_db_path=str(checkpoint_base))
 
@@ -1040,7 +1050,7 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=str(shared_db),
+        checkpoint_db_path=str(shared_db),
         prune_checkpoints=True,
     )
     task_manager.model = object()
@@ -1096,53 +1106,43 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
     assert resumed_state.full_history == task_manager.full_history
 
 
-def test_get_user_input_reads_from_webui_inputs_table(tmp_path):
-    shared_db = tmp_path / "webui.sqlite"
+def test_get_user_input_reads_from_webui_runtime_queue(tmp_path):
+    transcript_db = tmp_path / "transcript.sqlite"
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
         use_webui=True,
-        session_db_path=str(shared_db),
+        transcript_db_path=str(transcript_db),
     )
     task_manager.build_db()
-    task_manager.persistence.enqueue_webui_input("queued response")
+    task_manager.runtime_controller.submit_input("queued response")
 
     message = task_manager.get_user_input("Prompt: ", display_prompt_in_webui=True)
 
     assert message == "queued response"
-    status_row = task_manager.persistence.connection.execute(
-        "SELECT user_input_requested FROM status WHERE id = 1"
-    ).fetchone()
-    assert status_row == (0,)
+    assert task_manager.runtime_controller.input_requested is False
 
 
-def test_get_user_input_consumes_pending_webui_input_from_before_build(tmp_path):
-    shared_db = tmp_path / "webui.sqlite"
-    bootstrap_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        use_webui=True,
-        session_db_path=str(shared_db),
-    )
-    bootstrap_manager.build_db()
-    bootstrap_manager.persistence.enqueue_webui_input("queued before wait")
-    bootstrap_manager.persistence.connection.close()
-
+def test_webui_runtime_commands_are_not_persisted_in_transcript_db(tmp_path):
+    transcript_db = tmp_path / "transcript.sqlite"
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
         use_webui=True,
-        session_db_path=str(shared_db),
+        transcript_db_path=str(transcript_db),
     )
     task_manager.build_db()
+    task_manager.runtime_controller.submit_input("queued only in memory")
 
-    message = task_manager.get_user_input("Prompt: ", display_prompt_in_webui=True)
-
-    assert message == "queued before wait"
-    remaining_rows = task_manager.persistence.connection.execute(
-        "SELECT COUNT(*) FROM webui_inputs"
-    ).fetchone()
-    assert remaining_rows == (0,)
+    connection = sqlite3.connect(transcript_db)
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    connection.close()
+    assert "webui_inputs" not in tables
 
 
 def test_task_manager_state_derives_latest_messages():
@@ -1162,7 +1162,7 @@ def test_task_manager_state_derives_latest_messages():
 
 
 def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     captured = {}
 
     def fake_execute_tools_for_state(
@@ -1195,7 +1195,7 @@ def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
 
 
 def test_image_followup_converts_followup_exceptions_into_messages(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, session_db_path=None)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
 
     def fake_build_tool_followup_messages(*args, **kwargs):
         raise FileNotFoundError("missing.png")
@@ -1238,7 +1238,7 @@ def test_memory_llm_config_overrides_embedding_client_connection(monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="chat-model", base_url="https://chat.example", api_key="chat-key"),
         memory_config=MemoryManagerConfig(
             enabled=True,
@@ -1284,7 +1284,7 @@ def test_memory_retrieval_falls_back_to_string_input_on_422():
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="chat-model", api_key="chat-key"),
         memory_config=MemoryManagerConfig(enabled=True),
     )
@@ -1330,7 +1330,7 @@ def test_memory_manager_saves_image_caption_with_text(monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(enabled=True),
     )
@@ -1378,7 +1378,7 @@ def test_memory_manager_retrieves_with_image_caption_query(monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(enabled=True),
     )
@@ -1428,7 +1428,7 @@ def test_feedback_followup_triggered_memory_reuses_memory_manager(monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(enabled=True),
     )
@@ -1487,7 +1487,7 @@ def test_chat_graph_saves_keyword_triggered_long_term_memory(monkeypatch, tmp_pa
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(
             enabled=True,
@@ -1531,7 +1531,7 @@ def test_chat_graph_retrieves_long_term_memory_into_model_context(monkeypatch, t
     task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
-        session_db_path=None,
+        checkpoint_db_path=None,
         llm_config=OpenAIConfig(model="gpt-test", api_key="test"),
         memory_config=MemoryManagerConfig(
             enabled=True,

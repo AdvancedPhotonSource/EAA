@@ -153,7 +153,7 @@ class TestXANESAdaptiveSampling(tutils.BaseTester):
             objective_function=measurement_tool,
             objective_function_method="measure",
             n_initial_points=10,
-            session_db_path=None,
+            checkpoint_db_path=None,
         )
         task_manager.run(n_iterations=10)
 
@@ -230,7 +230,7 @@ class TestXANESAdaptiveSampling(tutils.BaseTester):
             measurement_tool=measurement_tool,
             bayesian_optimization_tool=bo_tool,
             initial_points=initial_points,
-            session_db_path=None,
+            checkpoint_db_path=None,
         )
         task_manager.run(n_iterations=20)
 
