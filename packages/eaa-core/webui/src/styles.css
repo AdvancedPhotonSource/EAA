@@ -29,6 +29,49 @@ button {
   width: 100%;
 }
 
+.eaa-info-box {
+  animation: eaa-info-box-lifecycle 5.5s ease forwards;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+  box-sizing: border-box;
+  color: #ffffff;
+  font-size: 14px;
+  left: 50%;
+  line-height: 1.4;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 16px;
+  pointer-events: none;
+  position: fixed;
+  text-align: center;
+  top: 68px;
+  transform: translateX(-50%);
+  z-index: 10001;
+}
+
+@keyframes eaa-info-box-lifecycle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+
+  9.09% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  81.82% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+
 .eaa-header {
   align-items: center;
   background: #ffffff;

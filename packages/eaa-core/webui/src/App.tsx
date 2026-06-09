@@ -236,6 +236,7 @@ function App() {
   const [status, setStatus] = useState("idle");
   const [inputRequested, setInputRequested] = useState(false);
   const [interruptRequested, setInterruptRequested] = useState(false);
+  const [infoMessage, setInfoMessage] = useState<{ id: number; text: string } | null>(null);
   const [content, setContent] = useState("");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsLoaded, setSkillsLoaded] = useState(false);
@@ -247,6 +248,7 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const pendingMessagesRef = useRef<Map<string, string>>(new Map());
+  const infoTimeoutRef = useRef<number | null>(null);
 
   const processing = !inputRequested && status !== "idle";
 
@@ -421,6 +423,15 @@ function App() {
 
   const requestInterrupt = async () => {
     setInterruptRequested(true);
+    if (infoTimeoutRef.current !== null) window.clearTimeout(infoTimeoutRef.current);
+    setInfoMessage({
+      id: Date.now(),
+      text: "Workflow will be interrupted after the next LLM or tool response.",
+    });
+    infoTimeoutRef.current = window.setTimeout(() => {
+      setInfoMessage(null);
+      infoTimeoutRef.current = null;
+    }, 5500);
     await fetch(config.routes.interrupt, { method: "POST" });
   };
 
@@ -497,8 +508,19 @@ function App() {
     return () => document.removeEventListener("keydown", close);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (infoTimeoutRef.current !== null) window.clearTimeout(infoTimeoutRef.current);
+    };
+  }, []);
+
   return (
     <div className="eaa-page">
+      {infoMessage ? (
+        <div className="eaa-info-box" key={infoMessage.id}>
+          {infoMessage.text}
+        </div>
+      ) : null}
       <header className="eaa-header">
         <div className="eaa-title">{config.title}</div>
         <div className="eaa-header-actions">
