@@ -9,7 +9,7 @@ const escapeHtml = (value: unknown): string =>
 const inlineMarkdown = (text: string): string => {
   let output = escapeHtml(text);
   const code: string[] = [];
-  output = output.replace(/`([^`]+)`/g, (_match, value: string) => {
+  output = output.replace(/(`+)([\s\S]*?)\1/g, (_match, _ticks: string, value: string) => {
     const id = code.length;
     code.push(`<code>${escapeHtml(value)}</code>`);
     return `\u0000CODE${id}\u0000`;

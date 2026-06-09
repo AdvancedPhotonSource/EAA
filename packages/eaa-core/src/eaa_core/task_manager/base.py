@@ -1010,7 +1010,16 @@ class BaseTaskManager:
             Message payload to expose through the WebUI.
         """
         if self.runtime_controller is not None:
-            self.runtime_controller.publish_message(message)
+            if isinstance(message.get("content"), list) or isinstance(message.get("tool_calls"), list):
+                display_message = get_message_elements_as_text(message)
+                display_message["content"] = display_message["content"].strip()
+                image_urls = display_message.get("image") or []
+                if isinstance(image_urls, list):
+                    display_message["images"] = image_urls
+                    display_message["image"] = image_urls[0] if image_urls else None
+                self.runtime_controller.publish_message(display_message)
+            else:
+                self.runtime_controller.publish_message(message)
 
     def record_transcript_message(self, message: Dict[str, Any]) -> None:
         """Persist one transcript message."""

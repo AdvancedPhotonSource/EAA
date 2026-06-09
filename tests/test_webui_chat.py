@@ -281,6 +281,42 @@ def test_runtime_state_uses_live_messages_not_transcript_db(tmp_path):
     ]
 
 
+def test_runtime_publish_normalizes_structured_content_for_display(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+
+    task_manager.publish_webui_message(
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "Image result"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,abc"},
+                },
+            ],
+        }
+    )
+
+    assert task_manager.runtime_controller is not None
+    messages = task_manager.runtime_controller.snapshot()["messages"]
+    assert messages == [
+        {
+            "role": "system",
+            "content": "Image result\n<image>",
+            "tool_calls": None,
+            "image": "data:image/png;base64,abc",
+            "images": ["data:image/png;base64,abc"],
+            "id": "runtime-1",
+        }
+    ]
+
+
 def test_record_transcript_message_does_not_read_back_row(tmp_path, monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
