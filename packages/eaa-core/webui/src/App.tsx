@@ -122,6 +122,16 @@ function ApprovalContent({ content }: { content: unknown }) {
   );
 }
 
+function CodeBlock({ content }: { content: unknown }) {
+  return (
+    <div className="eaa-markdown eaa-tool-response">
+      <pre>
+        <code>{String(content ?? "")}</code>
+      </pre>
+    </div>
+  );
+}
+
 function MessageView({
   message,
   onImage,
@@ -171,7 +181,15 @@ function MessageView({
   return (
     <article className={`eaa-message eaa-message-${role}`}>
       <div className="eaa-role">{roleLabel(role)}</div>
-      {content ? isApprovalMessage(message) ? <ApprovalContent content={content} /> : <MarkdownBlock content={content} role={role} /> : null}
+      {content ? (
+        isApprovalMessage(message) ? (
+          <ApprovalContent content={content} />
+        ) : role === "tool" ? (
+          <CodeBlock content={content} />
+        ) : (
+          <MarkdownBlock content={content} role={role} />
+        )
+      ) : null}
       {message.tool_calls !== null && message.tool_calls !== undefined && String(message.tool_calls).trim() !== "" ? (
         <details className="eaa-tool-call-details" open>
           <summary>Tool calls</summary>
