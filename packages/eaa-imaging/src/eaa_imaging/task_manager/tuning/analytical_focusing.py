@@ -403,7 +403,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             The FWHM of the Gaussian fit.
         """
         while True:
-            self.record_system_message(f"Acquiring line scan with ```{self.line_scan_kwargs}```")
+            self.record_system_message(f"Acquiring line scan with\n```\n{self.line_scan_kwargs}\n```")
             res = self.acquisition_tool.acquire_line_scan(**self.line_scan_kwargs)
             if isinstance(res, str):
                 try:
@@ -418,7 +418,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 raise ValueError(
                     f"The JSON object should contain the 'fwhm' key, but got {res}."
                 )
-            content = f"Line scan completed with kwargs: ```{self.line_scan_kwargs}```\nFWHM = {res['fwhm']:.4f}"
+            content = f"Line scan completed with kwargs:\n```\n{self.line_scan_kwargs}\n```\nFWHM = {res['fwhm']:.4f}"
             image_path = res.get("img_path")
             if isinstance(image_path, str):
                 self.record_system_message(content, image_path=image_path, update_context=False)
@@ -436,7 +436,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     else {"result": "ok"}
                 )
                 self.record_system_message(
-                    f"Line scan validation result:```{check_res}```"
+                    f"Line scan validation result:\n```\n{check_res}\n```"
                 )
             else:
                 check_res = {"result": "ok"}
@@ -445,7 +445,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 return res["fwhm"]
             if check_res["result"] == "adjusted":
                 self.record_system_message(
-                    f"Line scan adjusted. New line scan kwargs:```{self.line_scan_kwargs}```"
+                    f"Line scan adjusted. New line scan kwargs:\n```\n{self.line_scan_kwargs}\n```"
                 )
                 continue
             if check_res["result"] == "failed":
@@ -509,10 +509,10 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.drift_model_y.update(x=x_train, y=[[float(drift_wrt_initial_yx[0])]])
         self.drift_model_x.update(x=x_train, y=[[float(drift_wrt_initial_yx[1])]])
         self.record_system_message(
-            "Updated linear drift model with parameter-drift sample:```"
+            "Updated linear drift model with parameter-drift sample:\n```\n"
             f"parameters={np.array(parameters, dtype=float).tolist()}, "
             f"delta_yx={drift_wrt_initial_yx.tolist()}, "
-            f"n_samples={self.drift_model_y.get_n_parameter_drift_points_collected()}.```"
+            f"n_samples={self.drift_model_y.get_n_parameter_drift_points_collected()}.\n```"
         )
 
     def snapshot_acquisition_state(self) -> dict[str, Any]:
@@ -700,7 +700,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         self.record_system_message(
             f"Starting line scan quality check and adjustment with LLM. Below are the findings of "
             f"analytical pre-check based on Gaussian fitting result:\n"
-            f"```{fit_summary}\n\n{precheck_summary}```"
+            f"```\n{fit_summary}\n\n{precheck_summary}\n```"
         )
 
         starter_message = generate_openai_message(
@@ -774,13 +774,13 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             logger.warning("Failed to visualize optimization status: %s", exc)
         
     def run_2d_scan(self):
-        self.record_system_message(f"Acquiring 2D scan...```{self.image_acquisition_kwargs}```")
+        self.record_system_message(f"Acquiring 2D scan...\n```\n{self.image_acquisition_kwargs}\n```")
         image_response = self.acquisition_tool.acquire_image(**self.image_acquisition_kwargs)
         if self.initial_image_acquisition_position is None:
             self.initial_image_acquisition_position = self.extract_image_acquisition_position(
                 self.image_acquisition_kwargs
             )
-        content = f"Acquired 2D scan with kwargs: ```{self.image_acquisition_kwargs}```"
+        content = f"Acquired 2D scan with kwargs:\n```\n{self.image_acquisition_kwargs}\n```"
         image_paths = self.tool_executor.extract_image_paths_from_tool_response(image_response)
         image_path = image_paths[0] if len(image_paths) > 0 else None
         if isinstance(image_path, str):
@@ -821,8 +821,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             self.record_system_message(
                 content=(
                     f"Registration result from {self.get_registration_tool_name(registration_tool)}:\n"
-                    f"```target={target}\n"
-                    f"alignment_offset={alignment_offset.tolist()}```"
+                    f"```\ntarget={target}\n"
+                    f"alignment_offset={alignment_offset.tolist()}\n```"
                 ),
                 image_path=registration_fig_path,
                 update_context=False,
@@ -993,7 +993,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             return x_next
 
         while True:
-            self.record_system_message(f"Setting parameters to new value:```{x_current}```")
+            self.record_system_message(f"Setting parameters to new value:\n```\n{x_current}\n```")
             self.param_setting_tool.set_parameters(x_current)
             chosen_line_scan_correction_wrt_initial = None
             if self.run_offset_calibration:
@@ -1044,9 +1044,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 for name, drift in candidate_drifts.items()
             )
             self.record_system_message(
-                f"Registration tool selection (primary phase, n={n_collected}/{n_needed}): "
-                f"```using {chosen_source}\n"
-                f"candidate_drifts:\n{candidate_drift_lines}```"
+                f"Registration tool selection (primary phase, n={n_collected}/{n_needed}):\n"
+                f"```\nusing {chosen_source}\n"
+                f"candidate_drifts:\n{candidate_drift_lines}\n```"
             )
         else:
             model_drift = self.predict_linear_drift_model(x_current)
@@ -1062,9 +1062,9 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             )
             self.record_system_message(
                 f"Registration tool selection (arbitration phase):\n"
-                f"```model_drift={model_drift.tolist()}\n"
+                f"```\nmodel_drift={model_drift.tolist()}\n"
                 f"candidates:\n{candidate_result_lines}\n"
-                f"Chosen: {chosen_source}```"
+                f"Chosen: {chosen_source}\n```"
             )
 
         return chosen_drift, chosen_source
@@ -1194,12 +1194,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         linear_model_prediction_wrt_initial = self.predict_linear_drift_model(x_current)
         self.record_system_message(
             f"Applied drift correction:\n"
-            f"```source = {chosen_source}\n"
+            f"```\nsource = {chosen_source}\n"
             f"linear_model_prediction_wrt_initial = {linear_model_prediction_wrt_initial.tolist()}\n"
             f"chosen_line_scan_correction_wrt_prev = {chosen_line_scan_correction_wrt_prev.tolist()}\n"
             f"chosen_line_scan_correction_wrt_initial = {chosen_line_scan_correction_wrt_initial.tolist()}\n"
             f"chosen_image_acq_correction_wrt_prev = {chosen_image_acq_correction_wrt_prev.tolist()}\n"
-            f"chosen_image_acq_correction_wrt_initial = {chosen_image_acq_correction_wrt_initial.tolist()}```"
+            f"chosen_image_acq_correction_wrt_initial = {chosen_image_acq_correction_wrt_initial.tolist()}\n```"
         )
 
         return chosen_line_scan_correction_wrt_initial
