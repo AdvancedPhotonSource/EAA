@@ -395,6 +395,15 @@ function App() {
     renderedIdsRef.current.add(id);
   };
 
+  const showInfoMessage = (text: string) => {
+    if (infoTimeoutRef.current !== null) window.clearTimeout(infoTimeoutRef.current);
+    setInfoMessage({ id: Date.now(), text });
+    infoTimeoutRef.current = window.setTimeout(() => {
+      setInfoMessage(null);
+      infoTimeoutRef.current = null;
+    }, 5500);
+  };
+
   const sendCurrentMessage = async () => {
     if (processing) return;
     const trimmed = content.trim();
@@ -404,7 +413,17 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: trimmed }),
     });
+    const payload = (await response.json().catch(() => ({}))) as { handled_as?: string; message?: string };
+    if (response.status === 409) {
+      showInfoMessage(payload.message || "Please avoid sending repeated messages.");
+      return;
+    }
     if (!response.ok) throw new Error("Send failed");
+    if (payload.handled_as === "approval") {
+      setContent("");
+      setSuggestionsOpen(false);
+      return;
+    }
     appendPendingMessage(trimmed);
     setContent("");
     setSuggestionsOpen(false);
@@ -423,15 +442,7 @@ function App() {
 
   const requestInterrupt = async () => {
     setInterruptRequested(true);
-    if (infoTimeoutRef.current !== null) window.clearTimeout(infoTimeoutRef.current);
-    setInfoMessage({
-      id: Date.now(),
-      text: "Workflow will be interrupted after the next LLM or tool response.",
-    });
-    infoTimeoutRef.current = window.setTimeout(() => {
-      setInfoMessage(null);
-      infoTimeoutRef.current = null;
-    }, 5500);
+    showInfoMessage("Workflow will be interrupted after the next LLM or tool response.");
     await fetch(config.routes.interrupt, { method: "POST" });
   };
 

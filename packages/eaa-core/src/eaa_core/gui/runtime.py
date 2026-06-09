@@ -48,6 +48,7 @@ class WebUIRuntimeController:
         self.message_event_counter = 0
         self.status = "idle"
         self.input_requested = False
+        self.queued_input_count = 0
         self.pending_approval: dict[str, Any] | None = None
 
     def build(self) -> None:
@@ -144,12 +145,19 @@ class WebUIRuntimeController:
         if prompt:
             self.publish("input.requested", {"prompt": prompt})
         value = self.input_queue.get()
+        with self.lock:
+            self.queued_input_count = max(0, self.queued_input_count - 1)
         self.set_status(previous_status, input_requested=False)
         return value
 
-    def submit_input(self, content: str) -> None:
-        """Queue user input from the WebUI."""
+    def submit_input(self, content: str) -> bool:
+        """Queue user input from the WebUI when no input is already queued."""
+        with self.lock:
+            if self.queued_input_count:
+                return False
+            self.queued_input_count += 1
         self.input_queue.put(content)
+        return True
 
     def request_interrupt(self) -> None:
         """Request cooperative interruption."""
@@ -188,6 +196,11 @@ class WebUIRuntimeController:
     def submit_approval(self, approved: bool) -> None:
         """Queue a tool approval decision."""
         self.approval_queue.put(approved)
+
+    def has_pending_approval(self) -> bool:
+        """Return whether a tool approval request is waiting for a response."""
+        with self.lock:
+            return self.pending_approval is not None
 
     def ensure_upload_dir(self) -> str:
         """Ensure and return the configured upload directory."""
@@ -297,7 +310,23 @@ class WebUIRuntimeServer:
             content = str(payload.get("content") or "").strip()
             if not content:
                 return JSONResponse({"error": "No content provided"}, status_code=400)
-            self.controller.submit_input(content)
+            if self.controller.has_pending_approval():
+                normalized = content.lower()
+                if normalized in {"y", "yes"}:
+                    self.controller.submit_approval(True)
+                    return JSONResponse({"ok": True, "handled_as": "approval"}, status_code=201)
+                if normalized in {"n", "no"}:
+                    self.controller.submit_approval(False)
+                    return JSONResponse({"ok": True, "handled_as": "approval"}, status_code=201)
+                return JSONResponse(
+                    {
+                        "error": "Approval response must be yes or no",
+                        "message": "Please enter only Yes or No to respond to a tool call approval.",
+                    },
+                    status_code=409,
+                )
+            if not self.controller.submit_input(content):
+                return JSONResponse({"error": "User input is already queued"}, status_code=409)
             return JSONResponse({"ok": True}, status_code=201)
 
         @app.post("/api/interrupt")
