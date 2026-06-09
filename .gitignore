@@ -7,10 +7,12 @@
 
 # IDE
 .vscode/
-.loglogin
+**/.loglogin
+transcript.sqlite
 
 # Build files
 **/*egg-info/
+**/node_modules/
 
 # Development files
 workspace/

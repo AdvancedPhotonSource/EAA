@@ -408,37 +408,23 @@ def test_html_webui_proxies_event_stream(monkeypatch):
         assert "event: status.changed" in response.read().decode()
 
 
-def test_html_webui_styles_include_input_and_code_block_rules(tmp_path):
-    webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    styles = webui.styles()
-
-    assert ".eaa-input-panel" in styles
-    assert ".eaa-markdown pre" in styles
-    assert ".eaa-markdown code:not(pre code)" in styles
-    assert ".eaa-browser-image-preview" in styles
-    assert ".eaa-markdown-folded" in styles
-    assert ".eaa-message-expand" in styles
-    assert ".eaa-tool-call-details" in styles
-    assert ".eaa-approval-arguments" in styles
-    assert ".eaa-approval-extracted-field" in styles
-
-
-def test_html_webui_page_includes_long_message_folding_script(tmp_path):
+def test_html_webui_page_serves_built_react_assets(tmp_path):
     webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
     page = webui.page_html()
 
-    assert "eaa-markdown-folded" in page
-    assert "Show more" in page
-    assert "lines.length > 10" in page
+    assert "/static/webui/assets/" in page
+    assert "window.EAA_WEBUI_CONFIG" in page
+    assert "/static/mathjax/es5/tex-svg-full.js" in page
 
 
-def test_html_webui_script_binds_keyboard_shortcuts_to_textarea(tmp_path):
+def test_html_webui_static_assets_are_mounted(tmp_path):
     webui = HTMLWebUIBase(str(tmp_path / "shared.sqlite"))
-    script = webui.script()
+    client = TestClient(webui.build_app())
 
-    assert "keydown" in script
-    assert "event.shiftKey" in script
-    assert "Enter" in script
+    response = client.get("/static/webui/index.html")
+
+    assert response.status_code == 200
+    assert "root" in response.text
 
 
 def test_runtime_image_response_sets_cache_headers(tmp_path):

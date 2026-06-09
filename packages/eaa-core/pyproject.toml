@@ -54,6 +54,9 @@ namespaces = true
 "eaa_core" = [
     "gui/static/mathjax/LICENSE",
     "gui/static/mathjax/es5/tex-svg-full.js",
+    "gui/static/webui/index.html",
+    "gui/static/webui/assets/*.css",
+    "gui/static/webui/assets/*.js",
     "skills/*/SKILL.md",
     "skills/*/references/*.md",
     "task_manager/prompts/*.md",
