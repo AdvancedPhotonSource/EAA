@@ -6,6 +6,12 @@ import type { PendingApproval, RuntimeSnapshot, Skill, WebUIConfig, WebUIMessage
 import "./styles.css";
 
 type ConnectionState = "Connecting..." | "Connected" | "Reconnecting..." | "Interrupt requested";
+type SlashSuggestion = {
+  key: string;
+  name: string;
+  detail: string;
+  value: string;
+};
 
 const defaultConfig: WebUIConfig = {
   title: "EAA WebUI",
@@ -25,6 +31,51 @@ const defaultConfig: WebUIConfig = {
 };
 
 const config = window.EAA_WEBUI_CONFIG ?? defaultConfig;
+
+const slashCommands: SlashSuggestion[] = [
+  {
+    key: "/exit",
+    name: "/exit",
+    detail: "Exit the current loop. Usage: /exit",
+    value: "/exit",
+  },
+  {
+    key: "/chat",
+    name: "/chat",
+    detail: "Enter chat mode. Usage: /chat",
+    value: "/chat",
+  },
+  {
+    key: "/monitor",
+    name: "/monitor",
+    detail: "Enter monitoring mode. Usage: /monitor <task description>",
+    value: "/monitor ",
+  },
+  {
+    key: "/skill",
+    name: "/skill",
+    detail: "Display or load agent skills. Usage: /skill [name]",
+    value: "/skill ",
+  },
+  {
+    key: "/setcodingtoolapproval",
+    name: "/setcodingtoolapproval",
+    detail: "Require or skip approval for Python and Bash coding tools. Usage: /setcodingtoolapproval true|false",
+    value: "/setcodingtoolapproval ",
+  },
+  {
+    key: "/setcodingtoolsandboxtype",
+    name: "/setcodingtoolsandboxtype",
+    detail: "Set the coding tool sandbox. Usage: /setcodingtoolsandboxtype none|bubblewrap|container [visible_dir ...]",
+    value: "/setcodingtoolsandboxtype ",
+  },
+  {
+    key: "/return",
+    name: "/return",
+    detail: "Return to the upper-level task. Usage: /return",
+    value: "/return",
+  },
+];
 
 const roleLabel = (role: string) => (role === "user_webui" ? "user" : role);
 
@@ -469,23 +520,35 @@ function App() {
 
   const onInputChange = async (value: string) => {
     setContent(value);
-    if (!value.startsWith("/skill")) {
+    if (!value.startsWith("/")) {
       setSuggestionsOpen(false);
       return;
     }
-    await refreshSkills();
+    if (value.startsWith("/skill ")) await refreshSkills();
     setSuggestionsOpen(true);
   };
 
-  const skillMatches = useMemo(() => {
-    if (!content.startsWith("/skill")) return [];
-    const typed = content.slice("/skill".length).trimStart().toLowerCase();
-    return skills.filter((skill) => !typed || String(skill.name ?? "").toLowerCase().startsWith(typed)).slice(0, 8);
+  const slashSuggestions = useMemo(() => {
+    if (!content.startsWith("/")) return [];
+    if (content.startsWith("/skill ")) {
+      const typed = content.slice("/skill".length).trimStart().toLowerCase();
+      return skills
+        .filter((skill) => !typed || String(skill.name ?? "").toLowerCase().startsWith(typed))
+        .slice(0, 8)
+        .map((skill) => ({
+          key: `/skill ${skill.name ?? ""}`,
+          name: `/skill ${skill.name ?? ""}`,
+          detail: skill.description ? `Load skill. ${skill.description}` : "Load this skill into the next model context.",
+          value: `/skill ${skill.name ?? ""} `,
+        }));
+    }
+    const commandToken = content.split(/\s/, 1)[0].toLowerCase();
+    return slashCommands.filter((command) => command.name.startsWith(commandToken)).slice(0, 8);
   }, [content, skills]);
 
-  const chooseSkill = (event: MouseEvent<HTMLButtonElement>, skill: Skill) => {
+  const chooseSlashSuggestion = (event: MouseEvent<HTMLButtonElement>, suggestion: SlashSuggestion) => {
     event.preventDefault();
-    setContent(`/skill ${skill.name ?? ""} `);
+    setContent(suggestion.value);
     setSuggestionsOpen(false);
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -599,12 +662,17 @@ function App() {
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
-          {suggestionsOpen && skillMatches.length ? (
-            <div className="eaa-skill-suggestions">
-              {skillMatches.map((skill) => (
-                <button className="eaa-skill-suggestion" key={skill.name} type="button" onMouseDown={(event) => chooseSkill(event, skill)}>
-                  <span className="eaa-skill-name">{skill.name}</span>
-                  <span className="eaa-skill-description" dangerouslySetInnerHTML={{ __html: escapeHtml(skill.description ?? "") }} />
+          {suggestionsOpen && slashSuggestions.length ? (
+            <div className="eaa-slash-suggestions">
+              {slashSuggestions.map((suggestion) => (
+                <button
+                  className="eaa-slash-suggestion"
+                  key={suggestion.key}
+                  type="button"
+                  onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
+                >
+                  <span className="eaa-slash-name">{suggestion.name}</span>
+                  <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
                 </button>
               ))}
             </div>

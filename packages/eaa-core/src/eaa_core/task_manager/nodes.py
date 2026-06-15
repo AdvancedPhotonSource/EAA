@@ -361,8 +361,6 @@ class NodeFactory:
           ``/skill``
               Without an argument, displays available skills. With an
               argument, appends the selected ``SKILL.md`` to context.
-          ``/help``
-              Performs side effects only and keeps waiting for input.
 
         Regular user text is appended to the state and flips
         ``state.await_user_input`` to ``False`` so the graph can continue to
@@ -411,7 +409,7 @@ class NodeFactory:
             user_message = self.task_manager.get_user_input(
                 prompt=(
                     "Enter a message (/exit: exit; /return: return to upper level task; "
-                    "/help: show command help; /skill: list skills): "
+                    "/skill: list skills): "
                 )
             )
             command = parse_user_input_command(user_message)
@@ -904,7 +902,6 @@ class NodeFactory:
           input.
         - ``/skill <name>`` appends the selected ``SKILL.md`` to context and
           sends the updated context back through the model.
-        - ``/help`` shows help and keeps waiting for input.
         - Any other text is appended as a user message and sent back through
           the model using the current ``state.messages`` context.
         """
@@ -913,7 +910,7 @@ class NodeFactory:
         message = self.task_manager.get_user_input(
             prompt=(
                 "Termination condition triggered. What to do next? "
-                "(`/exit`: exit; `/chat`: chat mode; `/help`: show command help): "
+                "(`/exit`: exit; `/chat`: chat mode): "
             ),
             display_prompt_in_webui=self.task_manager.use_webui,
         )

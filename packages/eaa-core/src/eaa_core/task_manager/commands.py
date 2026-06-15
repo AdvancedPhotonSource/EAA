@@ -8,7 +8,6 @@ UserCommandKind = Literal[
     "return",
     "chat",
     "monitor",
-    "help",
     "skill",
     "set_coding_tool_approval",
     "set_coding_tool_sandbox_type",
@@ -58,8 +57,6 @@ def parse_user_input_command(user_input: str) -> UserInputCommand:
         return UserInputCommand(kind="return")
     if command_lower == "/chat" and argument == "":
         return UserInputCommand(kind="chat")
-    if command_lower == "/help" and argument == "":
-        return UserInputCommand(kind="help")
     if command_lower == "/skill":
         skill_name, _, remaining_text = argument.partition(" ")
         return UserInputCommand(

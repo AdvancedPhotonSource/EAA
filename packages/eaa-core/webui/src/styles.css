@@ -503,7 +503,7 @@ button {
   resize: vertical;
 }
 
-.eaa-skill-suggestions {
+.eaa-slash-suggestions {
   background: #ffffff;
   border: 1px solid #d8dde6;
   border-radius: 8px;
@@ -519,7 +519,7 @@ button {
   z-index: 20;
 }
 
-.eaa-skill-suggestion {
+.eaa-slash-suggestion {
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -530,17 +530,17 @@ button {
   width: 100%;
 }
 
-.eaa-skill-suggestion:hover {
+.eaa-slash-suggestion:hover {
   background: #eef3fb;
 }
 
-.eaa-skill-name {
+.eaa-slash-name {
   color: #20242a;
   display: block;
   font-weight: 650;
 }
 
-.eaa-skill-description {
+.eaa-slash-description {
   color: #5f6b7a;
   display: block;
   font-size: 12px;

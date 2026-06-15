@@ -1020,9 +1020,6 @@ class BaseTaskManager:
         bool
             ``True`` when the command was recognized and consumed.
         """
-        if command.kind == "help":
-            self.display_command_help()
-            return True
         if command.kind == "set_coding_tool_approval":
             try:
                 request_approval = self._parse_bool_command_argument(
@@ -1294,25 +1291,6 @@ class BaseTaskManager:
         if return_outgoing_message:
             return response, outgoing_message
         return response
-
-    def display_command_help(self) -> str:
-        """Display the available interactive commands."""
-        text = (
-            "Below are supported commands.\n"
-            "* `/exit`: exit the current loop\n"
-            "* `/chat`: enter chat mode\n"
-            "* `/monitor <task description>`: enter monitoring mode\n"
-            "* `/skill`: display skills available to the agent\n"
-            "* `/skill <name>`: load a skill into the next model context\n"
-            "* `/setcodingtoolapproval true|false`: require or skip approval for Python and Bash coding tools\n"
-            "* `/setcodingtoolsandboxtype none|bubblewrap|container [visible_dir ...]`: set the coding tool sandbox\n"
-            "* `/return`: return to upper level task\n"
-        )
-        if self.use_webui:
-            self.publish_webui_message({"role": "system", "content": text})
-        else:
-            print(text)
-        return text
 
     def display_available_skills(self) -> str:
         """Display skills available to the task manager."""
