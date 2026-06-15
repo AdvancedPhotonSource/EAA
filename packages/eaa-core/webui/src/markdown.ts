@@ -44,8 +44,13 @@ export const renderMarkdown = (markdown: unknown): string => {
   let paragraph: string[] = [];
   let code: string[] | null = null;
   let table: string[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
+  let list: { ordered: boolean; items: string[]; itemIndents: number[]; start: number | null } | null = null;
 
+  const renderListItem = (item: string): string => {
+    const rendered = renderMarkdown(item);
+    const paragraphMatch = rendered.match(/^<p>([\s\S]*)<\/p>$/);
+    return paragraphMatch ? paragraphMatch[1] : rendered;
+  };
   const flushParagraph = () => {
     if (!paragraph.length) return;
     blocks.push(`<p>${inlineMarkdown(paragraph.join("\n")).replace(/\n/g, "<br>")}</p>`);
@@ -59,7 +64,8 @@ export const renderMarkdown = (markdown: unknown): string => {
   const flushList = () => {
     if (!list) return;
     const tag = list.ordered ? "ol" : "ul";
-    blocks.push(`<${tag}>${list.items.map((item) => `<li>${inlineMarkdown(item)}</li>`).join("")}</${tag}>`);
+    const attrs = list.ordered && list.start !== null && list.start > 1 ? ` start="${list.start}"` : "";
+    blocks.push(`<${tag}${attrs}>${list.items.map((item) => `<li>${renderListItem(item)}</li>`).join("")}</${tag}>`);
     list = null;
   };
 
@@ -81,15 +87,23 @@ export const renderMarkdown = (markdown: unknown): string => {
       code.push(line);
       continue;
     }
-    const unorderedItem = line.match(/^\s*[-*+]\s+(.+)$/);
-    const orderedItem = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (list && /^\s+/.test(line) && list.items.length) {
+      const itemIndent = list.itemIndents[list.itemIndents.length - 1] ?? 0;
+      const prefix = " ".repeat(itemIndent);
+      const content = line.startsWith(prefix) ? line.slice(itemIndent) : line.trimStart();
+      list.items[list.items.length - 1] += `\n${content}`;
+      continue;
+    }
+    const unorderedItem = line.match(/^([-*+]\s+)(.+)$/);
+    const orderedItem = line.match(/^((\d+)[.)]\s+)(.+)$/);
     if (unorderedItem || orderedItem) {
       flushParagraph();
       flushTable();
       const ordered = Boolean(orderedItem);
       if (!list || list.ordered !== ordered) flushList();
-      if (!list) list = { ordered, items: [] };
-      list.items.push((unorderedItem ?? orderedItem)?.[1] ?? "");
+      if (!list) list = { ordered, items: [], itemIndents: [], start: orderedItem ? Number(orderedItem[2]) : null };
+      list.items.push(unorderedItem?.[2] ?? orderedItem?.[3] ?? "");
+      list.itemIndents.push(unorderedItem?.[1].length ?? orderedItem?.[1].length ?? 0);
       continue;
     }
     if (/^\s*\|.+\|\s*$/.test(line)) {
@@ -108,10 +122,15 @@ export const renderMarkdown = (markdown: unknown): string => {
       continue;
     }
     if (/^\s*$/.test(line)) {
+      if (list && list.items.length) {
+        list.items[list.items.length - 1] += "\n";
+        continue;
+      }
       flushParagraph();
       flushList();
       continue;
     }
+    flushList();
     paragraph.push(line);
   }
   if (code !== null) blocks.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
