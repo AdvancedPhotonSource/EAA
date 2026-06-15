@@ -1,17 +1,10 @@
-from typing import Annotated, Any, Literal, Optional, Tuple, Dict
-import logging
-import re
-from pathlib import Path
+from typing import Annotated, Any, Literal, Optional, Tuple
 
 import eaa_core.matplotlib_setup  # noqa: F401
 import numpy as np
 import scipy.ndimage as ndi
 import matplotlib.pyplot as plt
 from skimage import feature
-from eaa_core.api.llm_config import LLMConfig
-from eaa_core.message_proc import generate_openai_message
-from eaa_core.task_manager.base import BaseTaskManager
-from eaa_core.task_manager.skills import SkillMetadata, build_skill_context_message
 from eaa_core.tool.base import BaseTool, check, tool
 
 from eaa_imaging.image_proc import (
@@ -19,9 +12,6 @@ from eaa_imaging.image_proc import (
     phase_cross_correlation,
     translation_nmi_registration,
 )
-
-logger = logging.getLogger(__name__)
-
 
 class ImageRegistration(BaseTool):
     """Register image arrays supplied explicitly by callers."""
@@ -31,14 +21,13 @@ class ImageRegistration(BaseTool):
     @check
     def __init__(
         self,
-        llm_config: Optional[LLMConfig] = None,
         reference_image: np.ndarray = None,
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
         registration_method: Literal[
-            "phase_correlation", "sift", "mutual_information", "llm", "error_minimization"
+            "phase_correlation", "sift", "mutual_information", "error_minimization", "ncc"
         ] = "phase_correlation",
-        registration_algorithm_kwargs: Optional[Dict[str, Any]] = None,
+        registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
         zoom: float = 1.0,
         log_scale: bool = False,
         require_approval: bool = False,
@@ -64,13 +53,14 @@ class ImageRegistration(BaseTool):
             When this argument is set to "center", the test image is padded/cropped
             centrally. When it is set to "top_left", the test image is on the bottom
             and right sides.
-        registration_method : Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"], optional
+        registration_method : Literal["phase_correlation", "sift", "mutual_information", "error_minimization", "ncc"], optional
             The method used to estimate translational offsets. "phase_correlation"
             uses phase correlation, "sift" uses feature matching,
             "mutual_information" uses pyramid-based normalized mutual information,
-            and "error_minimization" uses exhaustive integer-shift MSE search with
-            local quadratic subpixel refinement.
-        registration_algorithm_kwargs : Optional[Dict[str, Any]], optional
+            "error_minimization" uses exhaustive integer-shift MSE search with
+            local quadratic subpixel refinement, and "ncc" uses a tuned
+            normalized-cross-correlation ensemble with subpixel refinement.
+        registration_algorithm_kwargs : Optional[dict[str, Any]], optional
             Keyword arguments to pass to the registration algorithm.
         zoom : float, optional
             Zoom factor applied to both images before registration. Returned
@@ -80,7 +70,6 @@ class ImageRegistration(BaseTool):
         """
         super().__init__(*args, require_approval=require_approval, **kwargs)
 
-        self.llm_config = llm_config
         self.reference_image = reference_image
         self.reference_pixel_size = reference_pixel_size
         self.image_coordinates_origin = image_coordinates_origin
@@ -189,67 +178,6 @@ class ImageRegistration(BaseTool):
         )
         return np.array(offset, dtype=float).tolist()
 
-    @tool(name="apply_and_view_offset_from_paths")
-    def apply_and_view_offset_from_paths(
-        self,
-        current_image_path: Annotated[str, "Path to the current image array file."],
-        reference_image_path: Annotated[str, "Path to the reference image array file."],
-        fractional_offset_y: Annotated[
-            float,
-            "Fractional y-shift (down is positive) relative to image height.",
-        ],
-        fractional_offset_x: Annotated[
-            float,
-            "Fractional x-shift (right is positive) relative to image width.",
-        ],
-    ) -> Annotated[dict[str, str], "Tool payload containing `img_path` for the verification figure."]:
-        """Apply a fractional offset to a current image loaded from path."""
-        image_t = self.process_image(np.load(current_image_path))
-        image_r = self.process_image(np.load(reference_image_path))
-        shift_pixels = np.array(
-            [
-                fractional_offset_y * float(image_r.shape[0]),
-                fractional_offset_x * float(image_r.shape[1]),
-            ],
-            dtype=float,
-        )
-        shifted_image_t = ndi.shift(
-            image_t,
-            shift=shift_pixels,
-            order=1,
-            mode="constant",
-            cval=0.0,
-            prefilter=False,
-        )
-        fig = self.build_registration_pair_figure(
-            image_r,
-            shifted_image_t,
-            images_are_processed=True,
-        )
-        return {
-            "img_path": BaseTool.save_image_to_temp_dir(
-                fig=fig,
-                filename="llm_registration_offset_check.png",
-                add_timestamp=True,
-            )
-        }
-
-    def parse_llm_shift(self, response_text: str) -> np.ndarray:
-        content = response_text.strip()
-        match = re.search(r"^\s*([^,]+)\s*,\s*([^,]+)\s*$", content)
-        if match is None:
-            match = re.search(r"([+-]?(?:\d+\.?\d*|\.\d+|nan))\s*,\s*([+-]?(?:\d+\.?\d*|\.\d+|nan))", content, flags=re.IGNORECASE)
-        if match is None:
-            raise ValueError(f"Unable to parse registration shift from response: {response_text}")
-        tokens = [match.group(1).strip().lower(), match.group(2).strip().lower()]
-        vals: list[float] = []
-        for token in tokens:
-            if token == "nan":
-                vals.append(float("nan"))
-            else:
-                vals.append(float(token))
-        return np.array(vals, dtype=float)
-
     def build_registration_pair_figure(
         self,
         image_r: np.ndarray,
@@ -269,87 +197,327 @@ class ImageRegistration(BaseTool):
         fig.tight_layout()
         return fig
 
-    def register_images_llm(self, image_t: np.ndarray, image_r: np.ndarray) -> np.ndarray:
-        if self.llm_config is None:
-            logger.warning("`llm_config` is not set for LLM image registration. Returning NaN offset.")
-            return np.array([np.nan, np.nan], dtype=float)
+    @staticmethod
+    def _ncc_preprocess(img: np.ndarray, name: str, sigma: float) -> np.ndarray:
+        """Apply one of the tuned NCC preprocessing transforms."""
+        if name == "log1p":
+            out = np.log1p(np.clip(img, 0, None))
+        elif name == "sqrt":
+            out = np.sqrt(np.clip(img, 0, None))
+        elif name == "rank":
+            flat = img.ravel()
+            ranks = np.empty_like(flat, dtype=np.float64)
+            ranks[np.argsort(flat)] = np.arange(len(flat), dtype=np.float64)
+            out = ranks.reshape(img.shape)
+        elif name == "power":
+            out = np.power(np.clip(img, 0, None) + 1e-12, 0.3)
+        elif name == "asinh":
+            out = np.arcsinh(img)
+        else:
+            raise ValueError(f"Unknown NCC preprocessing method: {name}")
+        if sigma > 0:
+            out = ndi.gaussian_filter(out, sigma=sigma)
+        return out
 
-        skill_path = (
-            Path(__file__).resolve().parents[2]
-            / "private_skills"
-            / "image-registration"
-            / "SKILL.md"
-        )
-        if not skill_path.exists():
-            raise FileNotFoundError(f"Registration skill file not found: {skill_path}")
+    @staticmethod
+    def _overlap_ncc(ref: np.ndarray, moving: np.ndarray, dy: int, dx: int) -> float:
+        h, w = ref.shape
+        if dy >= 0:
+            ry, my = slice(dy, h), slice(0, h - dy)
+        else:
+            ry, my = slice(0, h + dy), slice(-dy, h)
+        if dx >= 0:
+            rx, mx = slice(dx, w), slice(0, w - dx)
+        else:
+            rx, mx = slice(0, w + dx), slice(-dx, w)
+        ref_overlap = ref[ry, rx].ravel()
+        moving_overlap = moving[my, mx].ravel()
+        if len(ref_overlap) < 3:
+            return -2.0
+        ref_overlap = ref_overlap - np.mean(ref_overlap)
+        moving_overlap = moving_overlap - np.mean(moving_overlap)
+        denom = np.sqrt(np.sum(ref_overlap**2) * np.sum(moving_overlap**2))
+        if denom <= 1e-12:
+            return 0.0
+        return float(np.sum(ref_overlap * moving_overlap) / denom)
 
-        fig = self.build_registration_pair_figure(
-            image_r,
-            image_t,
-            images_are_processed=True,
-        )
-        image_path = BaseTool.save_image_to_temp_dir(
-            fig=fig,
-            filename="llm_registration_pair.png",
-            add_timestamp=True,
-        )
-        image_path_stem = Path(image_path).with_suffix("")
-        current_image_path = image_path_stem.with_name(
-            f"{image_path_stem.name}_current.npy"
-        )
-        reference_image_path = image_path_stem.with_name(
-            f"{image_path_stem.name}_reference.npy"
-        )
-        np.save(current_image_path, image_t)
-        np.save(reference_image_path, image_r)
+    def _compute_ncc_surface(
+        self,
+        ref: np.ndarray,
+        moving: np.ndarray,
+        max_shift: int,
+        min_overlap: int = 3,
+    ) -> tuple[int, int, float, dict[tuple[int, int], float]]:
+        h, w = ref.shape
+        sy = min(max_shift, h - min_overlap)
+        sx = min(max_shift, w - min_overlap)
+        best_ncc, best_dy, best_dx = -2.0, 0, 0
+        ncc_map: dict[tuple[int, int], float] = {}
+        for dy in range(-sy, sy + 1):
+            for dx in range(-sx, sx + 1):
+                ncc = self._overlap_ncc(ref, moving, dy, dx)
+                ncc_map[(dy, dx)] = ncc
+                if ncc > best_ncc:
+                    best_ncc, best_dy, best_dx = ncc, dy, dx
+        return best_dy, best_dx, best_ncc, ncc_map
 
-        registration_task = BaseTaskManager(
-            llm_config=self.llm_config,
-            tools=[self],
-            use_coding_tools=False,
-            build=True,
-        )
-        registration_task.update_message_history(
-            build_skill_context_message(
-                SkillMetadata(
-                    name="image-registration",
-                    description="Instructions for image registration.",
-                    path=str(skill_path),
-                )
-            ),
-            update_context=True,
-            update_full_history=True,
-        )
-        registration_task.run_conversation(
-            message=generate_openai_message(
-                content=(
-                    "Estimate the translational shift to apply to the current/test image "
-                    "so it aligns with the previous/reference image, and return only "
-                    "'<shift_y>, <shift_x>'. "
-                    "Before final answer, call apply_and_view_offset_from_paths to verify your proposed offset. "
-                    f"Use current_image_path={str(current_image_path)!r} and "
-                    f"reference_image_path={str(reference_image_path)!r} for verification."
-                ),
-                role="user",
-                image_path=image_path,
-            ),
-            termination_behavior="return",
-        )
-        response_text = None
-        for message in reversed(registration_task.context):
-            if message.get("role") == "assistant" and isinstance(message.get("content"), str):
-                response_text = message["content"]
-                break
-        if response_text is None:
-            raise RuntimeError("No assistant response found in LLM image registration context.")
+    @staticmethod
+    def _extract_ncc_surface_patch(
+        ncc_map: dict[tuple[int, int], float],
+        peak_dy: int,
+        peak_dx: int,
+        radius: int,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        coords = []
+        vals = []
+        for ody in range(-radius, radius + 1):
+            for odx in range(-radius, radius + 1):
+                key = (peak_dy + ody, peak_dx + odx)
+                if key in ncc_map and ncc_map[key] > -1.5:
+                    coords.append([float(ody), float(odx)])
+                    vals.append(ncc_map[key])
+        if not coords:
+            return None, None
+        return np.array(coords), np.array(vals)
 
-        shift_fraction = self.parse_llm_shift(response_text)
-        if np.any(np.isnan(shift_fraction)):
-            return np.array([np.nan, np.nan], dtype=float)
-        return np.array([
-            shift_fraction[0] * float(image_r.shape[0]),
-            shift_fraction[1] * float(image_r.shape[1]),
-        ], dtype=float)
+    @staticmethod
+    def _gp_subpixel(
+        coords: np.ndarray | None,
+        vals: np.ndarray | None,
+        step: float = 0.02,
+        clamp: float = 0.5,
+        lengthscale: float = 1.2,
+        noise_var: float = 1e-4,
+    ) -> tuple[float, float, float]:
+        if coords is None or vals is None or len(coords) < 5:
+            return 0.0, 0.0, -1.0
+        dist_sq = np.sum(
+            (coords[:, np.newaxis, :] - coords[np.newaxis, :, :]) ** 2,
+            axis=2,
+        )
+        kernel = np.exp(-0.5 * dist_sq / (lengthscale**2))
+        kernel += noise_var * np.eye(len(coords))
+        try:
+            chol = np.linalg.cholesky(kernel)
+            alpha = np.linalg.solve(chol.T, np.linalg.solve(chol, vals))
+        except np.linalg.LinAlgError:
+            kernel += 1e-3 * np.eye(len(coords))
+            try:
+                alpha = np.linalg.solve(kernel, vals)
+            except np.linalg.LinAlgError:
+                return 0.0, 0.0, -1.0
+
+        grid_1d = np.arange(-clamp, clamp + step / 2, step)
+        gy, gx = np.meshgrid(grid_1d, grid_1d, indexing="ij")
+        test_pts = np.column_stack([gy.ravel(), gx.ravel()])
+        dist_sq_test = np.sum(
+            (test_pts[:, np.newaxis, :] - coords[np.newaxis, :, :]) ** 2,
+            axis=2,
+        )
+        pred = np.exp(-0.5 * dist_sq_test / (lengthscale**2)) @ alpha
+        best_idx = np.argmax(pred)
+        return float(test_pts[best_idx, 0]), float(test_pts[best_idx, 1]), float(pred[best_idx])
+
+    @staticmethod
+    def _quadratic_2d_subpixel(
+        coords: np.ndarray | None,
+        vals: np.ndarray | None,
+    ) -> tuple[float, float]:
+        if coords is None or vals is None or len(coords) < 6:
+            return 0.0, 0.0
+        mask = np.sqrt(coords[:, 0] ** 2 + coords[:, 1] ** 2) <= 2.0
+        if mask.sum() < 6:
+            mask = np.ones(len(coords), dtype=bool)
+        c = coords[mask]
+        v = vals[mask]
+        design = np.column_stack(
+            [c[:, 0] ** 2, c[:, 1] ** 2, c[:, 0] * c[:, 1], c[:, 0], c[:, 1], np.ones(len(c))]
+        )
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(design, v, rcond=None)
+        except np.linalg.LinAlgError:
+            return 0.0, 0.0
+        a, b, cross, d, e, _ = coeffs
+        denom = 4 * a * b - cross**2
+        if abs(denom) < 1e-14 or a > 0 or b > 0:
+            return 0.0, 0.0
+        peak_dy = float(np.clip((cross * e - 2 * b * d) / denom, -0.5, 0.5))
+        peak_dx = float(np.clip((cross * d - 2 * a * e) / denom, -0.5, 0.5))
+        return peak_dy, peak_dx
+
+    def ncc_registration(
+        self,
+        moving: np.ndarray,
+        ref: np.ndarray,
+        max_shift: int = 7,
+        surface_radius: int = 3,
+        gp_lengthscale: float = 1.2,
+        ncc_power: float = 48.0,
+        configs: Optional[list[tuple[str, float]]] = None,
+    ) -> np.ndarray:
+        """Register images with the tuned NCC ensemble from CVEvolve.
+
+        Parameters
+        ----------
+        moving : np.ndarray
+            Moving image to shift.
+        ref : np.ndarray
+            Reference image.
+        max_shift : int, optional
+            Maximum integer shift, in pixels, searched along each axis.
+        surface_radius : int, optional
+            Radius around the integer peak used for subpixel surface fitting.
+        gp_lengthscale : float, optional
+            RBF-kernel length scale for Gaussian-process subpixel refinement.
+        ncc_power : float, optional
+            Power applied to NCC scores when weighting preprocessing pipelines.
+        configs : list[tuple[str, float]], optional
+            Preprocessing pipeline names and Gaussian smoothing sigmas.
+
+        Returns
+        -------
+        np.ndarray
+            Estimated ``[dy, dx]`` shift to apply to ``moving``.
+        """
+        if configs is None:
+            configs = [
+                ("log1p", 0.3),
+                ("log1p", 0.5),
+                ("log1p", 0.7),
+                ("sqrt", 0.3),
+                ("sqrt", 0.5),
+                ("rank", 0.3),
+                ("rank", 0.5),
+                ("power", 0.5),
+                ("asinh", 0.5),
+            ]
+
+        votes: dict[tuple[int, int], int] = {}
+        pipelines: list[dict[str, Any]] = []
+        for preprocess_name, sigma in configs:
+            ref_processed = self._ncc_preprocess(ref.copy(), preprocess_name, sigma)
+            moving_processed = self._ncc_preprocess(moving.copy(), preprocess_name, sigma)
+            peak_dy, peak_dx, peak_ncc, ncc_map = self._compute_ncc_surface(
+                ref_processed,
+                moving_processed,
+                max_shift=max_shift,
+            )
+            key = (peak_dy, peak_dx)
+            votes[key] = votes.get(key, 0) + 1
+            pipelines.append(
+                {
+                    "int_dy": peak_dy,
+                    "int_dx": peak_dx,
+                    "peak_ncc": peak_ncc,
+                    "ncc_map": ncc_map,
+                }
+            )
+
+        if not pipelines:
+            return np.zeros(2)
+
+        sorted_keys = sorted(votes.keys(), key=lambda k: votes[k], reverse=True)
+        best_key = sorted_keys[0]
+        if len(sorted_keys) > 1 and votes[sorted_keys[1]] >= votes[best_key] - 1:
+            key2 = sorted_keys[1]
+            ncc1 = np.mean(
+                [
+                    p["peak_ncc"]
+                    for p in pipelines
+                    if (p["int_dy"], p["int_dx"]) == best_key
+                ]
+            )
+            ncc2 = np.mean(
+                [
+                    p["peak_ncc"]
+                    for p in pipelines
+                    if (p["int_dy"], p["int_dx"]) == key2
+                ]
+            )
+            if ncc2 > ncc1:
+                best_key = key2
+        center_dy, center_dx = best_key
+        agreeing = [
+            p
+            for p in pipelines
+            if (p["int_dy"], p["int_dx"]) == (center_dy, center_dx)
+        ] or pipelines
+
+        pipe_weights = [max(0.01, p["peak_ncc"]) ** ncc_power for p in agreeing]
+        weight_total = sum(pipe_weights)
+        if weight_total <= 0:
+            pipe_weights = [1.0 / len(agreeing)] * len(agreeing)
+        else:
+            pipe_weights = [w / weight_total for w in pipe_weights]
+
+        coord_values: dict[tuple[int, int], list[float]] = {}
+        for pipeline, weight in zip(agreeing, pipe_weights):
+            for ody in range(-surface_radius, surface_radius + 1):
+                for odx in range(-surface_radius, surface_radius + 1):
+                    key = (center_dy + ody, center_dx + odx)
+                    if key in pipeline["ncc_map"] and pipeline["ncc_map"][key] > -1.5:
+                        point = (ody, odx)
+                        if point not in coord_values:
+                            coord_values[point] = [0.0, 0.0]
+                        coord_values[point][0] += weight * pipeline["ncc_map"][key]
+                        coord_values[point][1] += weight
+
+        avg_coords = []
+        avg_vals = []
+        for (ody, odx), (weighted_sum, total_weight) in coord_values.items():
+            avg_coords.append([float(ody), float(odx)])
+            avg_vals.append(float(weighted_sum / total_weight))
+        avg_coords_arr = np.array(avg_coords) if avg_coords else None
+        avg_vals_arr = np.array(avg_vals) if avg_vals else None
+
+        avg_gp_dy, avg_gp_dx, _ = self._gp_subpixel(
+            avg_coords_arr,
+            avg_vals_arr,
+            step=0.01,
+            lengthscale=gp_lengthscale,
+        )
+        quad_dy, quad_dx = self._quadratic_2d_subpixel(avg_coords_arr, avg_vals_arr)
+
+        per_pipe_dys = []
+        per_pipe_dxs = []
+        for pipeline in agreeing:
+            coords, vals = self._extract_ncc_surface_patch(
+                pipeline["ncc_map"],
+                center_dy,
+                center_dx,
+                surface_radius,
+            )
+            if coords is None or len(coords) < 5:
+                continue
+            pipe_dy, pipe_dx, _ = self._gp_subpixel(
+                coords,
+                vals,
+                step=0.02,
+                lengthscale=gp_lengthscale,
+            )
+            if abs(pipe_dy) <= 0.55 and abs(pipe_dx) <= 0.55:
+                per_pipe_dys.append(pipe_dy)
+                per_pipe_dxs.append(pipe_dx)
+
+        estimates_dy = []
+        estimates_dx = []
+        if abs(avg_gp_dy) <= 0.55 and abs(avg_gp_dx) <= 0.55:
+            estimates_dy.append(avg_gp_dy)
+            estimates_dx.append(avg_gp_dx)
+        if per_pipe_dys:
+            estimates_dy.append(float(np.median(per_pipe_dys)))
+            estimates_dx.append(float(np.median(per_pipe_dxs)))
+        if not estimates_dy:
+            if abs(quad_dy) <= 0.55 and abs(quad_dx) <= 0.55:
+                return np.array([center_dy + quad_dy, center_dx + quad_dx])
+            return np.array([float(center_dy), float(center_dx)])
+
+        return np.array(
+            [
+                center_dy + float(np.mean(estimates_dy)),
+                center_dx + float(np.mean(estimates_dx)),
+            ]
+        )
 
     def register_images(
         self,
@@ -357,7 +525,7 @@ class ImageRegistration(BaseTool):
         image_r: np.ndarray,
         psize_t: float,
         psize_r: float,
-        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "llm", "error_minimization"]] = None,
+        registration_method: Optional[Literal["phase_correlation", "sift", "mutual_information", "error_minimization", "ncc"]] = None,
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
     ) -> np.ndarray | Tuple[np.ndarray, float] | str:
         """
@@ -373,7 +541,7 @@ class ImageRegistration(BaseTool):
             The pixel size of the target image.
         psize_r : float
             The pixel size of the reference image.
-        registration_method : Optional[Literal["phase_correlation", "sift", "mutual_information"]], optional
+        registration_method : Optional[Literal["phase_correlation", "sift", "mutual_information", "error_minimization", "ncc"]], optional
             Overrides the default registration method for this call. 
         registration_algorithm_kwargs : Optional[dict[str, Any]], optional
             Optional keyword arguments forwarded to the selected registration
@@ -397,7 +565,14 @@ class ImageRegistration(BaseTool):
               - `x_valid_fraction` (float, default: `0.8`)
               - `subpixel` (bool, default: `True`)
 
-            - `registration_method="sift"` or `"llm"`:
+            - `registration_method="ncc"`:
+              - `max_shift` (int, default: `7`)
+              - `surface_radius` (int, default: `3`)
+              - `gp_lengthscale` (float, default: `1.2`)
+              - `ncc_power` (float, default: `48.0`)
+              - `configs` (list[tuple[str, float]], optional)
+
+            - `registration_method="sift"`:
               - No algorithm kwargs are currently supported; pass `None` or `{}`.
 
         Returns
@@ -421,7 +596,7 @@ class ImageRegistration(BaseTool):
         image_t = self.zoom_image(image_t)
         image_r = self.zoom_image(image_r)
 
-        if method in {"phase_correlation", "mutual_information", "error_minimization"}:
+        if method in {"phase_correlation", "mutual_information", "error_minimization", "ncc"}:
             image_t = self.reconcile_image_shape(image_t, image_r.shape)
 
         if method == "phase_correlation":
@@ -451,6 +626,15 @@ class ImageRegistration(BaseTool):
             em_kwargs = {"y_valid_fraction": 0.8, "x_valid_fraction": 0.8, "subpixel": True}
             em_kwargs.update(algorithm_kwargs)
             offset = error_minimization_registration(image_t, image_r, **em_kwargs)
+        elif method == "ncc":
+            ncc_kwargs = {
+                "max_shift": 7,
+                "surface_radius": 3,
+                "gp_lengthscale": 1.2,
+                "ncc_power": 48.0,
+            }
+            ncc_kwargs.update(algorithm_kwargs)
+            offset = self.ncc_registration(image_t, image_r, **ncc_kwargs)
         elif method == "sift":
             if len(algorithm_kwargs) > 0:
                 raise ValueError(
@@ -458,13 +642,6 @@ class ImageRegistration(BaseTool):
                     "registration_method='sift'."
                 )
             offset = self.feature_based_registration(image_t, image_r)
-        elif method == "llm":
-            if len(algorithm_kwargs) > 0:
-                raise ValueError(
-                    "`registration_algorithm_kwargs` is not supported for "
-                    "registration_method='llm'."
-                )
-            offset = self.register_images_llm(image_t=image_t, image_r=image_r)
         else:
             raise ValueError(f"Invalid registration method: {method}")
         return np.array(offset, dtype=float) / self.zoom

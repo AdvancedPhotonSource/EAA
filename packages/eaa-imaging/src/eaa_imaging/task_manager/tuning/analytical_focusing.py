@@ -215,10 +215,6 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                     "Each non-ImageRegistration tool must provide a `get_offset(target=...)` method, "
                     f"got {type(registration_tool).__name__}."
                 )
-            if isinstance(registration_tool, ImageRegistration):
-                registration_tool.llm_config = llm_config
-                registration_tool.memory_config = memory_config
-
         self.registration_selection_priming_iterations = (
             registration_selection_priming_iterations
         )
