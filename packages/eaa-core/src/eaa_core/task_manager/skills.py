@@ -159,13 +159,21 @@ def resolve_skill(
     normalized_path = str(Path(normalized).expanduser())
     for skill in skill_catalog:
         skill_dir = str(Path(skill.path).parent)
-        if normalized in {skill.name, skill.path, skill_dir, normalized_path}:
+        if normalized in {skill.name, skill.path, skill_dir}:
+            return skill
+        if normalized_path in {skill.path, skill_dir}:
             return skill
     normalized_lower = normalized.lower()
+    normalized_path_lower = normalized_path.lower()
     for skill in skill_catalog:
         skill_dir = str(Path(skill.path).parent)
         if normalized_lower in {
             skill.name.lower(),
+            skill.path.lower(),
+            skill_dir.lower(),
+        }:
+            return skill
+        if normalized_path_lower in {
             skill.path.lower(),
             skill_dir.lower(),
         }:

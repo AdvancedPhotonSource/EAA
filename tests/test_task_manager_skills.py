@@ -1,6 +1,6 @@
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.nodes import NodeFactory
-from eaa_core.task_manager.skills import discover_skills
+from eaa_core.task_manager.skills import SkillMetadata, discover_skills, resolve_skill
 from eaa_core.task_manager.state import ChatGraphState, FeedbackLoopState
 
 
@@ -48,6 +48,32 @@ def test_discover_skills_returns_skill_md_paths(tmp_path):
     assert skills[0].name == "demo"
     assert skills[0].description == "Demo skill."
     assert skills[0].path == str(skill_file.resolve())
+
+
+def test_resolve_skill_matches_requested_name_not_first_catalog_entry():
+    skills = [
+        SkillMetadata(
+            name="roi-search-workflow",
+            description="",
+            path="/tmp/skills/roi-search-workflow/SKILL.md",
+        ),
+        SkillMetadata(
+            name="scanning-microscope-focusing-with-landmark-feature-line-scan",
+            description="",
+            path=(
+                "/tmp/skills/scanning-microscope-focusing-with-landmark-feature-line-scan/"
+                "SKILL.md"
+            ),
+        ),
+    ]
+
+    skill = resolve_skill(
+        skills,
+        "scanning-microscope-focusing-with-landmark-feature-line-scan",
+    )
+
+    assert skill is not None
+    assert skill.name == "scanning-microscope-focusing-with-landmark-feature-line-scan"
 
 
 def test_skill_command_injects_only_skill_md(tmp_path):
