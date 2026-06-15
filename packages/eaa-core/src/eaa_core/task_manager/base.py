@@ -6,6 +6,7 @@ from typing import Any, Dict, Literal, Optional, Sequence
 import json
 import logging
 import re
+import shlex
 import sqlite3
 import time
 
@@ -22,7 +23,7 @@ from eaa_core.message_proc import (
     get_message_preview,
     print_message,
 )
-from eaa_core.task_manager.commands import parse_user_input_command
+from eaa_core.task_manager.commands import UserInputCommand, parse_user_input_command
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.persistence import (
@@ -604,8 +605,7 @@ class BaseTaskManager:
                 display_prompt_in_webui=self.use_webui,
             )
             command = parse_user_input_command(user_input)
-            if command.kind == "help":
-                self.display_command_help()
+            if self.handle_runtime_command(command):
                 continue
             if command.kind == "skill" and not command.argument:
                 self.display_available_skills()
@@ -1007,6 +1007,97 @@ class BaseTaskManager:
             if isinstance(tool, (PythonCodingTool, BashCodingTool))
         ]
 
+    def handle_runtime_command(self, command: UserInputCommand) -> bool:
+        """Apply runtime configuration commands.
+
+        Parameters
+        ----------
+        command : UserInputCommand
+            Parsed user command.
+
+        Returns
+        -------
+        bool
+            ``True`` when the command was recognized and consumed.
+        """
+        if command.kind == "help":
+            self.display_command_help()
+            return True
+        if command.kind == "set_coding_tool_approval":
+            try:
+                request_approval = self._parse_bool_command_argument(
+                    command.argument,
+                    command_name="/setcodingtoolapproval",
+                )
+            except ValueError as exc:
+                self.record_system_message(str(exc), update_context=True, write_to_webui=True)
+                return True
+            self.set_coding_tool_request_approval(request_approval)
+            state = "enabled" if request_approval else "disabled"
+            self.record_system_message(
+                f"Coding tool approval is now {state}.",
+                update_context=True,
+                write_to_webui=True,
+            )
+            return True
+        if command.kind == "set_coding_tool_sandbox_type":
+            try:
+                sandbox_type, visible_dirs = self._parse_sandbox_type_command_argument(
+                    command.argument
+                )
+            except ValueError as exc:
+                self.record_system_message(str(exc), update_context=True, write_to_webui=True)
+                return True
+            self.set_coding_tool_sandbox_type(sandbox_type, visible_dirs=visible_dirs)
+            sandbox_label = "None" if sandbox_type is None else sandbox_type
+            visible_label = ", ".join(visible_dirs) if visible_dirs else "current working directory only"
+            self.record_system_message(
+                (
+                    f"Coding tool sandbox type is now {sandbox_label}. "
+                    f"Bubblewrap visible dirs: {visible_label}."
+                ),
+                update_context=True,
+                write_to_webui=True,
+            )
+            return True
+        return False
+
+    @staticmethod
+    def _parse_bool_command_argument(argument: str, *, command_name: str) -> bool:
+        """Parse a boolean slash-command argument."""
+        tokens = shlex.split(argument)
+        if len(tokens) != 1:
+            raise ValueError(f"Usage: `{command_name} true|false`.")
+        value = tokens[0].lower()
+        if value in {"true", "yes", "on", "1"}:
+            return True
+        if value in {"false", "no", "off", "0"}:
+            return False
+        raise ValueError(f"Usage: `{command_name} true|false`.")
+
+    @staticmethod
+    def _parse_sandbox_type_command_argument(
+        argument: str,
+    ) -> tuple[SandboxType, Optional[list[str]]]:
+        """Parse coding-tool sandbox type and optional visible dirs."""
+        tokens = shlex.split(argument)
+        if not tokens:
+            raise ValueError(
+                "Usage: `/setcodingtoolsandboxtype none|bubblewrap|container "
+                "[visible_dir ...]`."
+            )
+        sandbox_value = tokens[0].lower()
+        if sandbox_value == "none":
+            sandbox_type: SandboxType = None
+        elif sandbox_value in {"bubblewrap", "container"}:
+            sandbox_type = sandbox_value
+        else:
+            raise ValueError(
+                "Sandbox type must be one of: none, bubblewrap, container."
+            )
+        visible_dirs = tokens[1:] or None
+        return sandbox_type, visible_dirs
+
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
         """Register one or more tools with the serial executor."""
         self.tool_executor.register_tools(tools)
@@ -1213,6 +1304,8 @@ class BaseTaskManager:
             "* `/monitor <task description>`: enter monitoring mode\n"
             "* `/skill`: display skills available to the agent\n"
             "* `/skill <name>`: load a skill into the next model context\n"
+            "* `/setcodingtoolapproval true|false`: require or skip approval for Python and Bash coding tools\n"
+            "* `/setcodingtoolsandboxtype none|bubblewrap|container [visible_dir ...]`: set the coding tool sandbox\n"
             "* `/return`: return to upper level task\n"
         )
         if self.use_webui:

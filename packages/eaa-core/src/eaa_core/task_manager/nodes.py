@@ -415,6 +415,8 @@ class NodeFactory:
                 )
             )
             command = parse_user_input_command(user_message)
+            if self.task_manager.handle_runtime_command(command):
+                continue
             if command.kind == "exit":
                 state.exit_requested = True
                 return state.model_dump()
@@ -460,9 +462,6 @@ class NodeFactory:
                     )
                 state.await_user_input = False
                 return state.model_dump()
-            if command.kind == "help":
-                self.task_manager.display_command_help()
-                continue
             for message in self.task_manager.expand_skill_command_in_text(command.text):
                 if not self.task_manager.use_webui:
                     print_message(message)
@@ -919,6 +918,9 @@ class NodeFactory:
             display_prompt_in_webui=self.task_manager.use_webui,
         )
         command = parse_user_input_command(message)
+        if self.task_manager.handle_runtime_command(command):
+            state.await_user_input = True
+            return state.model_dump()
         if command.kind == "exit":
             state.exit_requested = True
             state.await_user_input = False
@@ -966,10 +968,6 @@ class NodeFactory:
                 context=list(state.messages),
                 await_user_input_resolver=self.feedback_response_requires_user_input,
             )
-        if command.kind == "help":
-            state.await_user_input = True
-            self.task_manager.display_command_help()
-            return state.model_dump()
         return self.invoke_model_for_state(
             state,
             message=self.task_manager.expand_skill_command_in_text(message),

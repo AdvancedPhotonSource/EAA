@@ -10,6 +10,8 @@ UserCommandKind = Literal[
     "monitor",
     "help",
     "skill",
+    "set_coding_tool_approval",
+    "set_coding_tool_sandbox_type",
 ]
 
 
@@ -67,4 +69,8 @@ def parse_user_input_command(user_input: str) -> UserInputCommand:
         )
     if command_lower == "/monitor" and argument:
         return UserInputCommand(kind="monitor", argument=argument)
+    if command_lower == "/setcodingtoolapproval":
+        return UserInputCommand(kind="set_coding_tool_approval", argument=argument)
+    if command_lower == "/setcodingtoolsandboxtype":
+        return UserInputCommand(kind="set_coding_tool_sandbox_type", argument=argument)
     return UserInputCommand(kind="message", text=user_input)
