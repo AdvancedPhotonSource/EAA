@@ -69,13 +69,17 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         
         tool = SimulatedAcquireImage(whole_image, return_message=False)
         
-        fname = tool.acquire_line_scan(
+        result = tool.acquire_line_scan(
             x_center=411.5,
             y_center=140,
             length=7,
             scan_step=0.2,
         )
-        return fname
+        try:
+            assert isinstance(result, dict)
+        finally:
+            os.remove(result["img_path"])
+            os.remove(result["raw_data_path"])
 
     def test_simulated_image_message_returns_json_payload(self):
         whole_image = tifffile.imread(
@@ -89,10 +93,52 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         tool = SimulatedAcquireImage(whole_image, return_message=True)
         result = tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
 
-        assert isinstance(result, dict)
-        assert isinstance(result.get("img_path"), str)
-        assert "array_path" not in result
-        assert result["psize"] == 1
+        try:
+            assert isinstance(result, dict)
+            assert isinstance(result.get("img_path"), str)
+            assert isinstance(result.get("raw_data_path"), str)
+            assert os.path.isabs(result["img_path"])
+            assert os.path.isabs(result["raw_data_path"])
+            assert "array_path" not in result
+            assert os.path.exists(result["raw_data_path"])
+            assert np.array_equal(
+                np.load(result["raw_data_path"], allow_pickle=False),
+                tool.image_k,
+            )
+            assert result["psize"] == 1
+        finally:
+            os.remove(result["img_path"])
+            os.remove(result["raw_data_path"])
+
+    def test_simulated_line_scan_returns_raw_data_path(self):
+        whole_image = tifffile.imread(
+            os.path.join(
+                self.get_ci_input_data_dir(),
+                'simulated_images',
+                'cameraman.tiff'
+            )
+        )
+        whole_image = -1 * whole_image.astype(np.float32) + whole_image.max()
+
+        tool = SimulatedAcquireImage(whole_image, return_message=True)
+
+        result = tool.acquire_line_scan(
+            x_center=411.5,
+            y_center=140,
+            length=7,
+            scan_step=0.2,
+        )
+
+        try:
+            assert isinstance(result["img_path"], str)
+            assert isinstance(result["raw_data_path"], str)
+            assert os.path.isabs(result["img_path"])
+            assert os.path.isabs(result["raw_data_path"])
+            assert os.path.exists(result["raw_data_path"])
+            assert np.load(result["raw_data_path"], allow_pickle=False).shape == (35,)
+        finally:
+            os.remove(result["img_path"])
+            os.remove(result["raw_data_path"])
 
     def test_simulated_image_buffers_and_payloads_are_available(self):
         whole_image = tifffile.imread(
@@ -104,26 +150,32 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         )
 
         tool = SimulatedAcquireImage(whole_image, return_message=True)
-        tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
+        results = []
+        results.append(tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64))
         first_image = tool.image_k
-        tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
+        results.append(tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64))
         second_image = tool.image_k
-        tool.acquire_image(y_center=232, x_center=232, size_y=64, size_x=64)
+        results.append(tool.acquire_image(y_center=232, x_center=232, size_y=64, size_x=64))
         third_image = tool.image_k
-        tool.acquire_image(y_center=234, x_center=234, size_y=64, size_x=64)
+        results.append(tool.acquire_image(y_center=234, x_center=234, size_y=64, size_x=64))
         current_info = tool.get_current_image_info()
         previous_info = tool.get_previous_image_info()
         initial_info = tool.get_initial_image_info()
         payload = tool.get_attribute_payload("image_km1")
 
-        assert np.array_equal(tool.image_0, first_image)
-        assert not np.array_equal(tool.image_km1, second_image)
-        assert np.array_equal(tool.image_km1, third_image)
-        assert current_info["shape"] == [64, 64]
-        assert previous_info["shape"] == [64, 64]
-        assert initial_info["shape"] == [64, 64]
-        assert "array_path" not in current_info
-        assert np.array_equal(BaseTool.decode_array_payload(payload), third_image)
+        try:
+            assert np.array_equal(tool.image_0, first_image)
+            assert not np.array_equal(tool.image_km1, second_image)
+            assert np.array_equal(tool.image_km1, third_image)
+            assert current_info["shape"] == [64, 64]
+            assert previous_info["shape"] == [64, 64]
+            assert initial_info["shape"] == [64, 64]
+            assert "array_path" not in current_info
+            assert np.array_equal(BaseTool.decode_array_payload(payload), third_image)
+        finally:
+            for result in results:
+                os.remove(result["img_path"])
+                os.remove(result["raw_data_path"])
 
     def test_dump_array_saves_requested_buffer(self):
         whole_image = tifffile.imread(
@@ -135,8 +187,9 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
         )
 
         tool = SimulatedAcquireImage(whole_image, return_message=True)
-        tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64)
-        tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64)
+        results = []
+        results.append(tool.acquire_image(y_center=228, x_center=228, size_y=64, size_x=64))
+        results.append(tool.acquire_image(y_center=230, x_center=230, size_y=64, size_x=64))
 
         result = tool.dump_array("image_km1")
 
@@ -151,6 +204,9 @@ class TestSimulatedImageAcquisition(tutils.BaseTester):
             array_path = result.get("array_path")
             if isinstance(array_path, str):
                 os.remove(array_path)
+            for acquisition_result in results:
+                os.remove(acquisition_result["img_path"])
+                os.remove(acquisition_result["raw_data_path"])
         
         
 if __name__ == '__main__':

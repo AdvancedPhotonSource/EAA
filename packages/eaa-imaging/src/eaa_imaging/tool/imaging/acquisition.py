@@ -16,6 +16,7 @@ import eaa_imaging.image_proc as ip
 logger = logging.getLogger(__name__)
 
 
+ArrayBufferName = Literal["image_0", "image_km1", "image_k", "line_scan_k"]
 ImageBufferName = Literal["image_0", "image_km1", "image_k"]
 
 
@@ -42,6 +43,7 @@ class AcquireImage(BaseTool):
         self.psize_0 = None
         self.psize_km1 = None
         self.psize_k = None
+        self.line_scan_k: np.ndarray = None
         
         self.image_acquisition_call_history: List[Dict[str, Any]] = []
         self.line_scan_call_history: List[Dict[str, Any]] = []
@@ -112,23 +114,23 @@ class AcquireImage(BaseTool):
     @tool(name="dump_array")
     def dump_array(
         self,
-        buffer_name: Annotated[ImageBufferName, "Native image buffer to dump: image_k, image_km1, or image_0."],
+        buffer_name: Annotated[ArrayBufferName, "Native array buffer to dump: image_k, image_km1, image_0, or line_scan_k."],
     ) -> Annotated[dict[str, str], "Tool payload containing `array_path`."]:
-        """Save a buffered image array to disk for path-based tools.
+        """Save a buffered array to disk for path-based tools.
 
         Parameters
         ----------
         buffer_name : str
-            Native name of the image buffer to dump.
+            Native name of the array buffer to dump.
 
         Returns
         -------
         dict[str, str]
             Tool payload containing ``array_path``.
         """
-        image = getattr(self, buffer_name)
-        if image is None:
-            raise ValueError(f"Image buffer {buffer_name!r} is empty.")
+        arr = getattr(self, buffer_name)
+        if arr is None:
+            raise ValueError(f"Array buffer {buffer_name!r} is empty.")
         os.makedirs(".tmp", exist_ok=True)
         path = os.path.abspath(
             os.path.join(
@@ -136,7 +138,7 @@ class AcquireImage(BaseTool):
                 f"{buffer_name}_{get_timestamp()}.npy",
             )
         )
-        np.save(path, image, allow_pickle=False)
+        np.save(path, arr, allow_pickle=False)
         return {"array_path": path}
 
     @tool(name="get_current_image_info")
@@ -313,7 +315,7 @@ class SimulatedAcquireImage(AcquireImage):
         """
         self.offset = offset
         logger.info(f"Offset set to {self.offset}")
-        
+
     def add_line_scan_candidates(
         self, 
         fig: plt.Figure, 
@@ -465,7 +467,7 @@ class SimulatedAcquireImage(AcquireImage):
         size_y: Annotated[int, "The height of the image to acquire."],
         size_x: Annotated[int, "The width of the image to acquire."],
         scan_step: Annotated[float, "The step size between sampled points in both y and x directions."] = 1,
-    ) -> Annotated[dict[str, str] | np.ndarray, "Tool payload containing `img_path`, or the image array when `return_message` is False."]:
+    ) -> Annotated[dict[str, str] | np.ndarray, "Tool payload containing `img_path` and `raw_data_path`, or the image array when `return_message` is False."]:
         """Acquire an image of a given size from the whole image centered at a
         given location.
 
@@ -480,8 +482,8 @@ class SimulatedAcquireImage(AcquireImage):
         Returns
         -------
         dict or np.ndarray
-            Tool payload containing ``img_path`` when ``return_message`` is
-            enabled, otherwise the acquired image array.
+            Tool payload containing ``img_path`` and ``raw_data_path`` when
+            ``return_message`` is enabled, otherwise the acquired image array.
         """
         loc_y = y_center - size_y / 2
         loc_x = x_center - size_x / 2
@@ -512,8 +514,9 @@ class SimulatedAcquireImage(AcquireImage):
             )
             if self.add_line_scan_candidates_to_image:
                 fig = self.add_line_scan_candidates(fig)
-            image_path = self.save_image_to_temp_dir(fig, filename, add_timestamp=False)
-            return {"img_path": image_path, "psize": scan_step}
+            image_path = os.path.abspath(self.save_image_to_temp_dir(fig, filename, add_timestamp=False))
+            raw_data_path = self.dump_array("image_k")["array_path"]
+            return {"img_path": image_path, "raw_data_path": raw_data_path, "psize": scan_step}
         else:
             return arr
 
@@ -525,7 +528,7 @@ class SimulatedAcquireImage(AcquireImage):
         length: Annotated[float, "The length of the line scan."],
         scan_step: float,
         angle: Annotated[float, "The angle of the line scan in degrees. 0 degrees means horizontal (along the x-axis). Positive angles rotate counter-clockwise."] = 0.0,
-    ) -> Annotated[dict[str, Any], "Tool payload containing `img_path` and optional fit metadata."]:
+    ) -> Annotated[dict[str, Any], "Tool payload containing `img_path`, `raw_data_path`, and optional fit metadata."]:
         """Scan along a line in the sample. This function
         generates a plot of the line scan, and a Gaussian fit
         of it. The FWHM of the Gaussian fit is annotated on the plot.
@@ -545,7 +548,8 @@ class SimulatedAcquireImage(AcquireImage):
         Returns
         -------
         dict[str, Any]
-            Tool payload containing ``img_path`` and optional fit metadata.
+            Tool payload containing ``img_path``, ``raw_data_path``, and
+            optional fit metadata.
         """
         angle_rad = np.radians(angle)
         half = length / 2
@@ -566,6 +570,7 @@ class SimulatedAcquireImage(AcquireImage):
         pts = pts + self.offset
 
         arr = self._sample(pts[:, 0], pts[:, 1])
+        self.line_scan_k = arr
             
         # Fit a Gaussian to the line scan
         a, mu, sigma, c, normalized_residual, fit_x_min, fit_x_max = eaa_core.maths.fit_gaussian_1d(
@@ -681,9 +686,12 @@ class SimulatedAcquireImage(AcquireImage):
         )
         fig.savefig(fname)
         plt.close(fig)
+        image_path = os.path.abspath(fname)
+        raw_data_path = self.dump_array("line_scan_k")["array_path"]
         if self.line_scan_return_gaussian_fit:
             return {
-                "img_path": fname,
+                "img_path": image_path,
+                "raw_data_path": raw_data_path,
                 "fwhm": fwhm,
                 "a": a,
                 "mu": mu,
@@ -693,7 +701,7 @@ class SimulatedAcquireImage(AcquireImage):
                 "x_min": fit_x_min,
                 "x_max": fit_x_max,
             }
-        return {"img_path": fname}
+        return {"img_path": image_path, "raw_data_path": raw_data_path}
 
     def scan_line_by_choice(
         self, 
