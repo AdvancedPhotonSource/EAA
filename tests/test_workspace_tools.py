@@ -51,10 +51,6 @@ def test_filesystem_tool_approval_rules_for_workspace_paths(tmp_path):
     assert parse_tool_content(outside_result)["error"] == "Tool execution was denied by the user."
     assert approvals == [("read_file", {"file_path": str(outside)})]
 
-    root_result = executor.execute_tool_call(build_tool_call("ls", {"path": "/"}))
-    assert parse_tool_content(root_result)["error"] == "Tool execution was denied by the user."
-    assert approvals[-1] == ("ls", {"path": "/"})
-
 
 def test_filesystem_tool_allows_reading_whitelisted_skill_dirs(tmp_path):
     workspace = tmp_path / "workspace"
@@ -78,12 +74,8 @@ def test_filesystem_tool_allows_reading_whitelisted_skill_dirs(tmp_path):
     read_result = executor.execute_tool_call(
         build_tool_call("read_file", {"file_path": str(skill_file)})
     )
-    ls_result = executor.execute_tool_call(
-        build_tool_call("ls", {"path": str(skill_dir)})
-    )
 
     assert "skill instructions" in parse_tool_content(read_result)["result"]
-    assert parse_tool_content(ls_result)["ok"] is True
     assert approvals == []
 
 
@@ -96,7 +88,7 @@ def test_approval_rule_errors_return_tool_error(tmp_path):
     assert parse_tool_content(result)["error"] == "Path must not be empty."
 
 
-def test_filesystem_write_delete_move_always_require_approval(tmp_path):
+def test_filesystem_write_always_requires_approval(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "source.txt").write_text("source")
@@ -109,41 +101,28 @@ def test_filesystem_write_delete_move_always_require_approval(tmp_path):
     executor = SerialToolExecutor(approval_handler=approval_handler)
     executor.register_tools(FileSystemTool(workspace_path=str(workspace)))
 
-    for tool_name, arguments in [
-        ("write_file", {"file_path": "created.txt", "content": "created"}),
-        ("delete_file", {"file_path": "source.txt"}),
-        ("move_file", {"source_path": "source.txt", "destination_path": "dest.txt"}),
-    ]:
-        result = executor.execute_tool_call(build_tool_call(tool_name, arguments))
-        assert parse_tool_content(result)["error"] == "Tool execution was denied by the user."
+    result = executor.execute_tool_call(
+        build_tool_call("write_file", {"file_path": "created.txt", "content": "created"})
+    )
+    assert parse_tool_content(result)["error"] == "Tool execution was denied by the user."
 
-    assert approvals == ["write_file", "delete_file", "move_file"]
+    assert approvals == ["write_file"]
     assert not (workspace / "created.txt").exists()
     assert (workspace / "source.txt").exists()
 
 
-def test_filesystem_copy_inside_workspace_does_not_require_approval(tmp_path):
+def test_filesystem_tool_surface_excludes_shell_redundant_tools(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "source.txt").write_text("source")
-    approvals = []
+    tool = FileSystemTool(workspace_path=str(workspace))
+    visible_names = {spec.name for spec in tool.exposed_tools if spec.model_visible}
 
-    executor = SerialToolExecutor(
-        approval_handler=lambda tool_name, arguments: approvals.append(tool_name) or False
-    )
-    executor.register_tools(FileSystemTool(workspace_path=str(workspace)))
-
-    result = executor.execute_tool_call(
-        build_tool_call(
-            "copy_file",
-            {"source_path": "source.txt", "destination_path": "copy.txt"},
-        )
-    )
-
-    payload = parse_tool_content(result)
-    assert payload["ok"] is True
-    assert (workspace / "copy.txt").read_text() == "source"
-    assert approvals == []
+    assert visible_names == {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "replace_file_lines",
+    }
 
 
 def test_image_rendering_tool_writes_rendered_png(tmp_path):
