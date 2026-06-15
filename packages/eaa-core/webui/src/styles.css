@@ -449,9 +449,40 @@ button {
 }
 
 .eaa-processing {
-  color: #8a4b00;
-  font-size: 13px;
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  height: 18px;
   margin-bottom: 8px;
+}
+
+.eaa-processing-dot {
+  animation: eaa-processing-dot 1s ease-in-out infinite;
+  background: #8a4b00;
+  border-radius: 50%;
+  display: block;
+  height: 6px;
+  width: 6px;
+}
+
+.eaa-processing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.eaa-processing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes eaa-processing-dot {
+  0%,
+  70%,
+  100% {
+    transform: scale(1);
+  }
+
+  35% {
+    transform: scale(1.6);
+  }
 }
 
 .eaa-input-row {

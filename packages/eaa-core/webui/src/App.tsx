@@ -580,7 +580,13 @@ function App() {
         </aside>
       </main>
       <form className="eaa-input-panel" onSubmit={onSubmit}>
-        {processing ? <div className="eaa-processing">Agent is processing...</div> : null}
+        {processing ? (
+          <div className="eaa-processing" aria-label="Agent is processing" role="status">
+            <span className="eaa-processing-dot" />
+            <span className="eaa-processing-dot" />
+            <span className="eaa-processing-dot" />
+          </div>
+        ) : null}
         <div className="eaa-input-row">
           <textarea
             ref={inputRef}
