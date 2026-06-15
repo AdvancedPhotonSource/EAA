@@ -5,12 +5,10 @@ from __future__ import annotations
 import mimetypes
 import os
 import re
-import shutil
 import signal
 import subprocess
 import time
 import uuid
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -211,9 +209,9 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             Root path used to resolve relative paths. Defaults to the current
             working directory.
         read_whitelist_paths : list[str], optional
-            Additional directories where ``ls`` and ``read_file`` do not
-            require approval. This is intended for configured skill
-            directories that agents may inspect as prompt context.
+            Additional directories where ``read_file`` does not require
+            approval. This is intended for configured skill directories that
+            agents may inspect as prompt context.
         require_approval : bool, default=False
             Fallback approval setting for tools without stricter method-level
             approval rules.
@@ -235,10 +233,6 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             return not (self.is_in_workspace(target) or self.is_in_read_whitelist(target))
         return False
 
-    def requires_approval_for_directory_path(self, arguments: dict[str, Any]) -> bool:
-        """Return whether a directory path sits outside the workspace."""
-        return self.any_path_outside_workspace(arguments, ("directory_path",))
-
     def requires_approval_for_file_path(self, arguments: dict[str, Any]) -> bool:
         """Return whether a file path sits outside the workspace."""
         file_path = arguments.get("file_path")
@@ -246,10 +240,6 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             target = self.resolve_path(file_path)
             return not (self.is_in_workspace(target) or self.is_in_read_whitelist(target))
         return False
-
-    def requires_approval_for_copy(self, arguments: dict[str, Any]) -> bool:
-        """Return whether copy source or destination sits outside the workspace."""
-        return self.any_path_outside_workspace(arguments, ("source_path", "destination_path"))
 
     def is_in_read_whitelist(self, path: Path) -> bool:
         """Return whether a path is within an approval-free read directory."""
@@ -260,46 +250,6 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             except ValueError:
                 continue
         return False
-
-    @tool(name="ls", require_approval="requires_approval_for_path")
-    def ls(
-        self,
-        path: Annotated[str, "Directory path to list. Relative paths are resolved from the workspace."] = ".",
-    ) -> dict[str, Any]:
-        """List direct children in a directory."""
-        target = self.workspace_path if path == "." else self.resolve_path(path)
-        if not target.exists():
-            raise FileNotFoundError(f"Directory not found: {target}")
-        if not target.is_dir():
-            raise NotADirectoryError(f"Expected a directory path, got: {target}")
-        entries = []
-        for child in sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-            stat_result = child.stat()
-            entries.append(
-                {
-                    "path": self.relative_or_absolute_path(child) + ("/" if child.is_dir() else ""),
-                    "is_dir": child.is_dir(),
-                    "size": 0 if child.is_dir() else stat_result.st_size,
-                    "modified_at": stat_result.st_mtime,
-                }
-            )
-        return {
-            "ok": True,
-            "path": "." if target == self.workspace_path else self.relative_or_absolute_path(target),
-            "entries": entries,
-        }
-
-    @tool(name="mkdir", require_approval="requires_approval_for_directory_path")
-    def mkdir(
-        self,
-        directory_path: Annotated[str, "Directory path to create. Relative paths are resolved from the workspace."],
-        parents: Annotated[bool, "Whether to create parent directories as needed."] = True,
-        exist_ok: Annotated[bool, "Whether an existing directory should be treated as success."] = True,
-    ) -> dict[str, Any]:
-        """Create a directory."""
-        target = self.resolve_path(directory_path)
-        target.mkdir(parents=parents, exist_ok=exist_ok)
-        return {"ok": True, "directory_path": self.relative_or_absolute_path(target)}
 
     @tool(name="read_file", require_approval="requires_approval_for_file_path")
     def read_file(
@@ -426,143 +376,6 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             "end_line": end_line,
             "appended": False,
         }
-
-    @tool(name="glob", require_approval="requires_approval_for_path")
-    def glob(
-        self,
-        pattern: Annotated[str, "Glob pattern such as `**/*.py` or `data/*.png`."],
-        path: Annotated[str, "Base directory to search from. Relative paths are resolved from the workspace."] = ".",
-    ) -> dict[str, Any]:
-        """Find files below a directory that match a glob pattern."""
-        normalized_pattern = pattern.lstrip("/")
-        if ".." in Path(normalized_pattern).parts:
-            raise ValueError("Path traversal not allowed in glob pattern.")
-        base_path = self.workspace_path if path == "." else self.resolve_path(path)
-        if not base_path.exists() or not base_path.is_dir():
-            raise NotADirectoryError(f"Search base is not a directory: {base_path}")
-        matches = [
-            self.relative_or_absolute_path(match)
-            for match in sorted(base_path.rglob(normalized_pattern))
-            if match.is_file()
-        ]
-        return {
-            "ok": True,
-            "pattern": pattern,
-            "path": "." if base_path == self.workspace_path else self.relative_or_absolute_path(base_path),
-            "matches": matches,
-        }
-
-    @tool(name="grep", require_approval="requires_approval_for_path")
-    def grep(
-        self,
-        pattern: Annotated[str, "Literal text to search for."],
-        path: Annotated[str, "File or directory path to search in. Relative paths are resolved from the workspace."] = ".",
-        glob: Annotated[Optional[str], "Optional glob filter such as `**/*.py`."] = None,
-        output_mode: Annotated[str, "Output mode: `files_with_matches`, `content`, or `count`."] = "files_with_matches",
-    ) -> dict[str, Any]:
-        """Search for literal text in files."""
-        if not pattern:
-            raise ValueError("pattern must not be empty")
-        if output_mode not in {"files_with_matches", "content", "count"}:
-            raise ValueError("output_mode must be one of: files_with_matches, content, count")
-        target = self.workspace_path if path == "." else self.resolve_path(path)
-        if not target.exists():
-            raise FileNotFoundError(f"Search path not found: {target}")
-        search_paths = [target] if target.is_file() else [candidate for candidate in target.rglob("*") if candidate.is_file()]
-        matches: dict[str, list[dict[str, Any]]] = {}
-        for candidate in sorted(search_paths):
-            relative_candidate = self.relative_or_absolute_path(candidate)
-            if glob is not None and not fnmatch(relative_candidate, glob):
-                continue
-            if not is_probably_text_file(candidate):
-                continue
-            try:
-                lines = candidate.read_text().splitlines()
-            except UnicodeDecodeError:
-                continue
-            hit_rows = [
-                {"line": line_number, "text": line}
-                for line_number, line in enumerate(lines, start=1)
-                if pattern in line
-            ]
-            if hit_rows:
-                matches[relative_candidate] = hit_rows
-        if output_mode == "files_with_matches":
-            results: Any = sorted(matches)
-        elif output_mode == "count":
-            results = {file_path: len(rows) for file_path, rows in matches.items()}
-        else:
-            results = matches
-        return {"ok": True, "pattern": pattern, "output_mode": output_mode, "results": results}
-
-    @tool(name="copy_file", require_approval="requires_approval_for_copy")
-    def copy_file(
-        self,
-        source_path: Annotated[str, "Source file path to copy. Relative paths are resolved from the workspace."],
-        destination_path: Annotated[str, "Destination file path. Relative paths are resolved from the workspace."],
-        overwrite: Annotated[bool, "Whether to replace an existing destination file."] = False,
-    ) -> dict[str, Any]:
-        """Copy a file."""
-        source = self.resolve_path(source_path)
-        destination = self.resolve_path(destination_path)
-        if not source.exists() or not source.is_file():
-            raise FileNotFoundError(f"Source file not found: {source}")
-        if destination.exists():
-            if not overwrite:
-                raise FileExistsError(f"Destination already exists: {destination}")
-            if destination.is_dir():
-                raise IsADirectoryError(f"Destination is a directory: {destination}")
-            destination.unlink()
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return {
-            "ok": True,
-            "source_path": self.relative_or_absolute_path(source),
-            "destination_path": self.relative_or_absolute_path(destination),
-        }
-
-    @tool(name="move_file", require_approval=True)
-    def move_file(
-        self,
-        source_path: Annotated[str, "Source file path to move or rename. Relative paths are resolved from the workspace."],
-        destination_path: Annotated[str, "Destination file path. Relative paths are resolved from the workspace."],
-        overwrite: Annotated[bool, "Whether to replace an existing destination file."] = False,
-    ) -> dict[str, Any]:
-        """Move or rename a file."""
-        source = self.resolve_path(source_path)
-        destination = self.resolve_path(destination_path)
-        if not source.exists() or not source.is_file():
-            raise FileNotFoundError(f"Source file not found: {source}")
-        if destination.exists():
-            if not overwrite:
-                raise FileExistsError(f"Destination already exists: {destination}")
-            if destination.is_dir():
-                raise IsADirectoryError(f"Destination is a directory: {destination}")
-            destination.unlink()
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(destination))
-        return {
-            "ok": True,
-            "source_path": self.relative_or_absolute_path(source),
-            "destination_path": self.relative_or_absolute_path(destination),
-        }
-
-    @tool(name="delete_file", require_approval=True)
-    def delete_file(
-        self,
-        file_path: Annotated[str, "File path to delete. Relative paths are resolved from the workspace."],
-        missing_ok: Annotated[bool, "Whether a missing file should be treated as a successful no-op."] = False,
-    ) -> dict[str, Any]:
-        """Delete a file."""
-        target = self.resolve_path(file_path)
-        if not target.exists():
-            if missing_ok:
-                return {"ok": True, "deleted": False, "file_path": file_path}
-            raise FileNotFoundError(f"File not found: {target}")
-        if not target.is_file():
-            raise IsADirectoryError(f"Expected a file path, got: {target}")
-        target.unlink()
-        return {"ok": True, "deleted": True, "file_path": self.relative_or_absolute_path(target)}
 
 
 class ImageRenderingTool(WorkspacePathMixin, BaseTool):

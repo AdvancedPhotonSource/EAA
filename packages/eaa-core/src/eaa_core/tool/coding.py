@@ -8,9 +8,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any, Dict, Literal, Optional, Sequence
 
 from eaa_core.tool.base import BaseTool, check, tool
+
+SandboxType = Literal["bubblewrap", "container"] | None
 
 
 class CodingTool(BaseTool):
@@ -23,7 +25,8 @@ class CodingTool(BaseTool):
         default_timeout: Optional[float] = None,
         working_directory: Optional[str] = None,
         environment: Optional[Dict[str, str]] = None,
-        run_in_sandbox: bool = False,
+        sandbox_type: SandboxType = None,
+        bubblewrap_visible_dirs: Optional[Sequence[str]] = None,
         container_image: Optional[str] = None,
         require_approval: bool = True,
         **kwargs: Any,
@@ -32,9 +35,40 @@ class CodingTool(BaseTool):
         self._default_timeout = default_timeout
         self._working_directory = working_directory or os.getcwd()
         self._environment = environment or {}
-        self._run_in_sandbox = run_in_sandbox
+        self.sandbox_type = self._normalize_sandbox_type(sandbox_type)
+        self.bubblewrap_visible_dirs = (
+            list(bubblewrap_visible_dirs) if bubblewrap_visible_dirs is not None else None
+        )
         self._container_image = container_image
         super().__init__(require_approval=require_approval, **kwargs)
+
+    def set_sandbox_type(
+        self,
+        sandbox_type: SandboxType,
+        *,
+        visible_dirs: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Configure the sandbox mode used for code execution.
+
+        Parameters
+        ----------
+        sandbox_type : {"bubblewrap", "container"} or None
+            Sandbox implementation to use. ``None`` executes directly on the
+            host with the configured working directory and environment.
+        visible_dirs : sequence of str, optional
+            Additional paths to bind into bubblewrap at the same absolute paths.
+            The current working directory is always included.
+        """
+        self.sandbox_type = self._normalize_sandbox_type(sandbox_type)
+        self.bubblewrap_visible_dirs = list(visible_dirs) if visible_dirs is not None else None
+
+    @staticmethod
+    def _normalize_sandbox_type(sandbox_type: SandboxType) -> SandboxType:
+        if sandbox_type not in (None, "bubblewrap", "container"):
+            raise ValueError(
+                "sandbox_type must be one of None, 'bubblewrap', or 'container'."
+            )
+        return sandbox_type
 
     def _execute_in_container(
         self,
@@ -74,6 +108,66 @@ class CodingTool(BaseTool):
             )
         finally:
             os.unlink(env_file_path)
+
+    def _execute_in_bubblewrap(
+        self,
+        command: list[str],
+        *,
+        env: Dict[str, str],
+        timeout: Optional[float],
+        input_text: Optional[str],
+        workdir: str,
+    ) -> subprocess.CompletedProcess[str]:
+        if shutil.which("bwrap") is None:
+            raise RuntimeError("No bubblewrap runtime found (expected `bwrap`).")
+        bubblewrap_cmd = [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-all",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+        ]
+        for path in self._bubblewrap_system_bind_paths():
+            bubblewrap_cmd.extend(["--ro-bind", path, path])
+        for path in self._bubblewrap_visible_bind_paths(workdir):
+            bubblewrap_cmd.extend(["--bind", path, path])
+        bubblewrap_cmd.extend(["--chdir", workdir, *command])
+        return subprocess.run(
+            bubblewrap_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            input=input_text,
+            env=env,
+        )
+
+    @staticmethod
+    def _bubblewrap_system_bind_paths() -> list[str]:
+        paths = ["/usr", "/bin", "/lib", "/lib64", "/etc"]
+        paths.extend([sys.base_prefix, sys.exec_prefix])
+        resolved: list[str] = []
+        for path in paths:
+            abs_path = os.path.abspath(os.path.expanduser(path))
+            if not os.path.exists(abs_path) or abs_path in resolved:
+                continue
+            resolved.append(abs_path)
+        return resolved
+
+    def _bubblewrap_visible_bind_paths(self, workdir: str) -> list[str]:
+        paths = list(self.bubblewrap_visible_dirs or [])
+        paths.append(os.getcwd())
+        paths.append(workdir)
+        resolved: list[str] = []
+        for path in paths:
+            real_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+            if not os.path.exists(real_path) or real_path in resolved:
+                continue
+            resolved.append(real_path)
+        return resolved
 
     @staticmethod
     def _select_container_runtime() -> Optional[str]:
@@ -140,7 +234,8 @@ class PythonCodingTool(CodingTool):
         default_timeout: Optional[float] = None,
         working_directory: Optional[str] = None,
         environment: Optional[Dict[str, str]] = None,
-        run_in_sandbox: bool = False,
+        sandbox_type: SandboxType = None,
+        bubblewrap_visible_dirs: Optional[Sequence[str]] = None,
         container_image: Optional[str] = None,
         require_approval: bool = True,
         **kwargs: Any,
@@ -150,7 +245,8 @@ class PythonCodingTool(CodingTool):
             default_timeout=default_timeout,
             working_directory=working_directory,
             environment=environment,
-            run_in_sandbox=run_in_sandbox,
+            sandbox_type=sandbox_type,
+            bubblewrap_visible_dirs=bubblewrap_visible_dirs,
             container_image=container_image or self._default_python_image(),
             require_approval=require_approval,
             **kwargs,
@@ -188,13 +284,21 @@ class PythonCodingTool(CodingTool):
         env.update(self._environment)
         tmp_file = None
         try:
-            if self._run_in_sandbox:
+            if self.sandbox_type == "container":
                 result = self._execute_in_container(
                     ["python", "-c", prepared_code],
                     env=env,
                     timeout=exec_timeout,
                     input_text=input_text,
                     workdir=cwd,
+                )
+            elif self.sandbox_type == "bubblewrap":
+                result = self._execute_in_bubblewrap(
+                    [sys.executable, "-c", prepared_code],
+                    env=env,
+                    timeout=exec_timeout,
+                    input_text=input_text,
+                    workdir=exec_cwd,
                 )
             else:
                 tmp_file = tempfile.NamedTemporaryFile(
@@ -245,7 +349,7 @@ class PythonCodingTool(CodingTool):
                 "error": str(exc),
             }
         finally:
-            if not self._run_in_sandbox and tmp_file is not None:
+            if self.sandbox_type is None and tmp_file is not None:
                 try:
                     os.unlink(tmp_file.name)
                 except OSError:
@@ -270,7 +374,8 @@ class BashCodingTool(CodingTool):
         working_directory: Optional[str] = None,
         environment: Optional[Dict[str, str]] = None,
         shell_path: str = "/bin/bash",
-        run_in_sandbox: bool = False,
+        sandbox_type: SandboxType = None,
+        bubblewrap_visible_dirs: Optional[Sequence[str]] = None,
         container_image: Optional[str] = None,
         require_approval: bool = True,
         **kwargs: Any,
@@ -281,7 +386,8 @@ class BashCodingTool(CodingTool):
             default_timeout=default_timeout,
             working_directory=working_directory,
             environment=environment,
-            run_in_sandbox=run_in_sandbox,
+            sandbox_type=sandbox_type,
+            bubblewrap_visible_dirs=bubblewrap_visible_dirs,
             container_image=container_image or "bash:latest",
             require_approval=require_approval,
             **kwargs,
@@ -314,13 +420,21 @@ class BashCodingTool(CodingTool):
         env.update(self._environment)
         tmp_file = None
         try:
-            if self._run_in_sandbox:
+            if self.sandbox_type == "container":
                 result = self._execute_in_container(
                     ["bash", "-c", code],
                     env=env,
                     timeout=exec_timeout,
                     input_text=input_text,
                     workdir=cwd,
+                )
+            elif self.sandbox_type == "bubblewrap":
+                result = self._execute_in_bubblewrap(
+                    [self._shell_path, "-c", code],
+                    env=env,
+                    timeout=exec_timeout,
+                    input_text=input_text,
+                    workdir=exec_cwd,
                 )
             else:
                 tmp_file = tempfile.NamedTemporaryFile(
@@ -364,7 +478,7 @@ class BashCodingTool(CodingTool):
                 "error": str(exc),
             }
         finally:
-            if not self._run_in_sandbox and tmp_file is not None:
+            if self.sandbox_type is None and tmp_file is not None:
                 try:
                     os.unlink(tmp_file.name)
                 except OSError:

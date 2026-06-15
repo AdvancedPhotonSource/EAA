@@ -61,7 +61,8 @@ class SubagentTool(BaseTool):
             checkpoint_db_path=self.task_manager.checkpoint_db_path,
             use_webui=self.task_manager.use_webui,
             use_coding_tools=self.task_manager.use_coding_tools,
-            run_codes_in_sandbox=self.task_manager.run_codes_in_sandbox,
+            coding_tool_sandbox_type=self.task_manager.coding_tool_sandbox_type,
+            bubblewrap_visible_dirs=self.task_manager.bubblewrap_visible_dirs,
             prune_checkpoints=self.task_manager.prune_checkpoints,
             is_subagent=True,
         )

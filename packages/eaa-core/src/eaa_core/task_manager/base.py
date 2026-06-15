@@ -45,7 +45,7 @@ from eaa_core.task_manager.state import (
 )
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
-from eaa_core.tool.coding import BashCodingTool, PythonCodingTool
+from eaa_core.tool.coding import BashCodingTool, PythonCodingTool, SandboxType
 from eaa_core.tool.subagent import SubagentTool
 from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
 
@@ -235,8 +235,12 @@ class BaseTaskManager:
         Whether to enable WebUI-driven user input and WebUI display writes.
     use_coding_tools : bool, default=True
         Whether to register built-in coding tools.
-    run_codes_in_sandbox : bool, default=False
-        Whether built-in coding tools should execute code in sandbox mode.
+    coding_tool_sandbox_type : {"bubblewrap", "container"} or None, optional
+        Sandbox implementation used by built-in coding tools. ``None`` runs
+        code directly in the configured working directory.
+    bubblewrap_visible_dirs : Optional[Sequence[str]], optional
+        Additional paths to bind into bubblewrap at the same absolute paths.
+        The current working directory is always bound.
     prune_checkpoints : bool, default=True
         Whether to keep only the latest checkpoint per graph thread in the
         checkpoint database.
@@ -261,7 +265,8 @@ class BaseTaskManager:
         webui_runtime_port: int = 8010,
         webui_upload_dir: str = ".tmp",
         use_coding_tools: bool = True,
-        run_codes_in_sandbox: bool = False,
+        coding_tool_sandbox_type: SandboxType = None,
+        bubblewrap_visible_dirs: Optional[Sequence[str]] = None,
         prune_checkpoints: bool = True,
         build: bool = True,
         is_subagent: bool = False,
@@ -288,7 +293,11 @@ class BaseTaskManager:
         self.skill_catalog: list[SkillMetadata] = discover_skills(self.skill_dirs)
         self.use_webui = use_webui
         self.use_coding_tools = use_coding_tools
-        self.run_codes_in_sandbox = run_codes_in_sandbox
+        self.coding_tool_sandbox_type = coding_tool_sandbox_type
+        self.bubblewrap_visible_dirs = (
+            list(bubblewrap_visible_dirs) if bubblewrap_visible_dirs is not None else None
+        )
+        self.coding_tool_request_approval = True
         self.prune_checkpoints = prune_checkpoints
         self.is_subagent = is_subagent
         self.checkpoint_db_path = checkpoint_db_path
@@ -938,14 +947,65 @@ class BaseTaskManager:
             [
                 FileSystemTool(read_whitelist_paths=self.skill_dirs),
                 ImageRenderingTool(),
-                PythonCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
-                BashCodingTool(run_in_sandbox=self.run_codes_in_sandbox),
+                PythonCodingTool(
+                    sandbox_type=self.coding_tool_sandbox_type,
+                    bubblewrap_visible_dirs=self.bubblewrap_visible_dirs,
+                    require_approval=self.coding_tool_request_approval,
+                ),
+                BashCodingTool(
+                    sandbox_type=self.coding_tool_sandbox_type,
+                    bubblewrap_visible_dirs=self.bubblewrap_visible_dirs,
+                    require_approval=self.coding_tool_request_approval,
+                ),
                 UvTool(),
             ]
         )
         if not self.is_subagent:
             tools.append(SubagentTool(self))
         return tools
+
+    def set_coding_tool_sandbox_type(
+        self,
+        type: SandboxType,
+        visible_dirs: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Set the sandbox type for built-in Python and Bash coding tools.
+
+        Parameters
+        ----------
+        type : {"bubblewrap", "container"} or None
+            Sandbox implementation to use. ``None`` runs without a sandbox.
+        visible_dirs : sequence of str, optional
+            Additional bubblewrap-visible paths. When omitted, bubblewrap only
+            binds the current working directory as a visible data path.
+        """
+        self.coding_tool_sandbox_type = type
+        self.bubblewrap_visible_dirs = list(visible_dirs) if visible_dirs is not None else None
+        for coding_tool in self._iter_coding_tools():
+            coding_tool.set_sandbox_type(
+                self.coding_tool_sandbox_type,
+                visible_dirs=self.bubblewrap_visible_dirs,
+            )
+
+    def set_coding_tool_request_approval(self, request_approval: bool) -> None:
+        """Set approval requirements for both Python and Bash coding tools."""
+        self.coding_tool_request_approval = request_approval
+        for coding_tool in self._iter_coding_tools():
+            coding_tool.require_approval = request_approval
+            for exposed in coding_tool.exposed_tools:
+                if not exposed.model_visible or exposed.require_approval is not None:
+                    continue
+                spec = self.tool_executor.tool_specs.get(exposed.name)
+                if spec is not None:
+                    spec.require_approval = request_approval
+
+    def _iter_coding_tools(self) -> list[PythonCodingTool | BashCodingTool]:
+        """Return registered Python and Bash coding tool instances."""
+        return [
+            tool
+            for tool in self.tool_executor.tools
+            if isinstance(tool, (PythonCodingTool, BashCodingTool))
+        ]
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
         """Register one or more tools with the serial executor."""
