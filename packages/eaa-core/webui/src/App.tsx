@@ -393,6 +393,13 @@ function App() {
     pendingMessagesRef.current.set(id, pendingContent.trim());
     setMessages((previous) => [...previous, { id, role: "user", content: pendingContent, images: [], pending: true }]);
     renderedIdsRef.current.add(id);
+    return id;
+  };
+
+  const removePendingMessage = (id: string) => {
+    pendingMessagesRef.current.delete(id);
+    renderedIdsRef.current.delete(id);
+    setMessages((previous) => previous.filter((message) => message.id !== id));
   };
 
   const showInfoMessage = (text: string) => {
@@ -408,6 +415,7 @@ function App() {
     if (processing) return;
     const trimmed = content.trim();
     if (!trimmed) return;
+    const pendingId = status === "waiting_for_approval" ? null : appendPendingMessage(trimmed);
     const response = await fetch(config.routes.send, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -415,16 +423,20 @@ function App() {
     });
     const payload = (await response.json().catch(() => ({}))) as { handled_as?: string; message?: string };
     if (response.status === 409) {
+      if (pendingId !== null) removePendingMessage(pendingId);
       showInfoMessage(payload.message || "Please avoid sending repeated messages.");
       return;
     }
-    if (!response.ok) throw new Error("Send failed");
+    if (!response.ok) {
+      if (pendingId !== null) removePendingMessage(pendingId);
+      throw new Error("Send failed");
+    }
     if (payload.handled_as === "approval") {
+      if (pendingId !== null) removePendingMessage(pendingId);
       setContent("");
       setSuggestionsOpen(false);
       return;
     }
-    appendPendingMessage(trimmed);
     setContent("");
     setSuggestionsOpen(false);
   };
