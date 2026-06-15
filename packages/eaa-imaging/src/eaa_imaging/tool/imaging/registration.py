@@ -25,8 +25,8 @@ class ImageRegistration(BaseTool):
         reference_pixel_size: float = 1.0,
         image_coordinates_origin: Literal["top_left", "center"] = "top_left",
         registration_method: Literal[
-            "phase_correlation", "sift", "mutual_information", "error_minimization", "ncc"
-        ] = "phase_correlation",
+            "ncc", "phase_correlation", "sift", "mutual_information", "error_minimization"
+        ] = "ncc",
         registration_algorithm_kwargs: Optional[dict[str, Any]] = None,
         zoom: float = 1.0,
         log_scale: bool = False,
@@ -53,13 +53,13 @@ class ImageRegistration(BaseTool):
             When this argument is set to "center", the test image is padded/cropped
             centrally. When it is set to "top_left", the test image is on the bottom
             and right sides.
-        registration_method : Literal["phase_correlation", "sift", "mutual_information", "error_minimization", "ncc"], optional
-            The method used to estimate translational offsets. "phase_correlation"
-            uses phase correlation, "sift" uses feature matching,
+        registration_method : Literal["ncc", "phase_correlation", "sift", "mutual_information", "error_minimization"], optional
+            The method used to estimate translational offsets. "ncc" uses a tuned
+            normalized-cross-correlation ensemble with subpixel refinement,
+            "phase_correlation" uses phase correlation, "sift" uses feature matching,
             "mutual_information" uses pyramid-based normalized mutual information,
             "error_minimization" uses exhaustive integer-shift MSE search with
-            local quadratic subpixel refinement, and "ncc" uses a tuned
-            normalized-cross-correlation ensemble with subpixel refinement.
+            local quadratic subpixel refinement.
         registration_algorithm_kwargs : Optional[dict[str, Any]], optional
             Keyword arguments to pass to the registration algorithm.
         zoom : float, optional
