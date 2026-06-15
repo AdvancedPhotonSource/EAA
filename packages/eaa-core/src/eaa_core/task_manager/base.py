@@ -771,6 +771,11 @@ class BaseTaskManager:
 
     def start_webui_runtime(self) -> None:
         """Start the agent-side WebUI runtime server."""
+        if not self.use_webui:
+            raise RuntimeError(
+                "Cannot start WebUI runtime when `use_webui` is False. "
+                "Initialize the task manager with `use_webui=True`."
+            )
         if self.runtime_server is None:
             return
         self.transcript_store.connect()

@@ -285,6 +285,17 @@ def test_session_db_path_raises_with_new_database_guidance(tmp_path):
         )
 
 
+def test_start_webui_runtime_requires_webui_enabled():
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=False,
+    )
+
+    with pytest.raises(RuntimeError, match="use_webui.*True"):
+        task_manager.start_webui_runtime()
+
+
 def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch):
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.model = object()
