@@ -31,6 +31,7 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
 
         acquisition_tool = SimulatedAcquireImage(
             whole_image=image,
+            return_message=False,
             add_axis_ticks=True,
             add_grid_lines=False,
             invert_yaxis=False,
@@ -86,6 +87,7 @@ class TestAnalyticalFeatureTracking(tutils.BaseTester):
             mock_check_feature_presence_llm,
         )
         task_manager, _, image = self._build_task_manager()
+        task_manager.image_registration_tool.registration_method = "phase_correlation"
         reference_loc = (60, 270)
         size = (100, 100)
         reference_image = image[

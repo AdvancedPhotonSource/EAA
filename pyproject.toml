@@ -36,3 +36,6 @@ members = [
     "packages/eaa-imaging",
     "packages/eaa-spectroscopy",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

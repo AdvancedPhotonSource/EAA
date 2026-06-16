@@ -36,6 +36,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
 
         acquisition_tool = SimulatedAcquireImage(
             whole_image=image,
+            return_message=False,
             add_axis_ticks=True,
             add_grid_lines=False,
             invert_yaxis=False,
