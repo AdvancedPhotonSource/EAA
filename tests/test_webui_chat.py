@@ -245,7 +245,8 @@ def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
 
     catalog_response = client.get("/api/skill-catalog")
     assert catalog_response.status_code == 200
-    assert catalog_response.json() == {"skills": []}
+    skill_names = {skill["name"] for skill in catalog_response.json()["skills"]}
+    assert skill_names == {"bayesian-optimization", "monitor-status"}
 
     upload_response = client.post(
         "/api/upload-image",
