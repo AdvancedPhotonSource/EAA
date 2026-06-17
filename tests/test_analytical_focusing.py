@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 
 import numpy as np
 import tifffile
@@ -24,6 +25,9 @@ class DummyRegistrationTool:
 
 
 class TestAnalyticalFocusing(tutils.BaseTester):
+    def teardown_method(self):
+        shutil.rmtree(".tmp", ignore_errors=True)
+
     def _build_task_manager(self, registration_tools=None):
         image_path = os.path.join(
             self.get_ci_input_data_dir(),
@@ -339,6 +343,9 @@ if __name__ == "__main__":
         generate_gold=args.generate_gold,
         debug=True,
     )
-    tester.test_task_manager_runs()
-    tester.test_task_manager_runs_without_offset_calibration()
-    tester.test_registration_and_scan_position_corrections_across_two_iterations()
+    try:
+        tester.test_task_manager_runs()
+        tester.test_task_manager_runs_without_offset_calibration()
+        tester.test_registration_and_scan_position_corrections_across_two_iterations()
+    finally:
+        tester.teardown_method()
