@@ -52,6 +52,7 @@ from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
 
 logger = logging.getLogger(__name__)
 SKILL_SELECTION_PATTERN = re.compile(r"(?P<prefix>^|\s)/skill\s+(?P<name>\S+)")
+BUILTIN_SKILL_DIRS = (str(Path(__file__).resolve().parents[1] / "skills"),)
 
 GraphName = Literal["chat_graph", "feedback_loop_graph", "task_graph"]
 GraphInvokeCommand = Literal["completed", "chat", "return", "exit"]
@@ -290,7 +291,9 @@ class BaseTaskManager:
             memory_config = MemoryManagerConfig.from_dict(memory_config)
         self.memory_config = memory_config
         self.tools = list(tools)
-        self.skill_dirs = list(skill_dirs) if skill_dirs else []
+        self.skill_dirs = (
+            list(BUILTIN_SKILL_DIRS) if skill_dirs is None else list(skill_dirs)
+        )
         self.skill_catalog: list[SkillMetadata] = discover_skills(self.skill_dirs)
         self.use_webui = use_webui
         self.use_coding_tools = use_coding_tools

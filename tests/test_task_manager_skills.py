@@ -2,6 +2,7 @@ from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.skills import SkillMetadata, discover_skills, resolve_skill
 from eaa_core.task_manager.state import ChatGraphState, FeedbackLoopState
+from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
 
 
 class QueuedInputTaskManager(BaseTaskManager):
@@ -28,6 +29,7 @@ class QueuedInputTaskManager(BaseTaskManager):
     def build_feedback_loop_graph(self, checkpointer=None):
         """Skip graph construction in command-ingestion tests."""
         return None
+
 
 def test_discover_skills_returns_skill_md_paths(tmp_path):
     skill_dir = tmp_path / "skills" / "demo"
@@ -74,6 +76,45 @@ def test_resolve_skill_matches_requested_name_not_first_catalog_entry():
 
     assert skill is not None
     assert skill.name == "scanning-microscope-focusing-with-landmark-feature-line-scan"
+
+
+def test_base_task_manager_uses_builtin_core_skills_by_default():
+    task_manager = BaseTaskManager(
+        skill_dirs=None,
+        use_coding_tools=False,
+        build=False,
+    )
+
+    skill_names = {skill.name for skill in task_manager.skill_catalog}
+
+    assert "monitor-status" in skill_names
+
+
+def test_base_task_manager_allows_explicit_empty_skill_dirs():
+    task_manager = BaseTaskManager(
+        skill_dirs=[],
+        use_coding_tools=False,
+        build=False,
+    )
+
+    assert task_manager.skill_dirs == []
+    assert task_manager.skill_catalog == []
+
+
+def test_imaging_base_task_manager_uses_builtin_core_and_imaging_skills_by_default():
+    task_manager = ImagingBaseTaskManager(
+        skill_dirs=None,
+        use_coding_tools=False,
+        build=False,
+    )
+
+    skill_names = {skill.name for skill in task_manager.skill_catalog}
+
+    assert "monitor-status" in skill_names
+    assert "roi-search-workflow" in skill_names
+    assert (
+        "scanning-microscope-focusing-with-landmark-feature-line-scan" in skill_names
+    )
 
 
 def test_skill_command_injects_only_skill_md(tmp_path):

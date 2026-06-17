@@ -1,16 +1,19 @@
 import logging
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Sequence
 
 from PIL import Image
 
 from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
+from eaa_core.task_manager.base import BUILTIN_SKILL_DIRS as CORE_BUILTIN_SKILL_DIRS
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.tool.base import BaseTool
 
 from eaa_imaging.image_proc import stitch_images
 
 logger = logging.getLogger(__name__)
+BUILTIN_SKILL_DIRS = (str(Path(__file__).resolve().parents[2] / "skills"),)
 
 
 class ImagingBaseTaskManager(BaseTaskManager):
@@ -22,6 +25,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         tools: list[BaseTool] = (), 
         checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         build: bool = True,
+        skill_dirs: Optional[Sequence[str]] = None,
         *args, **kwargs
     ) -> None:
         """An agent that searches for the best setup parameters
@@ -42,11 +46,17 @@ class ImagingBaseTaskManager(BaseTaskManager):
             for new messages.
         build : bool
             Whether to build the internal state of the task manager.
+        skill_dirs : Optional[Sequence[str]]
+            Directories searched for EAA skills. If ``None``, the built-in
+            core and imaging skill directories are used.
         """        
+        if skill_dirs is None:
+            skill_dirs = (*CORE_BUILTIN_SKILL_DIRS, *BUILTIN_SKILL_DIRS)
         super().__init__(
             llm_config=llm_config,
             memory_config=memory_config,
             tools=tools, 
+            skill_dirs=skill_dirs,
             checkpoint_db_path=checkpoint_db_path,
             build=build,
             *args, **kwargs
