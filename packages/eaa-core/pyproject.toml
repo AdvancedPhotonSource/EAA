@@ -58,6 +58,7 @@ namespaces = true
     "gui/static/webui/assets/*.css",
     "gui/static/webui/assets/*.js",
     "skills/*/SKILL.md",
+    "skills/*/examples/*.py",
     "skills/*/references/*.md",
     "task_manager/prompts/*.md",
 ]
