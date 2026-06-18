@@ -11,8 +11,10 @@ from eaa_core.message_proc import (
 )
 from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
-from eaa_core.task_manager.base import load_latest_checkpoint_state_from_connection
-from eaa_core.task_manager.state import TaskManagerState
+from eaa_core.task_manager.state import (
+    TaskManagerState,
+    load_latest_checkpoint_state_from_connection,
+)
 from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.tool.base import BaseTool
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager

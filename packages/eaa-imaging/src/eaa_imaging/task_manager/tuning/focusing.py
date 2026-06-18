@@ -15,9 +15,11 @@ from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.exceptions import MaxRoundsReached
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.prompts import render_prompt_template
-from eaa_core.task_manager.state import FeedbackLoopState
+from eaa_core.task_manager.state import (
+    FeedbackLoopState,
+    load_latest_checkpoint_state_from_connection,
+)
 from eaa_core.tool.base import BaseTool
-from eaa_core.task_manager.base import load_latest_checkpoint_state_from_connection
 
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
 from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface

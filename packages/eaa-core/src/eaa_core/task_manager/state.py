@@ -1,7 +1,10 @@
 from dataclasses import dataclass
+import sqlite3
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from eaa_core.task_manager.persistence import PrunableSqliteSaver
 
 
 class TaskManagerState(BaseModel):
@@ -110,6 +113,100 @@ class ChatGraphState(TaskManagerState):
     monitor_task_description: str = ""
     exit_requested: bool = False
     return_requested: bool = False
+
+
+CheckpointStateName = Literal["ChatGraphState", "TaskManagerState"]
+
+
+def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
+    """Return the LangGraph config used for a checkpoint file."""
+    return {
+        "configurable": {
+            "thread_id": checkpoint_thread_id,
+        }
+    }
+
+
+def load_latest_checkpoint_state_from_connection(
+    connection: sqlite3.Connection,
+    prune_checkpoints: bool,
+) -> Optional[dict[str, Any]]:
+    """Load the newest transcript-bearing checkpoint state from a connection."""
+    saver = PrunableSqliteSaver(
+        connection,
+        prune_checkpoints=prune_checkpoints,
+    )
+    saver.setup()
+    latest_state, _ = saver.load_latest_checkpoint_state()
+    return latest_state
+
+
+def build_compatible_checkpoint_state(
+    target_state_name: CheckpointStateName,
+    incoming_state: TaskManagerState | dict[str, Any],
+) -> Optional[TaskManagerState]:
+    """Translate a checkpoint state into the target compatible state.
+
+    Parameters
+    ----------
+    target_state_name : {"ChatGraphState", "TaskManagerState"}
+        Name of the state model to produce.
+    incoming_state : TaskManagerState or dict[str, Any]
+        Source checkpoint state from any graph.
+
+    Returns
+    -------
+    Optional[TaskManagerState]
+        Compatible target state, or ``None`` when no transcript data is
+        available to seed the new state.
+    """
+    state_data = (
+        incoming_state.model_dump()
+        if isinstance(incoming_state, TaskManagerState)
+        else dict(incoming_state)
+    )
+    messages = state_data.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+    full_history = state_data.get("full_history")
+    if not isinstance(full_history, list):
+        full_history = list(messages)
+    source_state = TaskManagerState.model_validate(
+        {
+            "messages": messages,
+            "full_history": full_history,
+        }
+    )
+    if len(source_state.messages) == 0 and len(source_state.full_history) == 0:
+        return None
+    shared_fields = {
+        "await_user_input": True,
+        "round_index": int(state_data.get("round_index", 0) or 0),
+        "store_all_images_in_context": bool(
+            state_data.get("store_all_images_in_context", True)
+        ),
+    }
+    if target_state_name == "ChatGraphState":
+        state = ChatGraphState(
+            **shared_fields,
+            bootstrap_message=None,
+            termination_behavior="user",
+            monitor_requested=bool(state_data.get("monitor_requested", False)),
+            monitor_task_description=str(
+                state_data.get("monitor_task_description", "") or ""
+            ),
+            exit_requested=False,
+            return_requested=False,
+        )
+        state.copy_messages_and_history_from_state(source_state)
+        return state
+    if target_state_name == "TaskManagerState":
+        state = TaskManagerState(**shared_fields)
+        state.copy_messages_and_history_from_state(source_state)
+        return state
+    raise ValueError(
+        f"Unsupported state name for checkpoint loading: {target_state_name}."
+    )
 
 
 @dataclass

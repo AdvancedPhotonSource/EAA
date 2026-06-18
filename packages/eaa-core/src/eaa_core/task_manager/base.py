@@ -43,6 +43,9 @@ from eaa_core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
     TaskManagerState,
+    build_compatible_checkpoint_state,
+    get_state_checkpoint_config,
+    load_latest_checkpoint_state_from_connection,
 )
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
@@ -66,15 +69,6 @@ class GraphInvokeResult:
     command: GraphInvokeCommand = "completed"
 
 
-def get_state_checkpoint_config(checkpoint_thread_id: str) -> dict[str, Any]:
-    """Return the LangGraph config used for a checkpoint file."""
-    return {
-        "configurable": {
-            "thread_id": checkpoint_thread_id,
-        }
-    }
-
-
 def get_checkpoint_state_model(
     graph_name: GraphName,
 ) -> type[TaskManagerState]:
@@ -83,84 +77,6 @@ def get_checkpoint_state_model(
         return ChatGraphState
     if graph_name == "task_graph":
         return TaskManagerState
-    raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
-
-
-def load_latest_checkpoint_state_from_connection(
-    connection: sqlite3.Connection,
-    prune_checkpoints: bool,
-) -> Optional[dict[str, Any]]:
-    """Load the newest transcript-bearing checkpoint state from a connection."""
-    saver = PrunableSqliteSaver(
-        connection,
-        prune_checkpoints=prune_checkpoints,
-    )
-    saver.setup()
-    latest_state, _ = saver.load_latest_checkpoint_state()
-    return latest_state
-
-
-def build_compatible_checkpoint_state(
-    graph_name: GraphName,
-    incoming_state: TaskManagerState | dict[str, Any],
-) -> Optional[TaskManagerState]:
-    """Translate a checkpoint state into the target graph's compatible state.
-
-    Parameters
-    ----------
-    graph_name : {"chat_graph", "task_graph"}
-        Target graph identifier whose state model should be produced.
-    incoming_state : TaskManagerState or dict[str, Any]
-        Source checkpoint state from any graph.
-
-    Returns
-    -------
-    Optional[TaskManagerState]
-        Compatible state for the target graph, or ``None`` when no transcript
-        data is available to seed the new graph.
-    """
-    state_data = (
-        incoming_state.model_dump()
-        if isinstance(incoming_state, TaskManagerState)
-        else dict(incoming_state)
-    )
-    messages = state_data.get("messages")
-    if not isinstance(messages, list):
-        messages = []
-    full_history = state_data.get("full_history")
-    if not isinstance(full_history, list):
-        full_history = list(messages)
-    source_state = TaskManagerState.model_validate(
-        {
-            "messages": messages,
-            "full_history": full_history,
-        }
-    )
-    if len(source_state.messages) == 0 and len(source_state.full_history) == 0:
-        return None
-    shared_fields = {
-        "await_user_input": True,
-        "round_index": int(state_data.get("round_index", 0) or 0),
-        "store_all_images_in_context": bool(
-            state_data.get("store_all_images_in_context", True)
-        ),
-    }
-    if graph_name == "chat_graph":
-        state = ChatGraphState(
-            **shared_fields,
-            bootstrap_message=None,
-            termination_behavior="user",
-            monitor_requested=bool(state_data.get("monitor_requested", False)),
-            monitor_task_description=str(state_data.get("monitor_task_description", "") or ""),
-            exit_requested=False,
-            return_requested=False,
-        )
-        state.copy_messages_and_history_from_state(source_state)
-        return state
-    if graph_name == "task_graph":
-        state = TaskManagerState(**shared_fields)
-        state.copy_messages_and_history_from_state(source_state)
-        return state
     raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
 
 
@@ -866,13 +782,13 @@ class BaseTaskManager:
         )
         loaded_state: Optional[TaskManagerState] = None
         if load_state:
+            state_model = get_checkpoint_state_model(graph_name)
             snapshot = graph.get_state(config)
             if (
                 snapshot.created_at is not None
                 and snapshot.values is not None
                 and len(snapshot.values) > 0
             ):
-                state_model = get_checkpoint_state_model(graph_name)
                 loaded_state = state_model.model_validate(snapshot.values)
             else:
                 latest_state = load_latest_checkpoint_state_from_connection(
@@ -880,7 +796,10 @@ class BaseTaskManager:
                     prune_checkpoints=self.prune_checkpoints,
                 )
                 if latest_state is not None:
-                    loaded_state = build_compatible_checkpoint_state(graph_name, latest_state)
+                    loaded_state = build_compatible_checkpoint_state(
+                        state_model.__name__,
+                        latest_state,
+                    )
         return graph, config, loaded_state
 
     def _collect_base_tools(self) -> list[BaseTool]:
