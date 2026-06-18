@@ -101,21 +101,30 @@ Overall, the procedure consists of the following steps:
    new_line_scan_position = previous_line_scan_position + stage_position_correction
    ```
 
+   **Use the `evaluate_python_expression` tool for every drift-correction
+   calculation. Do not calculate the correction mentally.** Evaluate each coordinate
+   explicitly when the positions are vectors. State the input values and use the tool's
+   returned result for `stage_position_correction`, `new_line_scan_position`, and later
+   `new_2d_scan_position`. Only calculate manually if that tool is unavailable, and say
+   that you are using the fallback.
+
    This reduces to simply subtracting `registration_offset` only when the current and last
-   2D scans were acquired at the same position. Conduct another line scan at the
-   corrected position. You should see that the scan line crosses the landmark feature
-   at the same location relative to other features in the sample, despite that the
-   absolute positions indicated in the axis ticks may differ.
+   2D scans were acquired at the same position.
+   Conduct another line scan at the corrected position. You should see that the scan line
+   crosses the landmark feature at the same location relative to other features in
+   the sample, despite that the absolute positions indicated in the axis ticks may differ.
 
 8. Once you get the new FWHM from the line scan, compare it with the trend of past FWHM values to determine
    the next optics parameter adjustment. Keep in mind that the goal is to minimize the
    FWHM, so you should adjust the optics parameters in the direction that makes the FWHM
    smaller. Then use the parameter setting tool or motor moving tool to make the parameter adjustment.
 
-8.1. Optionally, after getting the FWHM, you may use your Python tool to visualize the data
-  points measured so far which helps you understand where you are in the search. If you
-  decided to use Bayesian optimization (which is agian optional), you can also update the
-  model and get new suggestion in this step. 
+8.1. Maintain a parameter-versus-FWHM plot during the search. Create the first plot once
+   three points are available. Update and inspect it after every new point near a suspected
+   minimum or whenever the trend changes direction. Use the plot as evidence when choosing
+   the next parameter; do not merely generate it without examining the trend. If you decide
+   to use Bayesian optimization (which is optional), update the model and get its next
+   suggestion in this step.
 
 9. Repeat the process from step 5 (acquire 2D image). When acquiring the next
    image, update the last 2D scan position by the same `stage_position_correction`
@@ -163,9 +172,12 @@ to help with your search:
 
 ### Use visualization
 
-Use your Python tool often to plot the data points measured so far to visualize the state
-of the search. This helps you to understand the trends of the FWHM and also helps you
-decide whether the current minimum is a noise-induced fluctuation or the true optimum.
+Plotting is a required diagnostic part of the search, not an optional final-report step.
+Plot all measured parameter-FWHM pairs in acquisition order, connect adjacent points to
+make reversals visible, and mark the current best measurement. Once three points exist,
+inspect the updated plot before declaring a bracket, reversing direction, reducing the
+step size, or concluding the search. Use it to decide whether an apparent minimum is a
+noise-induced fluctuation or a supported trend.
 
 ### Handling noise
 
@@ -187,8 +199,16 @@ section for more details.
 ## Avoid early termination
 
 Noise and imprecision in line scan positions can cause fluctuations in the FWHM.
-Do not trust the immediate data point that appears like "overshooting past the
-optimum". For example, if you see
+**A single FWHM increase must never be treated as evidence that the optimum has been
+passed or bracketed.** Do not reverse direction, shrink the search interval, or claim
+that the optimum lies in the last-visited interval based on one increase. Continue in
+the same direction for at least one additional coarse step, while continuing drift
+correction and landmark checks. Treat a turnover as credible only when the measurements
+show a sustained increase at two successive parameter positions beyond the current best,
+or when repeat measurements near the suspected turnover confirm it. Plot the accumulated
+points before making this decision.
+
+For example, if you see
 
 | zone plate z | FWHM |
 | --- | --- |
@@ -197,9 +217,11 @@ optimum". For example, if you see
 | -192 | 2.3 |
 | -193 | 2.6 |
 
-Do not conclude that the optimum is between -193 and -191 right away. Keep going in that
-direction a little until you see a consistent increasing trend in the FWHM. When in doubt,
-plot the data points to better visualize the state.
+The value at -193 may be noise. Do not conclude that the optimum is between -191 and -193,
+and do not reverse direction. Measure at -194 next. If needed, continue to -195 or repeat
+a nearby point until the rise is sustained or disproved. Only then bracket the optimum and
+begin the fine search. A quadratic fit may support this decision, but it does not override
+the requirement for measurements beyond a one-point apparent turnover.
 
 ## Handling exceptions
 
