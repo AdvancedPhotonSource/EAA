@@ -102,6 +102,10 @@ class ChatGraphState(TaskManagerState):
 
     termination_behavior: Literal["return", "user"] = "user"
     bootstrap_message: Optional[Any] = None
+    max_agent_iterations: Optional[int] = None
+    n_first_images_to_keep_in_context: Optional[int] = None
+    n_last_images_to_keep_in_context: Optional[int] = None
+    message_with_yielded_image: str = "Here is the image the tool returned."
     monitor_requested: bool = False
     monitor_task_description: str = ""
     exit_requested: bool = False

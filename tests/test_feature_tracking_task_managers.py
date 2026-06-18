@@ -21,7 +21,7 @@ class DummyAcquireImageTool(BaseTool):
         return "dummy.png"
 
 
-def test_roi_search_task_manager_run_uses_feedback_loop(monkeypatch):
+def test_roi_search_task_manager_run_uses_conversation(monkeypatch):
     task_manager = ROISearchTaskManager(
         build=False,
         use_coding_tools=False,
@@ -30,10 +30,10 @@ def test_roi_search_task_manager_run_uses_feedback_loop(monkeypatch):
     )
     captured = {}
 
-    def fake_run_feedback_loop(**kwargs):
+    def fake_run_conversation(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
     task_manager.run(
         feature_description="bright spot",
@@ -43,7 +43,7 @@ def test_roi_search_task_manager_run_uses_feedback_loop(monkeypatch):
         step_size=(1.0, 1.5),
     )
 
-    assert "bright spot" in captured["initial_prompt"]
+    assert "bright spot" in captured["message"]
     assert captured["message_with_yielded_image"].startswith("Here is the image")
 
 
@@ -58,10 +58,10 @@ def test_roi_search_task_manager_can_embed_intermediate_images(monkeypatch):
     )
     captured = {}
 
-    def fake_run_feedback_loop(**kwargs):
+    def fake_run_conversation(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
     task_manager.run(
         feature_description="bright spot",
@@ -86,7 +86,7 @@ def test_roi_search_task_manager_requires_memory_config_for_intermediate_embeddi
         )
 
 
-def test_multi_agent_roi_search_uses_dedicated_graph_then_feedback_loop(monkeypatch):
+def test_multi_agent_roi_search_uses_dedicated_graph_then_conversation(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=True,
         use_coding_tools=False,
@@ -125,13 +125,13 @@ def test_multi_agent_roi_search_uses_dedicated_graph_then_feedback_loop(monkeypa
     def fake_invoke_model_raw(*args, **kwargs):
         return responses.pop(0)
 
-    feedback_loop_kwargs = {}
+    conversation_kwargs = {}
 
-    def fake_run_feedback_loop(**kwargs):
-        feedback_loop_kwargs.update(kwargs)
+    def fake_run_conversation(**kwargs):
+        conversation_kwargs.update(kwargs)
 
     monkeypatch.setattr(task_manager, "invoke_model_raw", fake_invoke_model_raw)
-    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
     task_manager.run(
         feature_description="bright spot",
@@ -145,9 +145,9 @@ def test_multi_agent_roi_search_uses_dedicated_graph_then_feedback_loop(monkeypa
     assert task_manager.task_state.foi_present is True
     assert task_manager.task_state.last_image_path == "dummy.png"
     assert len(task_manager.task_state.position_tool_calls) == 1
-    assert feedback_loop_kwargs["initial_image_path"] == "dummy.png"
-    assert "bright spot is visible" in feedback_loop_kwargs["initial_prompt"]
-    assert "centered in the FOV" in feedback_loop_kwargs["initial_prompt"]
+    assert "<img dummy.png>" in conversation_kwargs["message"]
+    assert "bright spot is visible" in conversation_kwargs["message"]
+    assert "centered in the FOV" in conversation_kwargs["message"]
 
 
 def test_multi_agent_roi_search_can_embed_intermediate_centering_images(monkeypatch):
@@ -191,13 +191,13 @@ def test_multi_agent_roi_search_can_embed_intermediate_centering_images(monkeypa
     def fake_invoke_model_raw(*args, **kwargs):
         return responses.pop(0)
 
-    feedback_loop_kwargs = {}
+    conversation_kwargs = {}
 
-    def fake_run_feedback_loop(**kwargs):
-        feedback_loop_kwargs.update(kwargs)
+    def fake_run_conversation(**kwargs):
+        conversation_kwargs.update(kwargs)
 
     monkeypatch.setattr(task_manager, "invoke_model_raw", fake_invoke_model_raw)
-    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
     task_manager.run(
         feature_description="bright spot",
@@ -207,8 +207,8 @@ def test_multi_agent_roi_search_can_embed_intermediate_centering_images(monkeypa
         step_size=(1.0, 1.5),
     )
 
-    assert feedback_loop_kwargs["message_with_yielded_image"].startswith(EMBED_INTERMEDIATE_IMAGE_TRIGGER)
-    assert "Continue adjusting" in feedback_loop_kwargs["message_with_yielded_image"]
+    assert conversation_kwargs["message_with_yielded_image"].startswith(EMBED_INTERMEDIATE_IMAGE_TRIGGER)
+    assert "Continue adjusting" in conversation_kwargs["message_with_yielded_image"]
 
 
 def test_multi_agent_roi_search_requires_memory_config_for_intermediate_embedding():
@@ -286,7 +286,7 @@ def test_multi_agent_roi_search_repeats_until_feature_present(monkeypatch):
         return responses.pop(0)
 
     monkeypatch.setattr(task_manager, "invoke_model_raw", fake_invoke_model_raw)
-    monkeypatch.setattr(task_manager, "run_feedback_loop", lambda **kwargs: None)
+    monkeypatch.setattr(task_manager, "run_conversation", lambda **kwargs: None)
 
     task_manager.run(
         initial_prompt="Find a feature.",
@@ -344,7 +344,7 @@ def test_multi_agent_roi_search_reprompts_position_proposer_on_bad_response(monk
         return responses.pop(0)
 
     monkeypatch.setattr(task_manager, "invoke_model_raw", fake_invoke_model_raw)
-    monkeypatch.setattr(task_manager, "run_feedback_loop", lambda **kwargs: None)
+    monkeypatch.setattr(task_manager, "run_conversation", lambda **kwargs: None)
 
     task_manager.run(initial_prompt="Find a feature.")
 
@@ -402,7 +402,7 @@ def test_multi_agent_roi_search_reprompts_image_checker_on_invalid_json(monkeypa
         return responses.pop(0)
 
     monkeypatch.setattr(task_manager, "invoke_model_raw", fake_invoke_model_raw)
-    monkeypatch.setattr(task_manager, "run_feedback_loop", lambda **kwargs: None)
+    monkeypatch.setattr(task_manager, "run_conversation", lambda **kwargs: None)
 
     task_manager.run(initial_prompt="Find a feature.")
 
@@ -411,7 +411,7 @@ def test_multi_agent_roi_search_reprompts_image_checker_on_invalid_json(monkeypa
     assert task_manager.task_state.fov_description == "feature appears"
 
 
-def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
+def test_feature_tracking_task_manager_run_uses_conversation(monkeypatch):
     task_manager = FeatureTrackingTaskManager(
         build=False,
         use_coding_tools=False,
@@ -420,10 +420,10 @@ def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
     )
     captured = {}
 
-    def fake_run_feedback_loop(**kwargs):
+    def fake_run_conversation(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(task_manager, "run_feedback_loop", fake_run_feedback_loop)
+    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
 
     task_manager.run(
         reference_image_path="reference.png",
@@ -433,8 +433,8 @@ def test_feature_tracking_task_manager_run_uses_feedback_loop(monkeypatch):
         x_range=(5.0, 15.0),
     )
 
-    assert captured["initial_image_path"] == "reference.png"
-    assert "reference image" in captured["initial_prompt"]
+    assert "<img reference.png>" in captured["message"]
+    assert "reference image" in captured["message"]
 
 
 def test_feature_tracking_task_manager_no_longer_owns_fov_search():
@@ -472,7 +472,7 @@ def test_multi_agent_roi_search_keyboard_interrupt_resumes_same_graph(monkeypatc
         return None
 
     monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume ROI search")
-    monkeypatch.setattr(task_manager, "run_feedback_loop", lambda **kwargs: None)
+    monkeypatch.setattr(task_manager, "run_conversation", lambda **kwargs: None)
     monkeypatch.setattr(
         "eaa_core.task_manager.base.print_message",
         fake_print_message,

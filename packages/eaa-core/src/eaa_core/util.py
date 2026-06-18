@@ -3,7 +3,6 @@ import datetime
 import io
 import logging
 import os
-import re
 import time
 from io import BytesIO
 from math import inf
@@ -228,44 +227,3 @@ def decode_image_base64(
     if return_type == "pil":
         return image
     raise ValueError(f"Invalid return type: {return_type}")
-
-
-def get_image_paths_from_text(
-    text: str,
-    return_text_without_image_tag: bool = False,
-) -> list[str] | tuple[list[str], str]:
-    """Extract image paths from ``<img ...>`` tags in text.
-
-    Parameters
-    ----------
-    text : str
-        Input text that may contain image tags.
-    return_text_without_image_tag : bool, optional
-        When ``True``, also return the text with image tags removed.
-
-    Returns
-    -------
-    list[str] | tuple[list[str], str]
-        Extracted paths, optionally paired with cleaned text.
-    """
-    paths = re.findall(r"<img (.*?)>", text)
-    if return_text_without_image_tag:
-        return paths, re.sub(r"<img .*?>", "", text)
-    return paths
-
-
-def get_image_path_from_text(text: str) -> str | None:
-    """Extract the first image path from text containing ``<img ...>`` tags.
-
-    Parameters
-    ----------
-    text : str
-        Input text that may contain image tags.
-
-    Returns
-    -------
-    str | None
-        First extracted image path, if present.
-    """
-    paths = get_image_paths_from_text(text)
-    return paths[0] if len(paths) > 0 else None

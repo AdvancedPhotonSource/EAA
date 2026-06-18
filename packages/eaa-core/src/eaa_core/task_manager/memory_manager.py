@@ -9,10 +9,13 @@ from langchain_openai import OpenAIEmbeddings
 from openai import UnprocessableEntityError
 
 from eaa_core.api.memory import MemoryManagerConfig
-from eaa_core.message_proc import extract_message_text, generate_openai_message
+from eaa_core.message_proc import (
+    extract_message_text,
+    generate_openai_message,
+    get_image_paths_from_text,
+)
 from eaa_core.llm.model import invoke_chat_model
 from eaa_core.task_manager.state import ChatRuntimeContext
-from eaa_core.util import get_image_paths_from_text
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)

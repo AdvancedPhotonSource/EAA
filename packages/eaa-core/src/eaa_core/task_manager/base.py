@@ -18,6 +18,7 @@ from eaa_core.llm.model import build_chat_model, invoke_chat_model
 from eaa_core.gui.runtime import WebUIRuntimeController, WebUIRuntimeServer
 from eaa_core.message_proc import (
     complete_unresponded_tool_calls,
+    convert_tagged_text_to_openai_message,
     generate_openai_message,
     get_message_elements_as_text,
     get_message_preview,
@@ -41,7 +42,6 @@ from eaa_core.task_manager.skills import (
 from eaa_core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
-    FeedbackLoopState,
     TaskManagerState,
 )
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 SKILL_SELECTION_PATTERN = re.compile(r"(?P<prefix>^|\s)/skill\s+(?P<name>\S+)")
 BUILTIN_SKILL_DIRS = (str(Path(__file__).resolve().parents[1] / "skills"),)
 
-GraphName = Literal["chat_graph", "feedback_loop_graph", "task_graph"]
+GraphName = Literal["chat_graph", "task_graph"]
 GraphInvokeCommand = Literal["completed", "chat", "return", "exit"]
 
 
@@ -81,8 +81,6 @@ def get_checkpoint_state_model(
     """Return the state model for a checkpointed graph."""
     if graph_name == "chat_graph":
         return ChatGraphState
-    if graph_name == "feedback_loop_graph":
-        return FeedbackLoopState
     if graph_name == "task_graph":
         return TaskManagerState
     raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
@@ -110,7 +108,7 @@ def build_compatible_checkpoint_state(
 
     Parameters
     ----------
-    graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+    graph_name : {"chat_graph", "task_graph"}
         Target graph identifier whose state model should be produced.
     incoming_state : TaskManagerState or dict[str, Any]
         Source checkpoint state from any graph.
@@ -154,28 +152,6 @@ def build_compatible_checkpoint_state(
             termination_behavior="user",
             monitor_requested=bool(state_data.get("monitor_requested", False)),
             monitor_task_description=str(state_data.get("monitor_task_description", "") or ""),
-            exit_requested=False,
-            return_requested=False,
-        )
-        state.copy_messages_and_history_from_state(source_state)
-        return state
-    if graph_name == "feedback_loop_graph":
-        state = FeedbackLoopState(
-            **shared_fields,
-            initial_prompt="",
-            initial_image_path=None,
-            initial_prompt_pending=False,
-            message_with_yielded_image="Here is the image the tool returned.",
-            max_rounds=99,
-            n_first_images_to_keep_in_context=None,
-            n_last_images_to_keep_in_context=None,
-            allow_non_image_tool_responses=True,
-            allow_multiple_tool_calls=False,
-            expected_tool_call_sequence=None,
-            expected_tool_call_sequence_tolerance=0,
-            termination_behavior="ask",
-            max_arounds_reached_behavior="return",
-            chat_requested=bool(state_data.get("chat_requested", False)),
             exit_requested=False,
             return_requested=False,
         )
@@ -283,7 +259,6 @@ class BaseTaskManager:
                 "`checkpoint_db_path` for LangGraph checkpoints."
             )
         self.chat_state = ChatGraphState()
-        self.feedback_state = FeedbackLoopState()
         self.task_state = TaskManagerState()
         self.active_state: TaskManagerState = self.task_state
         self.llm_config = llm_config
@@ -336,7 +311,6 @@ class BaseTaskManager:
                 [self.assistant_system_message, self.get_subagent_system_prompt()]
             )
         self.chat_graph = None
-        self.feedback_loop_graph = None
         self.task_graph = None
         self.checkpoint_connections: dict[tuple[str, str], sqlite3.Connection] = {}
         self.checkpoint_graphs: dict[tuple[str, str], Any] = {}
@@ -417,7 +391,7 @@ class BaseTaskManager:
         if command.kind != "skill" or not command.argument:
             match = SKILL_SELECTION_PATTERN.search(text)
             if match is None:
-                return [generate_openai_message(content=text, role="user")]
+                return [convert_tagged_text_to_openai_message(text, role="user")]
             skill_name = match.group("name")
             remaining_text = (
                 text[: match.start()]
@@ -427,11 +401,11 @@ class BaseTaskManager:
             remaining_text = re.sub(r"\s{2,}", " ", remaining_text)
             messages = self.build_selected_skill_messages(skill_name)
             if remaining_text:
-                messages.append(generate_openai_message(content=remaining_text, role="user"))
+                messages.append(convert_tagged_text_to_openai_message(remaining_text, role="user"))
             return messages
         messages = self.build_selected_skill_messages(command.argument)
         if command.text:
-            messages.append(generate_openai_message(content=command.text, role="user"))
+            messages.append(convert_tagged_text_to_openai_message(command.text, role="user"))
         return messages
 
     def set_active_state(
@@ -456,9 +430,6 @@ class BaseTaskManager:
         if graph_name == "chat_graph":
             self.chat_state = ChatGraphState.model_validate(state.model_dump())
             self.active_state = self.chat_state
-        elif graph_name == "feedback_loop_graph":
-            self.feedback_state = FeedbackLoopState.model_validate(state.model_dump())
-            self.active_state = self.feedback_state
         elif graph_name == "task_graph":
             self.task_state = state
             self.active_state = self.task_state
@@ -469,8 +440,6 @@ class BaseTaskManager:
         """Infer a graph slot from a state model."""
         if isinstance(state, ChatGraphState):
             return "chat_graph"
-        if isinstance(state, FeedbackLoopState):
-            return "feedback_loop_graph"
         return "task_graph"
 
     @property
@@ -508,7 +477,7 @@ class BaseTaskManager:
             Compiled LangGraph instance used for the interrupted run.
         checkpoint_config : Optional[dict[str, Any]]
             Checkpoint configuration containing the graph thread id.
-        graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+        graph_name : {"chat_graph", "task_graph"}
             Graph slot that owns the recovered state.
         state_model : type[TaskManagerState]
             State model used to validate the checkpoint payload.
@@ -708,7 +677,7 @@ class BaseTaskManager:
             state.
         graph_kwargs : dict[str, Any]
             Keyword arguments passed to ``graph.invoke``.
-        graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+        graph_name : {"chat_graph", "task_graph"}
             Graph slot that owns the recovered state.
         state_model : type[TaskManagerState]
             State model used to validate checkpoint payloads.
@@ -772,7 +741,6 @@ class BaseTaskManager:
         self.build_tools()
         self.build_memory_store()
         self.chat_graph = self.build_chat_graph()
-        self.feedback_loop_graph = self.build_feedback_loop_graph()
         self.task_graph = self.build_task_graph()
 
     def build_db(self, *args, **kwargs):
@@ -848,7 +816,7 @@ class BaseTaskManager:
 
     def get_checkpointed_graph(
         self,
-        graph_name: Literal["chat_graph", "feedback_loop_graph", "task_graph"],
+        graph_name: GraphName,
         checkpoint_db_path: Optional[str] = None,
         load_state: bool = True,
     ) -> tuple[Any, Optional[dict[str, Any]], Optional[TaskManagerState]]:
@@ -856,7 +824,7 @@ class BaseTaskManager:
 
         Parameters
         ----------
-        graph_name : {"chat_graph", "feedback_loop_graph", "task_graph"}
+        graph_name : {"chat_graph", "task_graph"}
             Graph identifier whose persistent graph should be returned.
         checkpoint_db_path : Optional[str], optional
             SQLite path to use for checkpoint loading and persistence instead
@@ -886,8 +854,6 @@ class BaseTaskManager:
             saver.setup()
             if graph_name == "chat_graph":
                 graph = self.build_chat_graph(checkpointer=saver)
-            elif graph_name == "feedback_loop_graph":
-                graph = self.build_feedback_loop_graph(checkpointer=saver)
             elif graph_name == "task_graph":
                 graph = self.build_task_graph(checkpointer=saver)
             else:
@@ -1268,11 +1234,14 @@ class BaseTaskManager:
         outgoing_message = None
         if message is not None:
             if isinstance(message, str):
-                outgoing_message = generate_openai_message(
-                    content=message,
-                    role="user",
-                    image_path=image_path,
-                )
+                if image_path is None:
+                    outgoing_message = convert_tagged_text_to_openai_message(message, role="user")
+                else:
+                    outgoing_message = generate_openai_message(
+                        content=message,
+                        role="user",
+                        image_path=image_path,
+                    )
                 effective_context.append(outgoing_message)
             elif isinstance(message, dict):
                 outgoing_message = message
@@ -1361,7 +1330,7 @@ class BaseTaskManager:
             )
         while True:
             try:
-                self.run_feedback_loop(initial_prompt=initial_prompt, termination_behavior="return")
+                self.run_conversation(message=initial_prompt, termination_behavior="return")
                 time.sleep(time_interval)
             except KeyboardInterrupt:
                 self.update_message_history(
@@ -1579,6 +1548,11 @@ class BaseTaskManager:
             node_factory.image_followup,
             input_schema=ChatGraphState,
         )
+        builder.add_node(
+            "finalize_round",
+            node_factory.finalize_chat_round,
+            input_schema=ChatGraphState,
+        )
         builder.add_edge(START, "await_or_ingest_user_input")
         builder.add_conditional_edges(
             "await_or_ingest_user_input",
@@ -1592,61 +1566,10 @@ class BaseTaskManager:
             "execute_tools",
             node_factory.route_after_tool_execution,
         )
-        builder.add_edge("image_followup", "call_model")
-        return builder.compile(checkpointer=checkpointer)
-
-    def build_feedback_loop_graph(self, checkpointer: Any = None):
-        """Build the base feedback-loop graph."""
-        node_factory = self.node_factory
-        builder = StateGraph(FeedbackLoopState, context_schema=ChatRuntimeContext)
-        builder.add_node(
-            "handle_human_gate",
-            node_factory.handle_human_gate,
-        )
-        builder.add_node(
-            "reprompt_model",
-            node_factory.reprompt_model,
-        )
-        builder.add_node(
-            "execute_tools",
-            node_factory.execute_tools,
-            input_schema=FeedbackLoopState,
-        )
-        builder.add_node(
-            "image_followup",
-            node_factory.image_followup,
-            input_schema=FeedbackLoopState,
-        )
-        builder.add_node(
-            "finalize_round",
-            node_factory.finalize_round,
-        )
-        builder.add_node(
-            "call_model",
-            node_factory.call_model,
-            input_schema=FeedbackLoopState,
-        )
-        builder.add_edge(START, "call_model")
-        builder.add_conditional_edges(
-            "call_model",
-            node_factory.route_after_feedback_response,
-        )
-        builder.add_conditional_edges(
-            "handle_human_gate",
-            node_factory.route_after_feedback_response,
-        )
-        builder.add_conditional_edges(
-            "reprompt_model",
-            node_factory.route_after_feedback_response,
-        )
-        builder.add_conditional_edges(
-            "execute_tools",
-            node_factory.route_after_tool_execution,
-        )
         builder.add_edge("image_followup", "finalize_round")
         builder.add_conditional_edges(
             "finalize_round",
-            node_factory.route_after_feedback_round,
+            node_factory.route_after_chat_round,
         )
         return builder.compile(checkpointer=checkpointer)
 
@@ -1654,6 +1577,10 @@ class BaseTaskManager:
         self,
         message: Optional[str | Dict[str, Any] | list[Dict[str, Any]]] = None,
         store_all_images_in_context: bool = True,
+        max_agent_iterations: Optional[int] = None,
+        n_first_images_to_keep_in_context: Optional[int] = None,
+        n_last_images_to_keep_in_context: Optional[int] = None,
+        message_with_yielded_image: str = "Here is the image the tool returned.",
         termination_behavior: Optional[Literal["return", "user"]] = "user",
         inherit_activate_state_messages: bool = True,
         *args,
@@ -1667,6 +1594,15 @@ class BaseTaskManager:
             Optional bootstrap message payload for the next chat turn.
         store_all_images_in_context : bool, default=True
             Whether all images should remain in the active chat context.
+        max_agent_iterations : int, optional
+            Maximum number of assistant tool-execution cycles before returning
+            control to the caller or user.
+        n_first_images_to_keep_in_context : int, optional
+            Number of earliest image-bearing messages to keep in context.
+        n_last_images_to_keep_in_context : int, optional
+            Number of latest image-bearing messages to keep in context.
+        message_with_yielded_image : str, default="Here is the image the tool returned."
+            Follow-up message used when a tool returns image paths.
         termination_behavior : {"return", "user"}, default="user"
             Behavior after a non-tool assistant response or an interrupt.
             `"user"` returns control to the user for another instruction,
@@ -1684,6 +1620,10 @@ class BaseTaskManager:
             termination_behavior=termination_behavior or "user",
             store_all_images_in_context=store_all_images_in_context,
             bootstrap_message=message,
+            max_agent_iterations=max_agent_iterations,
+            n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
+            n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
+            message_with_yielded_image=message_with_yielded_image,
             await_user_input=message is None,
         )
         if inherit_activate_state_messages:
@@ -1784,202 +1724,3 @@ class BaseTaskManager:
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
         if self.chat_state.monitor_requested:
             self.enter_monitoring_mode(self.chat_state.monitor_task_description)
-
-    def run_feedback_loop(
-        self,
-        initial_prompt: str,
-        initial_image_path: Optional[str | list[str]] = None,
-        message_with_yielded_image: str = "Here is the image the tool returned.",
-        max_rounds: int = 99,
-        n_first_images_to_keep_in_context: Optional[int] = None,
-        n_last_images_to_keep_in_context: Optional[int] = None,
-        allow_non_image_tool_responses: bool = True,
-        allow_multiple_tool_calls: bool = False,
-        expected_tool_call_sequence: Optional[list[str]] = None,
-        expected_tool_call_sequence_tolerance: int = 0,
-        termination_behavior: Literal["ask", "return"] = "ask",
-        max_arounds_reached_behavior: Literal["return", "raise"] = "return",
-        inherit_activate_state_messages: bool = True,
-        *args,
-        **kwargs,
-    ) -> None:
-        """Run the feedback-loop graph with the configured workflow settings.
-
-        Parameters
-        ----------
-        initial_prompt : str
-            Initial prompt sent to the model on the first feedback-loop turn.
-        initial_image_path : str or list of str, optional
-            Optional image path payload sent with the initial prompt.
-        message_with_yielded_image : str, default="Here is the image the tool returned."
-            Follow-up message used when a tool returns image paths.
-        max_rounds : int, default=99
-            Maximum number of feedback-loop rounds.
-        n_first_images_to_keep_in_context : int, optional
-            Number of earliest images to keep in the active context.
-        n_last_images_to_keep_in_context : int, optional
-            Number of most recent images to keep in the active context.
-        allow_non_image_tool_responses : bool, default=True
-            Whether non-image tool outputs are accepted.
-        allow_multiple_tool_calls : bool, default=False
-            Whether the assistant may issue multiple tool calls in one response.
-        expected_tool_call_sequence : list of str, optional
-            Expected tool-call order used for validation messaging.
-        expected_tool_call_sequence_tolerance : int, default=0
-            Allowed mismatch tolerance for the expected tool-call order.
-        termination_behavior : {"ask", "return"}, default="ask"
-            Behavior after a terminal feedback response or an interrupt.
-            `"ask"` enters chat mode for new user instructions, while
-            `"return"` exits back to the caller.
-        max_arounds_reached_behavior : {"return", "raise"}, default="return"
-            Behavior when `max_rounds` is reached.
-        inherit_activate_state_messages : bool, default=True
-            Whether to copy ``messages`` and ``full_history`` from the active
-            state into the new feedback-loop state before running the graph.
-
-        Returns
-        -------
-        None
-        """
-        if termination_behavior not in ["ask", "return"]:
-            raise ValueError("`termination_behavior` must be either 'ask' or 'return'.")
-        initial_state = FeedbackLoopState(
-            round_index=0,
-            await_user_input=False,
-            initial_prompt=initial_prompt,
-            initial_image_path=initial_image_path,
-            message_with_yielded_image=message_with_yielded_image,
-            max_rounds=max_rounds,
-            n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
-            n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
-            allow_non_image_tool_responses=allow_non_image_tool_responses,
-            allow_multiple_tool_calls=allow_multiple_tool_calls,
-            expected_tool_call_sequence=expected_tool_call_sequence,
-            expected_tool_call_sequence_tolerance=expected_tool_call_sequence_tolerance,
-            termination_behavior=termination_behavior,
-            max_arounds_reached_behavior=max_arounds_reached_behavior,
-        )
-        if inherit_activate_state_messages:
-            initial_state.copy_messages_and_history_from_state(self.active_state)
-        self.set_active_state(initial_state, "feedback_loop_graph")
-        graph = self.feedback_loop_graph
-        graph_kwargs: dict[str, Any] = {
-            "context": self.memory_manager.get_runtime_context(),
-        }
-        if self.checkpoint_db_path is not None:
-            graph, checkpoint_config, _ = self.get_checkpointed_graph(
-                "feedback_loop_graph",
-                load_state=False,
-            )
-            self.feedback_loop_graph = graph
-            graph_kwargs["config"] = checkpoint_config
-        invoke_result = self.invoke_graph_with_interruption_recovery(
-            graph=graph,
-            graph_input=initial_state,
-            graph_kwargs=graph_kwargs,
-            graph_name="feedback_loop_graph",
-            state_model=FeedbackLoopState,
-            interruption_message="Keyboard interrupt detected. The current feedback loop was interrupted.",
-        )
-        if invoke_result.command == "chat":
-            self.run_conversation(
-                store_all_images_in_context=True,
-                termination_behavior="user",
-            )
-            return
-        if invoke_result.command != "completed":
-            return
-        final_state = invoke_result.final_state
-        self.set_active_state(
-            FeedbackLoopState.model_validate(final_state),
-            "feedback_loop_graph",
-        )
-        if self.feedback_state.chat_requested:
-            self.run_conversation(
-                store_all_images_in_context=True,
-                termination_behavior="user",
-            )
-
-    def run_feedback_loop_from_checkpoint(
-        self,
-        checkpoint_db_path: Optional[str] = None,
-    ) -> None:
-        """Resume the feedback-loop graph directly from a saved checkpoint.
-
-        Parameters
-        ----------
-        checkpoint_db_path : Optional[str], optional
-            SQLite path to use for checkpoint loading and updates instead of
-            ``self.checkpoint_db_path``.
-
-        Notes
-        -----
-        By default checkpoints are loaded from ``checkpoint_db_path``. Pass
-        ``checkpoint_db_path`` to resume from a different SQLite file.
-        """
-        graph, checkpoint_config, loaded_state = self.get_checkpointed_graph(
-            "feedback_loop_graph",
-            checkpoint_db_path=checkpoint_db_path,
-        )
-        snapshot = graph.get_state(checkpoint_config)
-        fallback_loaded = (
-            snapshot.created_at is None
-            or snapshot.values is None
-            or len(snapshot.values) == 0
-        )
-        if loaded_state is None:
-            resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
-                "feedback_loop_graph",
-                checkpoint_db_path=checkpoint_db_path,
-            )
-            raise ValueError(
-                f"No feedback-loop checkpoint found in shared checkpoint DB "
-                f"{resolved_checkpoint_path}."
-            )
-        resumed_state = FeedbackLoopState.model_validate(loaded_state.model_dump())
-        restart_from_human_gate = (
-            fallback_loaded
-            or resumed_state.exit_requested
-            or resumed_state.return_requested
-        )
-        if restart_from_human_gate:
-            resumed_state.exit_requested = False
-            resumed_state.return_requested = False
-            resumed_state.await_user_input = True
-        self.set_active_state(resumed_state, "feedback_loop_graph")
-        self.feedback_loop_graph = graph
-        if restart_from_human_gate:
-            checkpoint_config = graph.update_state(
-                checkpoint_config,
-                resumed_state.model_dump(),
-                as_node="handle_human_gate",
-            )
-        invoke_result = self.invoke_graph_with_interruption_recovery(
-            graph=graph,
-            graph_input=None,
-            graph_kwargs={
-                "config": checkpoint_config,
-                "context": self.memory_manager.get_runtime_context(),
-            },
-            graph_name="feedback_loop_graph",
-            state_model=FeedbackLoopState,
-            interruption_message="Keyboard interrupt detected. The current feedback loop was interrupted.",
-        )
-        if invoke_result.command == "chat":
-            self.run_conversation(
-                store_all_images_in_context=True,
-                termination_behavior="user",
-            )
-            return
-        if invoke_result.command != "completed":
-            return
-        final_state = invoke_result.final_state
-        self.set_active_state(
-            FeedbackLoopState.model_validate(final_state),
-            "feedback_loop_graph",
-        )
-        if self.feedback_state.chat_requested:
-            self.run_conversation(
-                store_all_images_in_context=True,
-                termination_behavior="user",
-            )

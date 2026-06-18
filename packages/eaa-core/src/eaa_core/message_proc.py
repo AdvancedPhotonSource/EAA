@@ -1,6 +1,7 @@
-from typing import Any, Dict, List, Literal, Optional, Sequence
 import json
 import logging
+import re
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 import numpy as np
 from langchain_core.messages import AIMessage
@@ -10,6 +11,30 @@ from PIL import Image
 from eaa_core.util import encode_image_base64
 
 logger = logging.getLogger(__name__)
+
+
+def get_image_paths_from_text(
+    text: str,
+    return_text_without_image_tag: bool = False,
+) -> list[str] | tuple[list[str], str]:
+    """Extract image paths from ``<img ...>`` tags in text.
+
+    Parameters
+    ----------
+    text : str
+        Input text that may contain image tags.
+    return_text_without_image_tag : bool, optional
+        When ``True``, also return the text with image tags removed.
+
+    Returns
+    -------
+    list[str] | tuple[list[str], str]
+        Extracted paths, optionally paired with cleaned text.
+    """
+    paths = re.findall(r"<img (.*?)>", text)
+    if return_text_without_image_tag:
+        return paths, re.sub(r"<img .*?>", "", text)
+    return paths
 
 
 def to_dict(message: str | ChatCompletionMessage | dict) -> dict:
@@ -77,6 +102,38 @@ def generate_openai_message(
         )
         message["content"] = message_content
     return message
+
+
+def convert_tagged_text_to_openai_message(
+    text: str,
+    role: Literal["user", "system"] = "user",
+) -> Dict[str, Any]:
+    """Convert EAA tagged text into an OpenAI-compatible message.
+
+    Parameters
+    ----------
+    text : str
+        Text that may contain ``<img /path/to/image.png>`` tags.
+    role : {"user", "system"}, default="user"
+        Role for the generated message.
+
+    Returns
+    -------
+    dict
+        OpenAI-compatible message, with image tags converted to multimodal
+        image payloads when present.
+    """
+    image_paths, cleaned_text = get_image_paths_from_text(
+        text,
+        return_text_without_image_tag=True,
+    )
+    if image_paths:
+        return generate_openai_message(
+            content=cleaned_text,
+            role=role,
+            image_path=image_paths,
+        )
+    return generate_openai_message(content=text, role=role)
 
 
 def ai_message_to_openai_dict(message: AIMessage) -> Dict[str, Any]:

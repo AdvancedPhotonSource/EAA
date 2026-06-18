@@ -213,9 +213,8 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         if additional_prompt is not None:
             initial_prompt = initial_prompt + "\nAdditional instructions:\n" + additional_prompt
 
-        self.run_feedback_loop(
-            initial_prompt=initial_prompt,
-            initial_image_path=None,
+        self.run_conversation(
+            message=initial_prompt,
             message_with_yielded_image=build_embedding_triggered_image_message(
                 (
                     "Here is the image the tool returned. If the feature is there, "
@@ -225,7 +224,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
                 ),
                 self.embed_intermediate_images,
             ),
-            max_rounds=max_rounds,
+            max_agent_iterations=max_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
         )
@@ -240,7 +239,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
             ``self.checkpoint_db_path``.
         """
         self.prerun_check()
-        self.run_feedback_loop_from_checkpoint(checkpoint_db_path=checkpoint_db_path)
+        self.run_conversation_from_checkpoint(checkpoint_db_path=checkpoint_db_path)
 
 
 class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
@@ -907,9 +906,8 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             f"Feature/FOV description from image checker:\n"
             f"{search_state.fov_description}"
         )
-        self.run_feedback_loop(
-            initial_prompt=initial_prompt,
-            initial_image_path=search_state.last_image_path,
+        self.run_conversation(
+            message=f"{initial_prompt}\n<img {search_state.last_image_path}>",
             message_with_yielded_image=build_embedding_triggered_image_message(
                 (
                     "Here is the image the tool returned. Continue adjusting the "
@@ -918,10 +916,8 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
                 ),
                 self.embed_intermediate_images,
             ),
-            max_rounds=max_rounds,
+            max_agent_iterations=max_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
-            allow_non_image_tool_responses=True,
-            termination_behavior=termination_behavior,
-            max_arounds_reached_behavior=max_arounds_reached_behavior,
+            termination_behavior="return" if termination_behavior == "return" else "user",
         )

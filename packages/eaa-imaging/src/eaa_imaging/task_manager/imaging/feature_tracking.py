@@ -4,7 +4,7 @@ from eaa_core.api.llm_config import LLMConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.tool.base import BaseTool
-from eaa_core.util import get_image_path_from_text
+from eaa_core.message_proc import get_image_paths_from_text
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
 from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface
@@ -180,7 +180,8 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
                 prompt="Please provide the reference image as: <img /path/to/image.png>.",
                 display_prompt_in_webui=True,
             )
-            reference_image_path = get_image_path_from_text(user_image_input)
+            image_paths = get_image_paths_from_text(user_image_input)
+            reference_image_path = image_paths[0] if image_paths else None
 
         if initial_prompt is None:
             initial_prompt = render_prompt_template(
@@ -202,15 +203,15 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         if additional_prompt is not None:
             initial_prompt = initial_prompt + "\nAdditional instructions:\n" + additional_prompt
 
-        self.run_feedback_loop(
-            initial_prompt=initial_prompt,
-            initial_image_path=reference_image_path,
-            max_rounds=max_rounds,
+        message = initial_prompt
+        if reference_image_path is not None:
+            message = f"{initial_prompt}\n<img {reference_image_path}>"
+        self.run_conversation(
+            message=message,
+            max_agent_iterations=max_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
             n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
-            allow_non_image_tool_responses=True,
-            termination_behavior=termination_behavior,
-            max_arounds_reached_behavior=max_arounds_reached_behavior,
+            termination_behavior="return" if termination_behavior == "return" else "user",
         )
 
     def run_from_checkpoint(self, checkpoint_db_path: Optional[str] = None) -> None:
@@ -223,7 +224,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
             ``self.checkpoint_db_path``.
         """
         self.prerun_check()
-        self.run_feedback_loop_from_checkpoint(checkpoint_db_path=checkpoint_db_path)
+        self.run_conversation_from_checkpoint(checkpoint_db_path=checkpoint_db_path)
 
 __all__ = [
     "initialize_feature_tracking_task_manager",

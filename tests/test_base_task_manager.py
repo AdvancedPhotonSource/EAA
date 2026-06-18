@@ -8,6 +8,7 @@ from typing import Any
 
 from eaa_core.api.llm_config import OpenAIConfig
 from eaa_core.api.memory import MemoryManagerConfig
+from eaa_core.message_proc import generate_openai_message
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, FeedbackLoopState, TaskManagerState
 from eaa_core.tool.base import BaseTool, tool
@@ -340,33 +341,12 @@ def test_feedback_initial_response_sets_await_user_input(monkeypatch):
     assert state.initial_prompt_pending is False
 
 
-def test_feedback_graph_preserves_feedback_loop_state_in_call_model(monkeypatch):
+def test_base_feedback_loop_public_api_removed():
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
-    task_manager.model = object()
-    task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
 
-    seen = {"type_name": None}
-    original_call_model = task_manager.node_factory.call_model
-
-    def wrapped_call_model(state):
-        seen["type_name"] = type(state).__name__
-        return original_call_model(state)
-
-    task_manager.node_factory.call_model = wrapped_call_model
-    task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
-
-    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
-        return {"role": "assistant", "content": "NEED HUMAN"}
-
-    def fake_get_user_input(prompt, display_prompt_in_webui=False, *args, **kwargs):
-        return "/exit"
-
-    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
-    monkeypatch.setattr(task_manager, "get_user_input", fake_get_user_input)
-
-    task_manager.run_feedback_loop(initial_prompt="test prompt", max_rounds=1)
-
-    assert seen["type_name"] == "FeedbackLoopState"
+    assert not hasattr(task_manager, "build_feedback_loop_graph")
+    assert not hasattr(task_manager, "run_feedback_loop")
+    assert not hasattr(task_manager, "run_feedback_loop_from_checkpoint")
 
 
 def test_run_conversation_keyboard_interrupt_resumes_same_graph(monkeypatch):
@@ -403,42 +383,6 @@ def test_run_conversation_keyboard_interrupt_resumes_same_graph(monkeypatch):
     assert "Keyboard interrupt detected" in task_manager.full_history[-2]["content"]
     assert "Warning: checkpoint recovery was unavailable" in task_manager.full_history[-2]["content"]
     assert task_manager.full_history[-1]["content"] == "resume chat"
-    assert printed_roles == ["system", "user"]
-
-
-def test_run_feedback_loop_keyboard_interrupt_resumes_same_graph(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
-    task_manager.model = object()
-    invoke_calls = {"count": 0}
-
-    class DummyGraph:
-        def invoke(self, state, **kwargs):
-            invoke_calls["count"] += 1
-            if invoke_calls["count"] == 1:
-                raise KeyboardInterrupt()
-            return state.model_dump()
-
-    task_manager.feedback_loop_graph = DummyGraph()
-
-    printed_roles = []
-
-    def fake_print_message(message, response_requested=None, return_string=False):
-        printed_roles.append(message["role"])
-        return None
-
-    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "resume feedback")
-    monkeypatch.setattr("eaa_core.task_manager.base.print_message", fake_print_message)
-
-    task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
-
-    assert invoke_calls["count"] == 2
-    assert [message["role"] for message in task_manager.full_history[-2:]] == [
-        "system",
-        "user",
-    ]
-    assert "Keyboard interrupt detected" in task_manager.full_history[-2]["content"]
-    assert "Warning: checkpoint recovery was unavailable" in task_manager.full_history[-2]["content"]
-    assert task_manager.full_history[-1]["content"] == "resume feedback"
     assert printed_roles == ["system", "user"]
 
 
@@ -597,35 +541,6 @@ def test_non_tool_checkpointed_interruption_does_not_force_resume_node():
     assert resume_node is None
 
 
-def test_run_feedback_loop_keyboard_interrupt_chat_command_enters_chat(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
-    task_manager.model = object()
-
-    class DummyGraph:
-        def invoke(self, state, **kwargs):
-            raise KeyboardInterrupt()
-
-    task_manager.feedback_loop_graph = DummyGraph()
-    chat_calls = {"count": 0, "kwargs": None}
-
-    def fake_run_conversation(*args, **kwargs):
-        chat_calls["count"] += 1
-        chat_calls["kwargs"] = kwargs
-
-    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/chat")
-    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
-    monkeypatch.setattr("eaa_core.task_manager.base.print_message", lambda *args, **kwargs: None)
-
-    task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
-
-    assert chat_calls["count"] == 1
-    assert chat_calls["kwargs"] == {
-        "store_all_images_in_context": True,
-        "termination_behavior": "user",
-    }
-    assert task_manager.full_history[-1]["role"] == "system"
-
-
 def test_interruption_message_preview_uses_checkpoint_state_and_image_placeholder(tmp_path):
     checkpoint_base = tmp_path / "interrupt_preview.sqlite"
     task_manager = BaseTaskManager(
@@ -715,44 +630,6 @@ def test_checkpointed_interruption_recovery_survives_multiple_interruptions(tmp_
     assert task_manager.invoke_count == 3
 
 
-def test_run_feedback_loop_chat_command_hands_off_to_chat(monkeypatch):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
-    task_manager.model = object()
-    task_manager.feedback_loop_graph = task_manager.build_feedback_loop_graph()
-
-    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
-        return {"role": "assistant", "content": "NEED HUMAN"}
-
-    captured: dict[str, Any] = {"count": 0}
-
-    def fake_run_conversation(*args, **kwargs):
-        captured["count"] += 1
-        captured["kwargs"] = kwargs
-        captured["state"] = task_manager.active_state
-        captured["messages"] = list(task_manager.active_state.messages)
-        captured["full_history"] = list(task_manager.active_state.full_history)
-
-    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
-    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/chat")
-    monkeypatch.setattr(task_manager, "run_conversation", fake_run_conversation)
-
-    task_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
-
-    assert captured["count"] == 1
-    assert captured["kwargs"] == {
-        "store_all_images_in_context": True,
-        "termination_behavior": "user",
-    }
-    assert isinstance(captured["state"], FeedbackLoopState)
-    assert captured["state"].chat_requested is True
-    assert [message["role"] for message in captured["messages"]] == ["user", "assistant"]
-    assert [message["content"] for message in captured["messages"]] == [
-        "test prompt",
-        "NEED HUMAN",
-    ]
-    assert captured["full_history"] == captured["messages"]
-
-
 def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch):
     task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
     task_manager.chat_graph = task_manager.build_chat_graph()
@@ -773,6 +650,210 @@ def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch)
     assert captured["state"].monitor_requested is True
     assert captured["state"].messages == []
     assert captured["state"].full_history == []
+
+
+def test_run_conversation_accepts_dict_and_list_messages(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
+    task_manager.model = object()
+    task_manager.chat_graph = task_manager.build_chat_graph()
+    outgoing_payloads = []
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        outgoing_payloads.append(messages[-1])
+        return {"role": "assistant", "content": "done"}
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    task_manager.run_conversation(
+        message={"role": "user", "content": "dict"},
+        termination_behavior="return",
+    )
+    task_manager.run_conversation(
+        message=[{"role": "user", "content": "list"}],
+        termination_behavior="return",
+        inherit_activate_state_messages=False,
+    )
+
+    assert outgoing_payloads == [
+        {"role": "user", "content": "dict"},
+        {"role": "user", "content": "list"},
+    ]
+
+
+def test_run_conversation_converts_tagged_text_bootstrap(tmp_path, monkeypatch):
+    from PIL import Image
+
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (1, 1), color=(0, 255, 0)).save(image_path)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
+    task_manager.model = object()
+    task_manager.chat_graph = task_manager.build_chat_graph()
+    captured = {}
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        captured["message"] = messages[-1]
+        return {"role": "assistant", "content": "done"}
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    task_manager.run_conversation(
+        message=f"inspect <img {image_path}>",
+        termination_behavior="return",
+    )
+
+    assert captured["message"]["content"][0] == {"type": "text", "text": "inspect "}
+    assert captured["message"]["content"][1]["type"] == "image_url"
+
+
+def test_chat_tool_loop_continues_until_non_tool_response(monkeypatch):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        checkpoint_db_path=None,
+        tools=[EchoTool()],
+    )
+    task_manager.model = object()
+    task_manager.build_tools()
+    task_manager.chat_graph = task_manager.build_chat_graph()
+    responses = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "echo_test",
+                        "arguments": "{\"message\": \"hi\"}",
+                    },
+                }
+            ],
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return responses.pop(0)
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    task_manager.run_conversation(
+        message="start",
+        max_agent_iterations=2,
+        termination_behavior="return",
+    )
+
+    assert [message["role"] for message in task_manager.context] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert task_manager.chat_state.round_index == 0
+
+
+def test_chat_non_tool_response_resets_round_index(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
+    task_manager.model = object()
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "done"}
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    state = ChatGraphState(
+        messages=[{"role": "user", "content": "finish"}],
+        round_index=3,
+    )
+    result = task_manager.node_factory.call_model(state)
+
+    assert result["round_index"] == 0
+    assert state.round_index == 0
+
+
+def test_chat_max_agent_iterations_completes_unanswered_tool_call(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
+    task_manager.model = object()
+    task_manager.chat_graph = task_manager.build_chat_graph()
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "missing_tool", "arguments": "{}"},
+                }
+            ],
+        }
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    task_manager.run_conversation(
+        message="start",
+        max_agent_iterations=0,
+        termination_behavior="return",
+    )
+
+    assert task_manager.context[-1] == {
+        "role": "tool",
+        "content": "<Incomplete tool response>",
+        "tool_call_id": "call_1",
+    }
+
+
+def test_chat_round_prunes_context_images_without_pruning_full_history(tmp_path):
+    from PIL import Image
+
+    image_paths = []
+    for index in range(3):
+        image_path = tmp_path / f"image_{index}.png"
+        Image.new("RGB", (1, 1), color=(index, 0, 0)).save(image_path)
+        image_paths.append(image_path)
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
+    state = ChatGraphState(
+        messages=[
+            generate_openai_message(content=f"image {index}", image_path=str(image_path))
+            for index, image_path in enumerate(image_paths)
+        ],
+        full_history=[
+            generate_openai_message(content=f"image {index}", image_path=str(image_path))
+            for index, image_path in enumerate(image_paths)
+        ],
+        n_first_images_to_keep_in_context=1,
+        n_last_images_to_keep_in_context=1,
+    )
+
+    task_manager.node_factory.finalize_chat_round(state)
+
+    context_images = [
+        message for message in state.messages if isinstance(message["content"], list)
+    ]
+    history_images = [
+        message for message in state.full_history if isinstance(message["content"], list)
+    ]
+    assert len(context_images) == 2
+    assert len(history_images) == 3
+
+
+def test_terminate_is_plain_chat_response(monkeypatch):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False, checkpoint_db_path=None)
+    task_manager.model = object()
+    task_manager.chat_graph = task_manager.build_chat_graph()
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        return {"role": "assistant", "content": "TERMINATE"}
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    task_manager.run_conversation(message="start", termination_behavior="return")
+
+    assert task_manager.context[-1] == {"role": "assistant", "content": "TERMINATE"}
+    assert task_manager.chat_state.await_user_input is True
+
 
 def test_run_conversation_can_resume_from_checkpoint(tmp_path, monkeypatch):
     checkpoint_base = tmp_path / "checkpoint.sqlite"
@@ -854,135 +935,20 @@ def test_run_conversation_can_resume_from_override_checkpoint_path(tmp_path, mon
     assert checkpoint_base.exists()
 
 
-def test_run_conversation_can_seed_from_feedback_checkpoint(tmp_path, monkeypatch):
-    checkpoint_base = tmp_path / "cross_graph_chat.sqlite"
-
-    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
-        return {"role": "assistant", "content": "NEED HUMAN"}
-
-    first_manager = BaseTaskManager(
+def test_removed_feedback_loop_checkpoint_name_is_rejected(tmp_path):
+    checkpoint_base = tmp_path / "removed_feedback.sqlite"
+    task_manager = BaseTaskManager(
         build=False,
         use_coding_tools=False,
         checkpoint_db_path=str(checkpoint_base),
     )
-    first_manager.model = object()
 
-    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
-    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
-    first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
-
-    resumed_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        checkpoint_db_path=None,
-    )
-    resumed_manager.model = object()
-
-    input_calls = {"count": 0}
-
-    def fake_get_user_input(*args, **kwargs):
-        input_calls["count"] += 1
-        return "/exit"
-
-    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
-
-    resumed_manager.run_conversation_from_checkpoint(
-        checkpoint_db_path=str(checkpoint_base),
-    )
-
-    assert input_calls["count"] == 1
-    assert resumed_manager.full_history == first_manager.full_history
-    assert resumed_manager.context == first_manager.context
+    with pytest.raises(ValueError, match="Unsupported graph name"):
+        task_manager.get_checkpointed_graph("feedback_loop_graph")  # type: ignore[arg-type]
 
 
-def test_run_feedback_loop_from_checkpoint_reopens_human_gate(tmp_path, monkeypatch):
-    checkpoint_base = tmp_path / "feedback_resume.sqlite"
-    model_calls = {"count": 0}
-
-    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
-        model_calls["count"] += 1
-        return {"role": "assistant", "content": "NEED HUMAN"}
-
-    first_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        checkpoint_db_path=str(checkpoint_base),
-    )
-    first_manager.model = object()
-    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
-    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
-
-    first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
-
-    _, _, saved_state = first_manager.get_checkpointed_graph("feedback_loop_graph")
-    assert saved_state is not None
-    assert saved_state.exit_requested is True
-
-    resumed_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        checkpoint_db_path=str(checkpoint_base),
-    )
-    resumed_manager.model = object()
-
-    input_calls = {"count": 0}
-
-    def fake_get_user_input(*args, **kwargs):
-        input_calls["count"] += 1
-        return "/exit"
-
-    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
-
-    resumed_manager.run_feedback_loop_from_checkpoint()
-
-    assert input_calls["count"] == 1
-    assert model_calls["count"] == 1
-
-
-def test_run_feedback_loop_can_resume_from_override_checkpoint_path(tmp_path, monkeypatch):
-    checkpoint_base = tmp_path / "override_feedback.sqlite"
-    model_calls = {"count": 0}
-
-    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
-        model_calls["count"] += 1
-        return {"role": "assistant", "content": "NEED HUMAN"}
-
-    first_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        checkpoint_db_path=str(checkpoint_base),
-    )
-    first_manager.model = object()
-    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
-    monkeypatch.setattr(first_manager, "get_user_input", lambda *args, **kwargs: "/exit")
-
-    first_manager.run_feedback_loop(initial_prompt="test prompt", termination_behavior="ask")
-
-    resumed_manager = BaseTaskManager(
-        build=False,
-        use_coding_tools=False,
-        checkpoint_db_path=None,
-    )
-    resumed_manager.model = object()
-
-    input_calls = {"count": 0}
-
-    def fake_get_user_input(*args, **kwargs):
-        input_calls["count"] += 1
-        return "/exit"
-
-    monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
-
-    resumed_manager.run_feedback_loop_from_checkpoint(
-        checkpoint_db_path=str(checkpoint_base),
-    )
-
-    assert input_calls["count"] == 1
-    assert model_calls["count"] == 1
-
-
-def test_run_feedback_loop_can_seed_from_chat_checkpoint(tmp_path, monkeypatch):
-    checkpoint_base = tmp_path / "cross_graph_feedback.sqlite"
+def test_run_conversation_can_resume_from_chat_checkpoint_after_exit(tmp_path, monkeypatch):
+    checkpoint_base = tmp_path / "chat_checkpoint.sqlite"
 
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
         return {"role": "assistant", "content": "Hello! How can I help you today?"}
@@ -1013,7 +979,7 @@ def test_run_feedback_loop_can_seed_from_chat_checkpoint(tmp_path, monkeypatch):
 
     monkeypatch.setattr(resumed_manager, "get_user_input", fake_get_user_input)
 
-    resumed_manager.run_feedback_loop_from_checkpoint(
+    resumed_manager.run_conversation_from_checkpoint(
         checkpoint_db_path=str(checkpoint_base),
     )
 

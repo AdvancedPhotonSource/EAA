@@ -26,10 +26,6 @@ class QueuedInputTaskManager(BaseTaskManager):
         """Skip graph construction in command-ingestion tests."""
         return None
 
-    def build_feedback_loop_graph(self, checkpointer=None):
-        """Skip graph construction in command-ingestion tests."""
-        return None
-
 
 def test_discover_skills_returns_skill_md_paths(tmp_path):
     skill_dir = tmp_path / "skills" / "demo"

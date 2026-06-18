@@ -7,6 +7,7 @@ from langgraph.runtime import Runtime
 
 from eaa_core.exceptions import MaxRoundsReached
 from eaa_core.message_proc import (
+    complete_unresponded_tool_calls,
     generate_openai_message,
     has_tool_call,
     print_message,
@@ -586,6 +587,9 @@ class NodeFactory:
         if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
             state.initial_prompt_pending = False
             result["initial_prompt_pending"] = False
+        if isinstance(state, ChatGraphState) and not has_tool_call(state.latest_response or {}):
+            state.round_index = 0
+            result["round_index"] = 0
         return result
 
     def route_after_chat_response(self, state: ChatGraphState) -> str:
@@ -605,6 +609,11 @@ class NodeFactory:
         """
         response = state.latest_response or {}
         if has_tool_call(response):
+            if (
+                state.max_agent_iterations is not None
+                and state.round_index >= state.max_agent_iterations
+            ):
+                return "finalize_round"
             return "execute_tools"
         if state.termination_behavior == "return":
             return END
@@ -639,7 +648,11 @@ class NodeFactory:
             )
         return self.task_manager.execute_tools_for_state(
             state,
-            message_with_yielded_image="Here is the image the tool returned.",
+            message_with_yielded_image=getattr(
+                state,
+                "message_with_yielded_image",
+                "Here is the image the tool returned.",
+            ),
             allow_non_image_tool_responses=True,
             store_all_images_in_context=state.store_all_images_in_context,
         )
@@ -774,7 +787,11 @@ class NodeFactory:
                 return state.model_dump()
             followup_messages = self.build_tool_followup_messages(
                 state,
-                message_with_yielded_image="Here is the image the tool returned.",
+                message_with_yielded_image=getattr(
+                    state,
+                    "message_with_yielded_image",
+                    "Here is the image the tool returned.",
+                ),
                 allow_non_image_tool_responses=True,
             )
             self.apply_followup_messages_for_state(
@@ -829,6 +846,47 @@ class NodeFactory:
             return "image_followup"
         if isinstance(state, FeedbackLoopState):
             return "finalize_round"
+        return "finalize_round"
+
+    def finalize_chat_round(self, state: ChatGraphState) -> dict[str, object]:
+        """Finalize one chat tool cycle and prune images before the next model call."""
+        if (
+            state.max_agent_iterations is not None
+            and state.round_index >= state.max_agent_iterations
+        ):
+            original_context_length = len(state.messages)
+            complete_unresponded_tool_calls(state.messages)
+            for message in state.messages[original_context_length:]:
+                state.full_history.append(message)
+            state.await_user_input = True
+            return state.model_dump()
+        if (
+            state.n_last_images_to_keep_in_context is not None
+            or state.n_first_images_to_keep_in_context is not None
+        ):
+            state.messages = purge_context_images(
+                context=state.messages,
+                keep_first_n=state.n_first_images_to_keep_in_context or 0,
+                keep_last_n=state.n_last_images_to_keep_in_context or 0,
+                keep_text=True,
+            )
+        state.round_index += 1
+        if (
+            state.max_agent_iterations is not None
+            and state.round_index >= state.max_agent_iterations
+        ):
+            state.await_user_input = True
+        return state.model_dump()
+
+    def route_after_chat_round(self, state: ChatGraphState) -> str:
+        """Route after a chat tool cycle has been finalized."""
+        if (
+            state.max_agent_iterations is not None
+            and state.round_index >= state.max_agent_iterations
+        ):
+            if state.termination_behavior == "return":
+                return END
+            return "await_or_ingest_user_input"
         return "call_model"
 
     def route_after_feedback_response(self, state: FeedbackLoopState) -> str:
