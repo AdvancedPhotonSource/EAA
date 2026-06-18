@@ -21,7 +21,6 @@ from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_int
 from eaa_imaging.tool.imaging.aps_mic.test_target_landmark_fitting import (
     TestPatternLandmarkFitting,
 )
-from eaa_imaging.tool.imaging.nn_registration import NNRegistration
 from eaa_core.tool.param_tuning import SetParameters
 from eaa_core.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa_imaging.tool.imaging.registration import ImageRegistration
@@ -35,7 +34,7 @@ from eaa_core.util import to_numpy
 logger = logging.getLogger(__name__)
 
 
-RegistrationToolType = ImageRegistration | TestPatternLandmarkFitting | NNRegistration
+RegistrationToolType = ImageRegistration | TestPatternLandmarkFitting
 
 
 class LineScanValidationFailed(RuntimeError):
@@ -151,8 +150,8 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             tools must provide ``get_offset(target=...)`` returning the shift to
             apply to the current image so it aligns with the selected reference
             image.
-            Supported tool classes are :class:`ImageRegistration`,
-            :class:`TestPatternLandmarkFitting`, and :class:`NNRegistration`.
+            Supported tool classes are :class:`ImageRegistration` and
+            :class:`TestPatternLandmarkFitting`.
             The caller is responsible for instantiating these tools with the
             desired configuration.
         registration_selection_priming_iterations : int, optional
