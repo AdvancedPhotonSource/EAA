@@ -3,7 +3,7 @@ import textwrap
 
 import numpy as np
 
-from eaa_core.tool.coding import PythonCodingTool
+from eaa_core.tool.coding import SimplePythonEvalTool, PythonCodingTool
 
 import test_utils as tutils
 
@@ -12,6 +12,48 @@ logger.setLevel(logging.INFO)
 
 
 class TestCodingTool(tutils.BaseTester):
+    def test_literal_eval_tool_evaluates_literal(self):
+        tool = SimplePythonEvalTool()
+
+        result = tool.evaluate("{'values': [1, 2, 3], 'enabled': True}")
+
+        assert result == {"values": [1, 2, 3], "enabled": True}
+
+    def test_literal_eval_tool_evaluates_arithmetic(self):
+        tool = SimplePythonEvalTool()
+
+        result = tool.evaluate(
+            "(273.77 + ((290.77 - 291.835) - 3.5), "
+            "235.58 + ((270.58 - 271.52) - 3.5))"
+        )
+
+        np.testing.assert_allclose(result, (269.205, 231.14))
+
+    def test_literal_eval_tool_evaluates_sum(self):
+        tool = SimplePythonEvalTool()
+
+        result = tool.evaluate("sum([1, 2 * 3, -4])")
+
+        assert result == 3
+
+    def test_literal_eval_tool_rejects_other_calls(self):
+        tool = SimplePythonEvalTool()
+
+        with np.testing.assert_raises(ValueError):
+            tool.evaluate("__import__('os').system('echo unsafe')")
+
+    def test_literal_eval_tool_rejects_oversized_power(self):
+        tool = SimplePythonEvalTool()
+
+        with np.testing.assert_raises(ValueError):
+            tool.evaluate("2 ** 10000")
+
+    def test_literal_eval_tool_does_not_require_approval(self):
+        tool = SimplePythonEvalTool()
+
+        assert tool.require_approval is False
+        assert tool.exposed_tools[0].require_approval is False
+
     def test_execute_code_calculates_mean(self):
         tool = PythonCodingTool()
         code = textwrap.dedent("""\

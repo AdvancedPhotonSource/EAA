@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import operator
 import os
 import shutil
 import subprocess
@@ -13,6 +14,112 @@ from typing import Annotated, Any, Dict, Literal, Optional, Sequence
 from eaa_core.tool.base import BaseTool, check, tool
 
 SandboxType = Literal["bubblewrap", "container"] | None
+
+
+class SimplePythonEvalTool(BaseTool):
+    """Safely evaluate Python literals and basic arithmetic."""
+
+    name: str = "literal_eval"
+    _max_code_length = 2_000
+    _max_ast_nodes = 200
+    _max_integer_bits = 4_096
+    _max_exponent = 1_000
+    _binary_operators = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+    }
+    _unary_operators = {
+        ast.UAdd: operator.pos,
+        ast.USub: operator.neg,
+    }
+
+    @tool(name="evaluate_python_expression", require_approval=False)
+    def evaluate(
+        self,
+        code: Annotated[str, "Python literal or basic arithmetic expression."],
+    ) -> Any:
+        """Evaluate literals, basic arithmetic, and calls to ``sum`` safely.
+        This tool does not need approval.
+
+        More complicated code should be executed with ``PythonCodingTool`` or
+        by writing a script and running it with ``UvTool``.
+        """
+        if not isinstance(code, str):
+            raise TypeError("code must be a string containing a Python literal")
+        if len(code) > self._max_code_length:
+            raise ValueError("expression is too long")
+
+        expression = ast.parse(code, mode="eval")
+        if sum(1 for _ in ast.walk(expression)) > self._max_ast_nodes:
+            raise ValueError("expression is too complex")
+        return self._evaluate_node(expression.body)
+
+    def _evaluate_node(self, node: ast.AST) -> Any:
+        if isinstance(node, ast.Constant):
+            self._check_result_size(node.value)
+            return node.value
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            values = [self._evaluate_node(item) for item in node.elts]
+            return {ast.List: list, ast.Tuple: tuple, ast.Set: set}[type(node)](values)
+        if isinstance(node, ast.Dict):
+            return {
+                self._evaluate_node(key): self._evaluate_node(value)
+                for key, value in zip(node.keys, node.values)
+            }
+        if isinstance(node, ast.UnaryOp) and type(node.op) in self._unary_operators:
+            operand = self._require_number(self._evaluate_node(node.operand))
+            result = self._unary_operators[type(node.op)](operand)
+            self._check_result_size(result)
+            return result
+        if isinstance(node, ast.BinOp) and type(node.op) in self._binary_operators:
+            left = self._require_number(self._evaluate_node(node.left))
+            right = self._require_number(self._evaluate_node(node.right))
+            if isinstance(node.op, ast.Pow):
+                if isinstance(right, complex) or abs(right) > self._max_exponent:
+                    raise ValueError("exponent is too large")
+            result = self._binary_operators[type(node.op)](left, right)
+            self._check_result_size(result)
+            return result
+        if isinstance(node, ast.Call):
+            return self._evaluate_sum(node)
+        raise ValueError(f"unsupported expression: {type(node).__name__}")
+
+    def _evaluate_sum(self, node: ast.Call) -> Any:
+        if (
+            not isinstance(node.func, ast.Name)
+            or node.func.id != "sum"
+            or node.keywords
+            or len(node.args) not in (1, 2)
+        ):
+            raise ValueError("only sum(iterable[, start]) is allowed")
+
+        values = self._evaluate_node(node.args[0])
+        if not isinstance(values, (list, tuple, set)):
+            raise ValueError("sum() requires a literal list, tuple, or set")
+        numbers = [self._require_number(value) for value in values]
+        start = (
+            self._require_number(self._evaluate_node(node.args[1]))
+            if len(node.args) == 2
+            else 0
+        )
+        result = sum(numbers, start)
+        self._check_result_size(result)
+        return result
+
+    @staticmethod
+    def _require_number(value: Any) -> int | float | complex:
+        if isinstance(value, bool) or not isinstance(value, (int, float, complex)):
+            raise ValueError("arithmetic operands must be numbers")
+        return value
+
+    def _check_result_size(self, value: Any) -> None:
+        if isinstance(value, int) and value.bit_length() > self._max_integer_bits:
+            raise ValueError("integer result is too large")
 
 
 class CodingTool(BaseTool):

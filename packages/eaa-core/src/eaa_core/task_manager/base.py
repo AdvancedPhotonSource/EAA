@@ -49,7 +49,12 @@ from eaa_core.task_manager.state import (
 )
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
-from eaa_core.tool.coding import BashCodingTool, PythonCodingTool, SandboxType
+from eaa_core.tool.coding import (
+    BashCodingTool,
+    SimplePythonEvalTool,
+    PythonCodingTool,
+    SandboxType,
+)
 from eaa_core.tool.subagent import SubagentTool
 from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
 
@@ -833,6 +838,7 @@ class BaseTaskManager:
             return tools
         tools.extend(
             [
+                SimplePythonEvalTool(),
                 FileSystemTool(read_whitelist_paths=self.skill_dirs),
                 ImageRenderingTool(),
                 PythonCodingTool(

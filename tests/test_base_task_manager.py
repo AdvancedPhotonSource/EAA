@@ -157,6 +157,16 @@ def test_default_tools_include_subagent_tool():
     assert "launch_subagent" in task_manager.tool_executor.tool_specs
 
 
+def test_default_tools_include_literal_eval_tool_without_approval():
+    task_manager = BaseTaskManager(
+        checkpoint_db_path=None,
+        use_coding_tools=True,
+    )
+
+    spec = task_manager.tool_executor.tool_specs["evaluate_python_expression"]
+    assert spec.require_approval is False
+
+
 def test_subagent_manager_omits_subagent_tool_and_appends_prompt():
     task_manager = BaseTaskManager(
         checkpoint_db_path=None,
