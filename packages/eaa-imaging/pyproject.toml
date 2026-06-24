@@ -21,12 +21,6 @@ dependencies = [
 bo = [
     "eaa-core[bo]>=0.1.0",
 ]
-aps_mic = [
-    "bluesky",
-    "mic-instrument@git+https://github.com/BCDA-APS/bluesky-mic.git",
-    "mic-vis@git+https://github.com/grace227/mic-vis",
-    "h5py",
-]
 dev = [
     "pytest",
     "ruff",

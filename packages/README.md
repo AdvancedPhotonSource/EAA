@@ -3,8 +3,8 @@
 This repository now has an incremental multi-package layout under `packages/`.
 
 - `packages/eaa-core`: shared runtime, generic tools, generic BO task manager.
-- `packages/eaa-imaging`: imaging and microscopy task managers, imaging tools,
-  and APS-specific adapters.
+- `packages/eaa-imaging`: imaging and microscopy task managers and imaging
+  tools.
 
 Source now lives only under package-local trees:
 

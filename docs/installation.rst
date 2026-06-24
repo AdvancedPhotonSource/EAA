@@ -18,7 +18,6 @@ Optional extras are declared in ``pyproject.toml``. The most relevant ones are:
 
 - ``docs`` for the Sphinx documentation toolchain
 - ``asksage`` for AskSage-backed model access
-- ``aps_mic`` for APS microscopy integrations
 - ``postgresql_vector_store`` for external PostgreSQL/pgvector client
   dependencies
 
