@@ -337,7 +337,7 @@ class AdaptiveXANESBayesianOptimization(BayesianOptimizationTool):
             return True
         return False
 
-    @tool(name="update")
+    @tool(name="adaptive_xanes_bayesian_optimization.update")
     def update(
         self,
         x: torch.Tensor | np.ndarray,
@@ -368,7 +368,7 @@ class AdaptiveXANESBayesianOptimization(BayesianOptimizationTool):
         self.n_adaptive_update_calls += 1
         self.configure_xanes_acquisition()
 
-    @tool(name="suggest")
+    @tool(name="adaptive_xanes_bayesian_optimization.suggest")
     def suggest(
         self,
         n_suggestions: int = 1,

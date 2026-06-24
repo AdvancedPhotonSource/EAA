@@ -78,7 +78,8 @@ class MCPAcquireImageProxy(AcquireImage):
         }
         specs: list[ExposedToolSpec] = []
         for name, remote_spec in remote_specs.items():
-            function = local_functions.get(name)
+            short_name = name.rsplit(".", maxsplit=1)[-1]
+            function = local_functions.get(short_name)
             if function is None:
                 function = make_remote_function(name)
             specs.append(
@@ -89,7 +90,7 @@ class MCPAcquireImageProxy(AcquireImage):
                     schema=remote_spec.schema,
                     model_visible=(
                         False
-                        if name == "get_attribute_payload"
+                        if short_name == "get_attribute_payload"
                         else remote_spec.model_visible
                     ),
                 )
@@ -98,6 +99,20 @@ class MCPAcquireImageProxy(AcquireImage):
             if spec.name not in remote_specs:
                 specs.append(spec)
         return specs
+
+    def resolve_remote_tool_name(self, short_name: str) -> str:
+        """Resolve an exact or class-prefixed remote tool name."""
+        remote_names = [
+            spec.name
+            for spec in getattr(self.mcp_tool, "exposed_tools", [])
+        ]
+        if short_name in remote_names:
+            return short_name
+        suffix = f".{short_name}"
+        matches = [name for name in remote_names if name.endswith(suffix)]
+        if len(matches) == 1:
+            return matches[0]
+        return short_name
 
     @property
     def line_scan_return_gaussian_fit(self) -> bool:
@@ -136,7 +151,7 @@ class MCPAcquireImageProxy(AcquireImage):
         if not isinstance(payload, dict):
             payload = call_named_tool(
                 self.mcp_tool,
-                "get_attribute_payload",
+                self.resolve_remote_tool_name("get_attribute_payload"),
                 {"name": "image_k"},
             )
         if not isinstance(payload, dict):
@@ -171,16 +186,20 @@ class MCPAcquireImageProxy(AcquireImage):
             psize_y=psize_y,
         )
 
-    @tool(name="acquire_image")
+    @tool(name="mcp_acquire_image_proxy.acquire_image")
     def acquire_image(self, **kwargs) -> dict[str, Any]:
         """Acquire an image through the remote MCP tool."""
-        result = call_named_tool(self.mcp_tool, "acquire_image", kwargs)
+        result = call_named_tool(
+            self.mcp_tool,
+            self.resolve_remote_tool_name("acquire_image"),
+            kwargs,
+        )
         if isinstance(result, dict):
             self.record_image_acquisition_from_kwargs(result, kwargs)
             self.sync_image_buffers_from_result(result, kwargs)
         return result
 
-    @tool(name="acquire_line_scan")
+    @tool(name="mcp_acquire_image_proxy.acquire_line_scan")
     def acquire_line_scan(self, **kwargs) -> dict[str, Any]:
         """Acquire a line scan through the remote MCP tool."""
         x_center = kwargs.get("x_center")
@@ -195,7 +214,11 @@ class MCPAcquireImageProxy(AcquireImage):
                 length=length,
                 angle=kwargs.get("angle", 0.0),
             )
-        return call_named_tool(self.mcp_tool, "acquire_line_scan", kwargs)
+        return call_named_tool(
+            self.mcp_tool,
+            self.resolve_remote_tool_name("acquire_line_scan"),
+            kwargs,
+        )
 
 
 def ensure_acquisition_tool_interface(tool: Any) -> Any:

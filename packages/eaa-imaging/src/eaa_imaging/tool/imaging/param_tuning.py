@@ -63,7 +63,7 @@ class SimulatedSetParameters(SetParameters):
         self.blur_factor = blur_factor
         self.drift_factor = drift_factor
         
-    @tool(name="set_parameters")
+    @tool(name="simulated_set_parameters.set_parameters")
     def set_parameters(
         self, 
         parameters: Annotated[list[float], "The parameters to set the optics to"],

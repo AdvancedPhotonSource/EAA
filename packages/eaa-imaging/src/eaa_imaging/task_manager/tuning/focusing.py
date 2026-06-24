@@ -81,7 +81,8 @@ class FocusingNodeFactory(NodeFactory):
                 tool_message.get("content")
             )
             if (
-                tool_name == "acquire_image"
+                tool_name is not None
+                and tool_name.rsplit(".", maxsplit=1)[-1] == "acquire_image"
                 and len(image_paths) > 0
             ):
                 for image_path in image_paths:
@@ -125,7 +126,8 @@ class FocusingNodeFactory(NodeFactory):
                 tool_message.get("content")
             )
             if (
-                tool_name == "acquire_image"
+                tool_name is not None
+                and tool_name.rsplit(".", maxsplit=1)[-1] == "acquire_image"
                 and len(image_paths) > 0
             ):
                 for image_path in image_paths:
@@ -364,7 +366,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         for index, tool_message in enumerate(tool_messages):
             tool_call_info = tool_call_info_list[index] if index < len(tool_call_info_list) else None
             tool_name = tool_call_info.get("function", {}).get("name") if tool_call_info else None
-            if tool_name != "acquire_image":
+            if tool_name is None or tool_name.rsplit(".", maxsplit=1)[-1] != "acquire_image":
                 continue
             image_paths = self.tool_executor.extract_image_paths_from_tool_response(
                 tool_message.get("content")

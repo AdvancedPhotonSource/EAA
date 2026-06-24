@@ -154,7 +154,7 @@ def test_default_tools_include_subagent_tool():
         use_coding_tools=True,
     )
 
-    assert "launch_subagent" in task_manager.tool_executor.tool_specs
+    assert "subagent_tool.launch_subagent" in task_manager.tool_executor.tool_specs
 
 
 def test_default_tools_include_literal_eval_tool_without_approval():
@@ -163,7 +163,9 @@ def test_default_tools_include_literal_eval_tool_without_approval():
         use_coding_tools=True,
     )
 
-    spec = task_manager.tool_executor.tool_specs["evaluate_python_expression"]
+    spec = task_manager.tool_executor.tool_specs[
+        "simple_python_eval_tool.evaluate_python_expression"
+    ]
     assert spec.require_approval is False
 
 
@@ -174,7 +176,7 @@ def test_subagent_manager_omits_subagent_tool_and_appends_prompt():
         is_subagent=True,
     )
 
-    assert "launch_subagent" not in task_manager.tool_executor.tool_specs
+    assert "subagent_tool.launch_subagent" not in task_manager.tool_executor.tool_specs
     assert "You are running as a sub-task manager" in task_manager.assistant_system_message
 
 
@@ -214,7 +216,7 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
     assert captured["checkpoint_db_path"] == parent.checkpoint_db_path
     assert captured["use_webui"] is True
     assert "echo_test" in captured["tool_names"]
-    assert "launch_subagent" not in captured["tool_names"]
+    assert "subagent_tool.launch_subagent" not in captured["tool_names"]
     assert "You are running as a sub-task manager" in captured["messages"][0]["content"]
 
 

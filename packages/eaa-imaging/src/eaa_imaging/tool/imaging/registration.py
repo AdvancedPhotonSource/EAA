@@ -137,7 +137,7 @@ class ImageRegistration(BaseTool):
             return image
         return ndi.zoom(image, zoom=self.zoom, order=1, mode="nearest")
 
-    @tool(name="get_offset_from_paths")
+    @tool(name="image_registration.get_offset_from_paths")
     def get_offset_from_paths(
         self,
         current_image_path: Annotated[str, "Path to the current image array file."],

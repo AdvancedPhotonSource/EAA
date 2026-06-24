@@ -96,15 +96,30 @@ class MCPParameterSettingProxy(SetParameters):
             if spec.schema is not None
         }
         for spec in self.exposed_tools:
-            if spec.name in remote_schemas:
-                spec.schema = remote_schemas[spec.name]
+            remote_name = self.resolve_remote_tool_name(spec.name.rsplit(".", maxsplit=1)[-1])
+            if remote_name in remote_schemas:
+                spec.schema = remote_schemas[remote_name]
+
+    def resolve_remote_tool_name(self, short_name: str) -> str:
+        """Resolve an exact or class-prefixed remote tool name."""
+        remote_names = [
+            spec.name
+            for spec in getattr(self.mcp_tool, "exposed_tools", [])
+        ]
+        if short_name in remote_names:
+            return short_name
+        suffix = f".{short_name}"
+        matches = [name for name in remote_names if name.endswith(suffix)]
+        if len(matches) == 1:
+            return matches[0]
+        return short_name
 
     def set_parameters(self, parameters: list[float]) -> str:
         """Set parameters through the remote tool and update local history."""
         normalized_parameters = make_json_serializable(parameters)
         result = call_named_tool(
             self.mcp_tool,
-            "set_parameters",
+            self.resolve_remote_tool_name("set_parameters"),
             {"parameters": normalized_parameters},
         )
         self.update_parameter_history(normalized_parameters)

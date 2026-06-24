@@ -111,7 +111,7 @@ class AcquireImage(BaseTool):
             "dtype": None if image is None else str(image.dtype),
         }
 
-    @tool(name="dump_array")
+    @tool(name="acquire_image.dump_array")
     def dump_array(
         self,
         buffer_name: Annotated[ArrayBufferName, "Native array buffer to dump: image_k, image_km1, image_0, or line_scan_k."],
@@ -141,17 +141,17 @@ class AcquireImage(BaseTool):
         np.save(path, arr, allow_pickle=False)
         return {"array_path": path}
 
-    @tool(name="get_current_image_info")
+    @tool(name="acquire_image.get_current_image_info")
     def get_current_image_info(self) -> dict[str, Any]:
         """Return pixel-size and shape metadata for the current image buffer."""
         return self.get_image_buffer_info_by_name("image_k")
 
-    @tool(name="get_previous_image_info")
+    @tool(name="acquire_image.get_previous_image_info")
     def get_previous_image_info(self) -> dict[str, Any]:
         """Return pixel-size and shape metadata for the previous image buffer."""
         return self.get_image_buffer_info_by_name("image_km1")
 
-    @tool(name="get_initial_image_info")
+    @tool(name="acquire_image.get_initial_image_info")
     def get_initial_image_info(self) -> dict[str, Any]:
         """Return pixel-size and shape metadata for the initial image buffer."""
         return self.get_image_buffer_info_by_name("image_0")
@@ -175,7 +175,7 @@ class AcquireImage(BaseTool):
         self.image_k = new_image
         self.psize_k = psize
 
-    @tool(name="acquire_image")
+    @tool(name="acquire_image.acquire_image")
     def acquire_image(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -459,7 +459,7 @@ class SimulatedAcquireImage(AcquireImage):
 
         return arr_flat
 
-    @tool(name="acquire_image")
+    @tool(name="simulated_acquire_image.acquire_image")
     def acquire_image(
         self,
         y_center: Annotated[float, "The y-coordinate of the center of the image to acquire."],
@@ -520,7 +520,7 @@ class SimulatedAcquireImage(AcquireImage):
         else:
             return arr
 
-    @tool(name="acquire_line_scan")
+    @tool(name="simulated_acquire_image.acquire_line_scan")
     def acquire_line_scan(
         self,
         x_center: Annotated[float, "The x-coordinate of the center of the line scan."],

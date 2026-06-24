@@ -684,17 +684,18 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         Returns
         -------
         list[dict[str, Any]]
-            Single ``acquire_image`` tool call.
+            Single image-acquisition tool call.
         """
         if not has_tool_call(response):
-            raise RuntimeError("Position proposer must call the `acquire_image` tool.")
+            raise RuntimeError("Position proposer must call an image-acquisition tool.")
         tool_calls = response.get("tool_calls") or []
         if len(tool_calls) != 1:
             raise RuntimeError("Position proposer must issue exactly one tool call.")
         tool_name = tool_calls[0].get("function", {}).get("name")
-        if tool_name != "acquire_image":
+        if tool_name is None or tool_name.rsplit(".", maxsplit=1)[-1] != "acquire_image":
             raise RuntimeError(
-                f"Position proposer must call `acquire_image`, got `{tool_name}`."
+                "Position proposer must call an image-acquisition tool, "
+                f"got `{tool_name}`."
             )
         return tool_calls
 
@@ -742,8 +743,9 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             "=== End of task description ===\n\n"
             "As the position proposer, your job is to review the past "
             "acquisition tool calls below and choose the next field-of-view "
-            "position to scan. Call exactly one tool, `acquire_image`, with "
-            "the proposed position and FOV parameters. Do not answer in prose.\n\n"
+            "position to scan. Call exactly one image-acquisition tool whose "
+            "name ends with `.acquire_image`, with the proposed position and "
+            "FOV parameters. Do not answer in prose.\n\n"
             f"Past acquisition tool calls:\n{json.dumps(past_calls, indent=2)}"
         )
 
@@ -790,9 +792,9 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         return (
             "Your previous position-proposer response could not be used:\n"
             f"{error_message}\n\n"
-            "Try again. You must call exactly one tool, `acquire_image`, with "
-            "the next proposed field-of-view position and scan parameters. Do "
-            "not answer in prose."
+            "Try again. You must call exactly one image-acquisition tool whose "
+            "name ends with `.acquire_image`, with the next proposed "
+            "field-of-view position and scan parameters. Do not answer in prose."
         )
 
     def build_image_checker_retry_prompt(self, error_message: str) -> str:
@@ -902,9 +904,10 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             "=== End of task description ===\n\n"
             "As the final centering agent, your job is to adjust the "
             "field-of-view position so that the feature of interest found in "
-            "the attached image is centered in the FOV. Use the `acquire_image` "
-            "tool as needed to adjust and verify the FOV. When the feature is "
-            "centered, include TERMINATE in your response.\n\n"
+            "the attached image is centered in the FOV. Use the image-acquisition "
+            "tool whose name ends with `.acquire_image` as needed to adjust and "
+            "verify the FOV. When the feature is centered, include TERMINATE in "
+            "your response.\n\n"
             f"Feature/FOV description from image checker:\n"
             f"{search_state.fov_description}"
         )

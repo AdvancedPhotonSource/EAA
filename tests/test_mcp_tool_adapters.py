@@ -32,7 +32,7 @@ def test_base_tool_get_attribute_payload_returns_literals_and_arrays():
     payload_spec = next(
         spec
         for spec in tool.exposed_tools
-        if spec.name == "get_attribute_payload"
+        if spec.name == "sample_tool.get_attribute_payload"
     )
 
     assert payload_spec.model_visible is False

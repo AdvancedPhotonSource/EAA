@@ -38,7 +38,7 @@ class SimplePythonEvalTool(BaseTool):
         ast.USub: operator.neg,
     }
 
-    @tool(name="evaluate_python_expression", require_approval=False)
+    @tool(name="simple_python_eval_tool.evaluate_python_expression", require_approval=False)
     def evaluate(
         self,
         code: Annotated[str, "Python literal or basic arithmetic expression."],
@@ -359,7 +359,7 @@ class PythonCodingTool(CodingTool):
             **kwargs,
         )
 
-    @tool(name="execute_python_code")
+    @tool(name="python_coding_tool.execute")
     def execute_code(
         self,
         code: Annotated[str, "Python source code to execute in a subprocess."],
@@ -500,7 +500,7 @@ class BashCodingTool(CodingTool):
             **kwargs,
         )
 
-    @tool(name="execute_bash_code")
+    @tool(name="bash_coding_tool.execute")
     def execute_code(
         self,
         code: Annotated[str, "Bash source code to execute in a subprocess."],

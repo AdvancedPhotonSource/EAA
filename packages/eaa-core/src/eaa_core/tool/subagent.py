@@ -26,7 +26,7 @@ class SubagentTool(BaseTool):
         self.task_manager = task_manager
         super().__init__(*args, **kwargs)
 
-    @tool(name="launch_subagent")
+    @tool(name="subagent_tool.launch_subagent")
     def launch_subagent(
         self,
         message: Annotated[

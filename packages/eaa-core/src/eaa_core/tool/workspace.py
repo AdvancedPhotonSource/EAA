@@ -251,7 +251,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
                 continue
         return False
 
-    @tool(name="read_file", require_approval="requires_approval_for_file_path")
+    @tool(name="file_system_tool.read_file", require_approval="requires_approval_for_file_path")
     def read_file(
         self,
         file_path: Annotated[str, "Text file path to read. Relative paths are resolved from the workspace."],
@@ -283,7 +283,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             return format_lines_with_numbers(selected_lines, start_line=offset + 1)
         return "\n".join(selected_lines)
 
-    @tool(name="write_file", require_approval=True)
+    @tool(name="file_system_tool.write_file", require_approval=True)
     def write_file(
         self,
         file_path: Annotated[str, "File path to create or overwrite. Relative paths are resolved from the workspace."],
@@ -299,7 +299,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             "bytes_written": len(content.encode("utf-8")),
         }
 
-    @tool(name="edit_file", require_approval=True)
+    @tool(name="file_system_tool.edit_file", require_approval=True)
     def edit_file(
         self,
         file_path: Annotated[str, "Text file path to edit. Relative paths are resolved from the workspace."],
@@ -327,7 +327,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             "occurrences": occurrences if replace_all else 1,
         }
 
-    @tool(name="replace_file_lines", require_approval=True)
+    @tool(name="file_system_tool.replace_file_lines", require_approval=True)
     def replace_file_lines(
         self,
         file_path: Annotated[str, "Text file path to edit. Relative paths are resolved from the workspace."],
@@ -481,7 +481,7 @@ class ImageRenderingTool(WorkspacePathMixin, BaseTool):
             transformed_kwargs["vmax"] = float(np.log1p(max(transformed_kwargs["vmax"], 0.0)))
         return transformed_array, transformed_kwargs
 
-    @tool(name="render_image_for_agent", require_approval="requires_approval_for_image_path")
+    @tool(name="image_rendering_tool.render_image_for_agent", require_approval="requires_approval_for_image_path")
     def render_image_for_agent(
         self,
         image_path: Annotated[str, "Image path to visualize. Relative paths are resolved from the workspace."],
@@ -624,7 +624,7 @@ class UvTool(WorkspacePathMixin, BaseTool):
         env.pop("PYTHONHOME", None)
         return env
 
-    @tool(name="uv", require_approval=True)
+    @tool(name="uv_tool.uv", require_approval=True)
     def uv(
         self,
         subcommand: Annotated[str, "The uv subcommand to run, such as `run`, `add`, `remove`, `venv`, `pip`, or `sync`."],

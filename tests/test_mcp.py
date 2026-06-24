@@ -65,7 +65,10 @@ def test_mcp_tool_registers_remote_tools_and_normalizes_json_results(tmp_path):
         result = executor.execute_tool_call(
             {
                 "id": "call-1",
-                "function": {"name": "remote_image", "arguments": "{}"},
+                "function": {
+                    "name": "remote_image",
+                    "arguments": "{}",
+                },
             }
         )
 
@@ -113,7 +116,11 @@ def test_mcp_tool_preserves_remote_argument_signatures_and_schemas(tmp_path):
     )
 
     try:
-        add_spec = next(spec for spec in mcp_tool.exposed_tools if spec.name == "add")
+        add_spec = next(
+            spec
+            for spec in mcp_tool.exposed_tools
+            if spec.name == "add"
+        )
         signature = inspect.signature(add_spec.function)
 
         assert list(signature.parameters) == ["a", "b"]
@@ -182,8 +189,10 @@ def test_mcp_tool_hides_external_attribute_payload_from_model_schemas(tmp_path):
 
     try:
         exposed = {spec.name: spec for spec in mcp_tool.exposed_tools}
-        assert exposed["get_attribute_payload"].model_visible is False
-        assert mcp_tool.get_attribute_payload(name="image_k") == {
+        assert exposed["external_acquisition_tool.get_attribute_payload"].model_visible is False
+        assert getattr(mcp_tool, "external_acquisition_tool.get_attribute_payload")(
+            name="image_k"
+        ) == {
             "buffer_name": "image_k",
             "encoding": "numpy_base64",
         }
@@ -216,9 +225,13 @@ def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():
     assert {spec.name for spec in tool.exposed_tools} == {
         "visible",
         "hidden_payload",
-        "get_attribute_payload",
+        "hidden_payload_tool.get_attribute_payload",
     }
-    assert server.list_tools() == ["visible", "hidden_payload", "get_attribute_payload"]
+    assert server.list_tools() == [
+        "visible",
+        "hidden_payload",
+        "hidden_payload_tool.get_attribute_payload",
+    ]
     assert tool.hidden_payload() == {"encoding": "numpy_base64"}
     assert [
         schema["function"]["name"]
@@ -261,13 +274,13 @@ def test_calculator_example_main_builds_server_with_refactored_tool_specs(monkey
 
     assert captured["server_name"] == "Calculator MCP Server"
     assert [spec.name for spec in captured["tools"].exposed_tools] == [
-        "add",
-        "subtract",
-        "multiply",
-        "divide",
-        "get_history",
-        "clear_history",
-        "get_attribute_payload",
+        "calculator_tool.add",
+        "calculator_tool.subtract",
+        "calculator_tool.multiply",
+        "calculator_tool.divide",
+        "calculator_tool.get_history",
+        "calculator_tool.clear_history",
+        "calculator_tool.get_attribute_payload",
     ]
 
 

@@ -23,7 +23,7 @@ class SpectrumMeasurementTool(BaseTool):
         """Initialize the spectrum measurement tool."""
         super().__init__(*args, require_approval=require_approval, **kwargs)
 
-    @tool(name="measure")
+    @tool(name="spectrum_measurement_tool.measure")
     def measure(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "Measurement locations."],
@@ -146,7 +146,7 @@ class SimulatedSpectrumMeasurementTool(SpectrumMeasurementTool):
             )
         return y_tensor
 
-    @tool(name="measure")
+    @tool(name="simulated_spectrum_measurement_tool.measure")
     def measure(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "Measurement locations."],

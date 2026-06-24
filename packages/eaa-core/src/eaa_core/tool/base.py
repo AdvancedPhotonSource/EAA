@@ -223,6 +223,7 @@ class BaseTool:
         """Discover methods decorated with `@tool`."""
         discovered: List[ExposedToolSpec] = []
         seen: set[str] = set()
+        inherited_overrides = self.inherited_tool_name_overrides()
         for cls in self.__class__.mro():
             if cls is object:
                 continue
@@ -235,7 +236,12 @@ class BaseTool:
                 seen.add(attr_name)
                 bound = getattr(self, attr_name)
                 overrides = getattr(self, "tool_name_overrides", None)
-                name = overrides.get(attr_name) if overrides and attr_name in overrides else getattr(target, "tool_name", attr_name)
+                if overrides and attr_name in overrides:
+                    name = overrides[attr_name]
+                elif attr_name in inherited_overrides:
+                    name = inherited_overrides[attr_name]
+                else:
+                    name = getattr(target, "tool_name", attr_name)
                 require_approval = getattr(target, "tool_require_approval", None)
                 if isinstance(require_approval, str):
                     require_approval = getattr(self, require_approval)
@@ -249,6 +255,13 @@ class BaseTool:
                     )
                 )
         return discovered
+
+    @classmethod
+    def inherited_tool_name_overrides(cls) -> dict[str, str]:
+        """Return explicit names for inherited BaseTool support tools."""
+        return {
+            "get_attribute_payload": f"{cls.camel_to_snake(cls.__name__)}.get_attribute_payload"
+        }
 
     @staticmethod
     def unwrap_descriptor(attribute: Any) -> Optional[Callable[..., Any]]:

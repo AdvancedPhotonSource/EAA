@@ -34,7 +34,7 @@ class CalculatorTool(BaseTool):
         
         self.calculation_history: List[str] = []
     
-    @tool(name="add")
+    @tool(name="calculator_tool.add")
     def add(
         self,
         a: Annotated[float, "The first addend."],
@@ -60,7 +60,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Added {a} + {b} = {result}")
         return result
     
-    @tool(name="subtract")
+    @tool(name="calculator_tool.subtract")
     def subtract(
         self,
         a: Annotated[float, "The number to subtract from."],
@@ -86,7 +86,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Subtracted {a} - {b} = {result}")
         return result
     
-    @tool(name="multiply")
+    @tool(name="calculator_tool.multiply")
     def multiply(
         self,
         a: Annotated[float, "The first factor."],
@@ -112,7 +112,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Multiplied {a} * {b} = {result}")
         return result
     
-    @tool(name="divide")
+    @tool(name="calculator_tool.divide")
     def divide(
         self,
         a: Annotated[float, "The dividend."],
@@ -146,7 +146,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Divided {a} / {b} = {result}")
         return result
     
-    @tool(name="get_history")
+    @tool(name="calculator_tool.get_history")
     def get_history(self) -> List[str]:
         """
         Get the calculation history.
@@ -159,7 +159,7 @@ class CalculatorTool(BaseTool):
         logger.info(f"Retrieved calculation history with {len(self.calculation_history)} entries")
         return self.calculation_history.copy()
     
-    @tool(name="clear_history")
+    @tool(name="calculator_tool.clear_history")
     def clear_history(self) -> str:
         """
         Clear the calculation history.

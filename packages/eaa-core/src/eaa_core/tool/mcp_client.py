@@ -9,6 +9,13 @@ from eaa_core.tool.base import ExposedToolSpec, BaseTool
 MODEL_HIDDEN_REMOTE_TOOL_NAMES = {"get_attribute_payload"}
 
 
+def is_model_hidden_remote_tool(tool_name: str) -> bool:
+    """Return whether a remote support tool should be hidden from the model."""
+    return tool_name in MODEL_HIDDEN_REMOTE_TOOL_NAMES or tool_name.endswith(
+        ".get_attribute_payload"
+    )
+
+
 class MCPTool(BaseTool):
     """Expose external MCP tools through the normal ``BaseTool`` interface."""
 
@@ -330,7 +337,7 @@ class MCPTool(BaseTool):
                     function=function,
                     require_approval=self.require_approval,
                     schema=self._build_openai_schema_from_mcp_tool(remote_tool),
-                    model_visible=remote_tool.name not in MODEL_HIDDEN_REMOTE_TOOL_NAMES,
+                    model_visible=not is_model_hidden_remote_tool(remote_tool.name),
                 )
             )
         return exposed_tools

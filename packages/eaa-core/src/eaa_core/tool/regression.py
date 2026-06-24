@@ -40,7 +40,7 @@ class MultivariateLinearRegression(BaseTool):
             return 0
         return int(self.xs.shape[0])
 
-    @tool(name="update")
+    @tool(name="multivariate_linear_regression.update")
     def update(
         self,
         x: Annotated[list[list[float]], "Input data with shape (n_samples, n_feat_in)."],
@@ -97,7 +97,7 @@ class MultivariateLinearRegression(BaseTool):
             f"Input features: {self.n_feat_in}, output features: {self.n_feat_out}."
         )
 
-    @tool(name="predict")
+    @tool(name="multivariate_linear_regression.predict")
     def predict(
         self,
         x: Annotated[list[list[float]], "Input data with shape (n_samples, n_feat_in)."],

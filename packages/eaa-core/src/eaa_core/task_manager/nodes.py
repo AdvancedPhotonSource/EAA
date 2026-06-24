@@ -303,10 +303,14 @@ class NodeFactory:
         if n_actual <= 0:
             return
         actual_sequence = [
-            entry["tool_name"]
+            entry["tool_name"].rsplit(".", maxsplit=1)[-1]
             for entry in self.task_manager.tool_executor.tool_execution_history[-n_actual:]
         ]
-        expanded_expected = list(expected_tool_call_sequence) * 2
+        expected_sequence = [
+            name.rsplit(".", maxsplit=1)[-1]
+            for name in expected_tool_call_sequence
+        ]
+        expanded_expected = expected_sequence * 2
         for index in range(len(expanded_expected) - len(actual_sequence) + 1):
             if expanded_expected[index : index + len(actual_sequence)] == actual_sequence:
                 return

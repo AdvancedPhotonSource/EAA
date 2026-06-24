@@ -3,7 +3,7 @@ import textwrap
 
 import numpy as np
 
-from eaa_core.tool.coding import SimplePythonEvalTool, PythonCodingTool
+from eaa_core.tool.coding import BashCodingTool, SimplePythonEvalTool, PythonCodingTool
 
 import test_utils as tutils
 
@@ -73,6 +73,10 @@ class TestCodingTool(tutils.BaseTester):
     def test_python_coding_tool_requires_approval_flag(self):
         tool = PythonCodingTool()
         assert tool.require_approval is True
+
+    def test_coding_tool_names_use_execute_action(self):
+        assert PythonCodingTool().exposed_tools[0].name == "python_coding_tool.execute"
+        assert BashCodingTool().exposed_tools[0].name == "bash_coding_tool.execute"
 
 
 if __name__ == "__main__":

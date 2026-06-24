@@ -77,7 +77,7 @@ class SetParameters(BaseTool):
             }
         return [self.parameter_history[key][iteration] for key in self.parameter_history]
 
-    @tool(name="set_parameters")
+    @tool(name="set_parameters.set_parameters")
     def set_parameters(
         self,
         parameters: Annotated[list[float], "The parameters to set."],
@@ -85,7 +85,7 @@ class SetParameters(BaseTool):
         """Set parameter values on the target system."""
         raise NotImplementedError
 
-    @tool(name="get_current_parameters")
+    @tool(name="set_parameters.get_current_parameters")
     def get_current_parameters(self) -> str:
         """Return the most recent parameter values as JSON."""
         return json.dumps(self.get_parameter_at_iteration(-1, as_dict=True))

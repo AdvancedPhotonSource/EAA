@@ -41,15 +41,17 @@ def test_filesystem_tool_approval_rules_for_workspace_paths(tmp_path):
     executor = SerialToolExecutor(approval_handler=approval_handler)
     executor.register_tools(FileSystemTool(workspace_path=str(workspace)))
 
-    inside_result = executor.execute_tool_call(build_tool_call("read_file", {"file_path": "inside.txt"}))
+    inside_result = executor.execute_tool_call(
+        build_tool_call("file_system_tool.read_file", {"file_path": "inside.txt"})
+    )
     assert "inside" in parse_tool_content(inside_result)["result"]
     assert approvals == []
 
     outside_result = executor.execute_tool_call(
-        build_tool_call("read_file", {"file_path": str(outside)})
+        build_tool_call("file_system_tool.read_file", {"file_path": str(outside)})
     )
     assert parse_tool_content(outside_result)["error"] == "Tool execution was denied by the user."
-    assert approvals == [("read_file", {"file_path": str(outside)})]
+    assert approvals == [("file_system_tool.read_file", {"file_path": str(outside)})]
 
 
 def test_filesystem_tool_allows_reading_whitelisted_skill_dirs(tmp_path):
@@ -72,7 +74,7 @@ def test_filesystem_tool_allows_reading_whitelisted_skill_dirs(tmp_path):
     )
 
     read_result = executor.execute_tool_call(
-        build_tool_call("read_file", {"file_path": str(skill_file)})
+        build_tool_call("file_system_tool.read_file", {"file_path": str(skill_file)})
     )
 
     assert "skill instructions" in parse_tool_content(read_result)["result"]
@@ -83,7 +85,9 @@ def test_approval_rule_errors_return_tool_error(tmp_path):
     executor = SerialToolExecutor(approval_handler=lambda tool_name, arguments: True)
     executor.register_tools(FileSystemTool(workspace_path=str(tmp_path)))
 
-    result = executor.execute_tool_call(build_tool_call("read_file", {"file_path": ""}))
+    result = executor.execute_tool_call(
+        build_tool_call("file_system_tool.read_file", {"file_path": ""})
+    )
 
     assert parse_tool_content(result)["error"] == "Path must not be empty."
 
@@ -102,11 +106,14 @@ def test_filesystem_write_always_requires_approval(tmp_path):
     executor.register_tools(FileSystemTool(workspace_path=str(workspace)))
 
     result = executor.execute_tool_call(
-        build_tool_call("write_file", {"file_path": "created.txt", "content": "created"})
+        build_tool_call(
+            "file_system_tool.write_file",
+            {"file_path": "created.txt", "content": "created"},
+        )
     )
     assert parse_tool_content(result)["error"] == "Tool execution was denied by the user."
 
-    assert approvals == ["write_file"]
+    assert approvals == ["file_system_tool.write_file"]
     assert not (workspace / "created.txt").exists()
     assert (workspace / "source.txt").exists()
 
@@ -118,10 +125,10 @@ def test_filesystem_tool_surface_excludes_shell_redundant_tools(tmp_path):
     visible_names = {spec.name for spec in tool.exposed_tools if spec.model_visible}
 
     assert visible_names == {
-        "read_file",
-        "write_file",
-        "edit_file",
-        "replace_file_lines",
+        "file_system_tool.read_file",
+        "file_system_tool.write_file",
+        "file_system_tool.edit_file",
+        "file_system_tool.replace_file_lines",
     }
 
 

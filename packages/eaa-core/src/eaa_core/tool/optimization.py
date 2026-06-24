@@ -807,7 +807,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
         """
         return y * self.outcome_transform.stdvs[dim]
 
-    @tool(name="update")
+    @tool(name="bayesian_optimization_tool.update")
     def update(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
@@ -873,7 +873,7 @@ class BayesianOptimizationTool(BaseSequentialOptimizationTool):
                 "already done so, this is unexpected."
             )
 
-    @tool(name="suggest")
+    @tool(name="bayesian_optimization_tool.suggest")
     def suggest(
         self, 
         n_suggestions: Annotated[int, "The number of suggestions to make."] = 1
@@ -1231,7 +1231,7 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
         quadratic = torch.einsum("bi,ij,bj->b", x_tensor, Q_tensor, x_tensor)
         return (quadratic + x_tensor @ linear_tensor + constant_tensor)[:, None]
 
-    @tool(name="update")
+    @tool(name="quadratic_optimization_tool.update")
     def update(
         self,
         x: Annotated[torch.Tensor | np.ndarray, "The input parameters."],
@@ -1262,7 +1262,7 @@ class QuadraticOptimizationTool(BaseSequentialOptimizationTool):
             self.xs_untransformed = torch.cat([self.xs_untransformed, x_tensor], dim=0)
             self.ys_untransformed = torch.cat([self.ys_untransformed, y_tensor], dim=0)
 
-    @tool(name="suggest")
+    @tool(name="quadratic_optimization_tool.suggest")
     def suggest(
         self,
         n_suggestions: Annotated[int, "The number of suggestions to return."] = 1,
