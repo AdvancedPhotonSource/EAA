@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated, get_args, get_origin
 
 import pytest
+from fastmcp import Context, FastMCP
 
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.mcp_client import MCPTool
@@ -202,6 +203,42 @@ def test_mcp_tool_hides_external_attribute_payload_from_model_schemas(tmp_path):
         ] == ["acquire_image"]
     finally:
         mcp_tool._run_coroutine(mcp_tool.disconnect())
+
+
+def test_mcp_tool_forwards_remote_log_and_progress_notifications():
+    mcp = FastMCP("LoggingServer")
+
+    @mcp.tool(name="scan")
+    async def scan(ctx: Context) -> dict[str, str]:
+        await ctx.info("scan point 1")
+        await ctx.report_progress(progress=1, message="scan point 1")
+        await ctx.report_progress(progress=2, message="scan point 2")
+        return {"status": "done"}
+
+    class RuntimeLogSink:
+        def __init__(self):
+            self.logs = []
+
+        def publish_log(self, message, **kwargs):
+            self.logs.append({"message": message, **kwargs})
+
+    runtime_log_sink = RuntimeLogSink()
+    mcp_tool = MCPTool(mcp)
+    mcp_tool.set_runtime_log_handler(runtime_log_sink.publish_log)
+
+    try:
+        assert mcp_tool.scan() == {"status": "done"}
+    finally:
+        mcp_tool._run_coroutine(mcp_tool.disconnect())
+
+    assert [
+        log["message"]
+        for log in runtime_log_sink.logs
+    ] == ["scan point 1", "scan point 2"]
+    assert runtime_log_sink.logs[0]["level"] == "info"
+    assert runtime_log_sink.logs[0]["tool_name"] == "scan"
+    assert runtime_log_sink.logs[1]["level"] == "progress"
+    assert runtime_log_sink.logs[1]["progress"] == 2.0
 
 
 def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():

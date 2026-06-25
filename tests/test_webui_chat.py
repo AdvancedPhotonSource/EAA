@@ -14,6 +14,7 @@ from eaa_core.gui.html import (
 )
 from eaa_core.gui.runtime import WebUIRuntimeController
 from eaa_core.gui.runtime import WebUIRuntimeServer
+from eaa_core.tool.base import BaseTool, tool
 
 
 def test_parse_images_field_single_data_url():
@@ -94,6 +95,65 @@ def test_runtime_controller_queues_user_input(tmp_path):
     controller.submit_input("submitted from browser")
 
     assert controller.input_queue.get_nowait() == "submitted from browser"
+
+
+def test_runtime_controller_publishes_display_logs(tmp_path):
+    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    controller = WebUIRuntimeController(task_manager)
+    controller.max_log_entries = 1
+    subscriber = controller.subscribe()
+
+    controller.publish_log("first", source="mcp", level="info", tool_name="scan")
+    controller.publish_log("second", source="mcp", level="progress", progress=2)
+
+    first_event = subscriber.get_nowait()
+    second_event = subscriber.get_nowait()
+    snapshot = controller.snapshot()
+
+    assert first_event.type == "log.created"
+    assert first_event.payload["log"]["message"] == "first"
+    assert second_event.payload["log"]["message"] == "second"
+    assert snapshot["logs"] == [second_event.payload["log"]]
+
+
+def test_task_manager_registers_tools_with_runtime(tmp_path):
+    class RuntimeAwareTool(BaseTool):
+        def build(self):
+            self.runtime_log_handler = None
+
+        def set_runtime_log_handler(self, runtime_log_handler):
+            self.runtime_log_handler = runtime_log_handler
+
+        @tool(name="runtime_aware.noop")
+        def noop(self) -> str:
+            return "ok"
+
+    class WrapperTool(BaseTool):
+        def build(self):
+            self.mcp_tool = RuntimeAwareTool()
+
+        @tool(name="wrapper.noop")
+        def noop(self) -> str:
+            return "ok"
+
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        use_webui=True,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    direct_tool = RuntimeAwareTool()
+    wrapper_tool = WrapperTool()
+
+    task_manager.register_tools([direct_tool, wrapper_tool])
+
+    assert task_manager.runtime_controller is not None
+    direct_tool.runtime_log_handler("direct")
+    wrapper_tool.mcp_tool.runtime_log_handler("wrapped")
+    assert [
+        log["message"]
+        for log in task_manager.runtime_controller.snapshot()["logs"]
+    ] == ["direct", "wrapped"]
 
 
 def test_transcript_messages_are_agent_owned_without_webui(tmp_path):

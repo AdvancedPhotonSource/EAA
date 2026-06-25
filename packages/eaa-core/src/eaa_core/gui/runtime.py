@@ -53,6 +53,33 @@ class RuntimeConversation:
         }
 
 
+@dataclass
+class RuntimeLogEntry:
+    """One display-only runtime log entry."""
+
+    id: str
+    timestamp: str
+    source: str
+    level: str
+    message: str
+    tool_name: str | None = None
+    progress: float | None = None
+    total: float | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serializable log snapshot."""
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp,
+            "source": self.source,
+            "level": self.level,
+            "message": self.message,
+            "tool_name": self.tool_name,
+            "progress": self.progress,
+            "total": self.total,
+        }
+
+
 class WebUIRuntimeController:
     """Thread-safe runtime state and command bus for one task manager."""
 
@@ -73,7 +100,10 @@ class WebUIRuntimeController:
         self.lock = threading.Lock()
         self.subscribers: set[queue.Queue[RuntimeEvent]] = set()
         self.messages: list[dict[str, Any]] = []
+        self.logs: list[RuntimeLogEntry] = []
+        self.max_log_entries = 500
         self.message_event_counter = 0
+        self.log_event_counter = 0
         self.subagent_counter = 0
         self.status = "idle"
         self.input_requested = False
@@ -95,6 +125,20 @@ class WebUIRuntimeController:
                 RuntimeConversation(id="primary", label="Primary", kind="primary"),
             )
             self.approval_queues.setdefault("primary", self.approval_queue)
+
+    def register_tool(self, tool: Any) -> None:
+        """Register runtime event hooks for one tool object."""
+        set_runtime_log_handler = getattr(tool, "set_runtime_log_handler", None)
+        if callable(set_runtime_log_handler):
+            set_runtime_log_handler(self.publish_log)
+        wrapped_mcp_tool = getattr(tool, "mcp_tool", None)
+        wrapped_set_runtime_log_handler = getattr(
+            wrapped_mcp_tool,
+            "set_runtime_log_handler",
+            None,
+        )
+        if callable(wrapped_set_runtime_log_handler):
+            wrapped_set_runtime_log_handler(self.publish_log)
 
     def create_conversation(
         self,
@@ -183,6 +227,7 @@ class WebUIRuntimeController:
             input_requested = self.input_requested
             interrupt_requested = self.interrupt_event.is_set()
             pending_approval = self.pending_approval
+            logs = [entry.snapshot() for entry in self.logs]
             conversations = [
                 conversation.snapshot()
                 for conversation in self.conversations.values()
@@ -194,6 +239,7 @@ class WebUIRuntimeController:
             "input_requested": input_requested,
             "interrupt_requested": interrupt_requested,
             "pending_approval": pending_approval,
+            "logs": logs,
         }
 
     def publish_message(self, message: dict[str, Any], conversation_id: str = "primary") -> None:
@@ -215,6 +261,38 @@ class WebUIRuntimeController:
             if conversation_id == "primary":
                 self.messages.append(payload)
         self.publish("message.created", {"conversation_id": conversation_id, "message": payload})
+
+    def publish_log(
+        self,
+        message: str,
+        *,
+        source: str = "runtime",
+        level: str = "info",
+        tool_name: str | None = None,
+        progress: float | None = None,
+        total: float | None = None,
+    ) -> None:
+        """Publish one display-only runtime log entry."""
+        text = str(message).strip()
+        if not text:
+            return
+        with self.lock:
+            self.log_event_counter += 1
+            entry = RuntimeLogEntry(
+                id=f"log-{self.log_event_counter}",
+                timestamp=datetime.now().isoformat(timespec="seconds"),
+                source=source,
+                level=level,
+                message=text,
+                tool_name=tool_name,
+                progress=progress,
+                total=total,
+            )
+            self.logs.append(entry)
+            if len(self.logs) > self.max_log_entries:
+                self.logs = self.logs[-self.max_log_entries :]
+            payload = {"log": entry.snapshot()}
+        self.publish("log.created", payload)
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current runtime status payload."""

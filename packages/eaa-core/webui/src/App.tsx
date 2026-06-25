@@ -2,7 +2,15 @@ import { FormEvent, KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, 
 import { CircleStop, Send, X } from "lucide-react";
 
 import { escapeHtml, renderMarkdown } from "./markdown";
-import type { PendingApproval, RuntimeConversation, RuntimeSnapshot, Skill, WebUIConfig, WebUIMessage } from "./types";
+import type {
+  PendingApproval,
+  RuntimeConversation,
+  RuntimeLogEntry,
+  RuntimeSnapshot,
+  Skill,
+  WebUIConfig,
+  WebUIMessage,
+} from "./types";
 import "./styles.css";
 
 type ConnectionState = "Connecting..." | "Connected" | "Reconnecting..." | "Interrupt requested";
@@ -131,6 +139,14 @@ const formatApproval = (content: unknown) => {
 };
 
 const messageKey = (message: WebUIMessage, index: number) => String(message.id ?? `message-${index}`);
+
+const logKey = (log: RuntimeLogEntry, index: number) => String(log.id ?? `log-${index}`);
+
+const formatLogTime = (timestamp: string) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+};
 
 function MarkdownBlock({ content, role }: { content: unknown; role: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -297,8 +313,10 @@ function App() {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [sidebarImages, setSidebarImages] = useState<string[]>([]);
+  const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
   const imagesRef = useRef<HTMLDivElement>(null);
+  const logsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const pendingMessagesRef = useRef<Map<string, string>>(new Map());
@@ -333,6 +351,10 @@ function App() {
   useEffect(() => {
     followScroll(imagesRef.current);
   }, [sidebarImages, followScroll]);
+
+  useEffect(() => {
+    followScroll(logsRef.current);
+  }, [logs, followScroll]);
 
   useEffect(() => {
     if (!window.MathJax?.typesetPromise || !messagesRef.current) return;
@@ -462,6 +484,7 @@ function App() {
         mergeMessages(Array.isArray(payload.messages) ? payload.messages : [], "primary");
       }
       applyStatus(payload);
+      if (Array.isArray(payload.logs)) setLogs(payload.logs);
       for (const conversation of payload.conversations ?? []) {
         if (conversation.pending_approval) renderApprovalRequest({ ...conversation.pending_approval, conversation_id: conversation.id });
       }
@@ -500,6 +523,10 @@ function App() {
       setInputRequested(true);
     });
     source.addEventListener("approval.requested", (event) => renderApprovalRequest(JSON.parse(event.data || "{}") as PendingApproval));
+    source.addEventListener("log.created", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { log?: RuntimeLogEntry };
+      if (payload.log) setLogs((previous) => [...previous, payload.log as RuntimeLogEntry].slice(-500));
+    });
     return () => source.close();
   }, [applyStatus, mergeMessages, renderApprovalRequest, upsertConversation]);
 
@@ -736,59 +763,77 @@ function App() {
             ))}
             {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}
           </div>
-        </section>
-        <aside className="eaa-sidebar" aria-label="Images">
-          <div className="eaa-sidebar-title">Images</div>
-          <div className="eaa-images" ref={imagesRef} onScroll={registerScrollIntent}>
-            {sidebarImages.map((source) => (
-              <button className="eaa-image-button" key={source} type="button" onClick={() => setPreviewImage(source)}>
-                <img className="eaa-sidebar-image" src={source} loading="lazy" decoding="async" alt="" />
+          <form className="eaa-input-panel" onSubmit={onSubmit}>
+            {processing ? (
+              <div className="eaa-processing" aria-label="Agent is processing" role="status">
+                <span className="eaa-processing-dot" />
+                <span className="eaa-processing-dot" />
+                <span className="eaa-processing-dot" />
+              </div>
+            ) : null}
+            <div className="eaa-input-row">
+              <textarea
+                ref={inputRef}
+                className="eaa-input"
+                rows={3}
+                placeholder="Type a message. Paste an image or use <img /absolute/path/to/image.png>."
+                value={content}
+                onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 150)}
+                onChange={(event) => void onInputChange(event.target.value)}
+                onKeyDown={onKeyDown}
+                onPaste={onPaste}
+              />
+              {suggestionsOpen && slashSuggestions.length ? (
+                <div className="eaa-slash-suggestions">
+                  {slashSuggestions.map((suggestion) => (
+                    <button
+                      className="eaa-slash-suggestion"
+                      key={suggestion.key}
+                      type="button"
+                      onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
+                    >
+                      <span className="eaa-slash-name">{suggestion.name}</span>
+                      <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <button className="eaa-send" type="submit" disabled={processing}>
+                <Send size={16} aria-hidden="true" />
+                <span>Send</span>
               </button>
-            ))}
-          </div>
-        </aside>
-      </main>
-      <form className="eaa-input-panel" onSubmit={onSubmit}>
-        {processing ? (
-          <div className="eaa-processing" aria-label="Agent is processing" role="status">
-            <span className="eaa-processing-dot" />
-            <span className="eaa-processing-dot" />
-            <span className="eaa-processing-dot" />
-          </div>
-        ) : null}
-        <div className="eaa-input-row">
-          <textarea
-            ref={inputRef}
-            className="eaa-input"
-            rows={3}
-            placeholder="Type a message. Paste an image or use <img /absolute/path/to/image.png>."
-            value={content}
-            onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 150)}
-            onChange={(event) => void onInputChange(event.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-          />
-          {suggestionsOpen && slashSuggestions.length ? (
-            <div className="eaa-slash-suggestions">
-              {slashSuggestions.map((suggestion) => (
-                <button
-                  className="eaa-slash-suggestion"
-                  key={suggestion.key}
-                  type="button"
-                  onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
-                >
-                  <span className="eaa-slash-name">{suggestion.name}</span>
-                  <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
+            </div>
+          </form>
+        </section>
+        <aside className="eaa-sidebar" aria-label="Images and logs">
+          <div className="eaa-side-panel eaa-image-panel">
+            <div className="eaa-sidebar-title">Images</div>
+            <div className="eaa-images" ref={imagesRef} onScroll={registerScrollIntent}>
+              {sidebarImages.map((source) => (
+                <button className="eaa-image-button" key={source} type="button" onClick={() => setPreviewImage(source)}>
+                  <img className="eaa-sidebar-image" src={source} loading="lazy" decoding="async" alt="" />
                 </button>
               ))}
             </div>
-          ) : null}
-          <button className="eaa-send" type="submit" disabled={processing}>
-            <Send size={16} aria-hidden="true" />
-            <span>Send</span>
-          </button>
-        </div>
-      </form>
+          </div>
+          <div className="eaa-side-panel eaa-log-panel">
+            <div className="eaa-sidebar-title">Logs</div>
+            <div className="eaa-logs" ref={logsRef} onScroll={registerScrollIntent}>
+              {logs.map((log, index) => (
+                <div className={`eaa-log-entry eaa-log-${String(log.level || "info").toLowerCase()}`} key={logKey(log, index)}>
+                  <div className="eaa-log-meta">
+                    <span>{formatLogTime(log.timestamp)}</span>
+                    <span>{log.source}</span>
+                    <span>{log.level}</span>
+                    {log.tool_name ? <span>{log.tool_name}</span> : null}
+                  </div>
+                  <div className="eaa-log-message">{log.message}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </main>
       {previewImage ? (
         <div className="eaa-browser-image-preview open" aria-hidden="false" onClick={() => setPreviewImage(null)}>
           <button className="eaa-browser-image-preview-close" type="button" aria-label="Close image preview">

@@ -1,5 +1,8 @@
 import asyncio
 import inspect
+import json
+import logging
+import time
 from typing import Annotated, Any
 
 import fastmcp
@@ -7,6 +10,7 @@ import fastmcp
 from eaa_core.tool.base import ExposedToolSpec, BaseTool
 
 MODEL_HIDDEN_REMOTE_TOOL_NAMES = {"get_attribute_payload"}
+logger = logging.getLogger(__name__)
 
 
 def is_model_hidden_remote_tool(tool_name: str) -> bool:
@@ -46,6 +50,10 @@ class MCPTool(BaseTool):
         self._client = None
         self._connected = False
         self._loop = asyncio.new_event_loop()
+        self.runtime_log_handler = None
+        self._active_tool_name: str | None = None
+        self._last_log_text: str | None = None
+        self._last_log_time = 0.0
         super().__init__(
             build=build,
             require_approval=require_approval,
@@ -98,9 +106,84 @@ class MCPTool(BaseTool):
         """
         if self._client is not None:
             await self.disconnect()
-        self._client = fastmcp.Client(self.config)
+        self._client = fastmcp.Client(
+            self.config,
+            log_handler=self._handle_mcp_log,
+            progress_handler=self._handle_mcp_progress,
+        )
         await self._client.__aenter__()
         self._connected = True
+
+    def set_runtime_log_handler(self, runtime_log_handler: Any) -> None:
+        """Attach a narrow display-only runtime log handler."""
+        self.runtime_log_handler = runtime_log_handler
+
+    def _publish_mcp_log(
+        self,
+        message: str,
+        *,
+        level: str = "info",
+        progress: float | None = None,
+        total: float | None = None,
+    ) -> None:
+        """Publish an MCP notification through the runtime log handler if available."""
+        if self.runtime_log_handler is None:
+            return
+        self.runtime_log_handler(
+            message,
+            source="mcp",
+            level=level,
+            tool_name=self._active_tool_name,
+            progress=progress,
+            total=total,
+        )
+
+    @staticmethod
+    def _stringify_log_data(data: Any) -> str:
+        """Convert MCP log data into readable text."""
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("msg"), str):
+            return data["msg"]
+        try:
+            return json.dumps(data, default=str)
+        except TypeError:
+            return str(data)
+
+    async def _handle_mcp_log(self, message: Any) -> None:
+        """Forward FastMCP logging notifications into the WebUI runtime."""
+        level = str(getattr(message, "level", "info") or "info")
+        text = self._stringify_log_data(getattr(message, "data", ""))
+        self._last_log_text = text
+        self._last_log_time = time.monotonic()
+        self._publish_mcp_log(text, level=level)
+        log_method = getattr(logger, level.lower(), logger.info)
+        log_method("MCP %s: %s", self._active_tool_name or "server", text)
+
+    async def _handle_mcp_progress(
+        self,
+        progress: float,
+        total: float | None,
+        message: str | None,
+    ) -> None:
+        """Forward FastMCP progress notifications into the WebUI runtime."""
+        progress_text = str(progress)
+        if total is not None:
+            progress_text = f"{progress}/{total}"
+        text = str(message).strip() if message else f"Progress: {progress_text}"
+        if (
+            message
+            and text == self._last_log_text
+            and time.monotonic() - self._last_log_time < 1.0
+        ):
+            return
+        self._publish_mcp_log(
+            text,
+            level="progress",
+            progress=float(progress),
+            total=float(total) if total is not None else None,
+        )
+        logger.debug("MCP %s progress %s: %s", self._active_tool_name or "server", progress_text, text)
 
     async def disconnect(self) -> None:
         """Disconnect from the configured MCP server set.
@@ -153,7 +236,12 @@ class MCPTool(BaseTool):
             response content.
         """
         await self._ensure_connected()
-        result = await self._client.call_tool(tool_name, arguments)
+        previous_tool_name = self._active_tool_name
+        self._active_tool_name = tool_name
+        try:
+            result = await self._client.call_tool(tool_name, arguments)
+        finally:
+            self._active_tool_name = previous_tool_name
         structured_content = getattr(result, "structured_content", None)
         if isinstance(structured_content, dict) and "result" in structured_content:
             return structured_content["result"]

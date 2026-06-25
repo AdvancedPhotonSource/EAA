@@ -723,7 +723,7 @@ class BaseTaskManager:
 
     def build_tools(self, *args, **kwargs):
         """Register local tools and built-in helper tools."""
-        self.tool_executor.register_tools(self._collect_base_tools())
+        self.register_tools(self._collect_base_tools())
 
     def build_memory_store(self) -> None:
         """Build the long-term memory store used by the chat graph."""
@@ -1017,6 +1017,13 @@ class BaseTaskManager:
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
         """Register one or more tools with the serial executor."""
+        if not isinstance(tools, (list, tuple)):
+            tool_list = [tools]
+        else:
+            tool_list = list(tools)
+        if self.runtime_controller is not None:
+            for tool in tool_list:
+                self.runtime_controller.register_tool(tool)
         self.tool_executor.register_tools(tools)
 
     def record_system_message(

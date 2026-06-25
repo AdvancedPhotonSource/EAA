@@ -125,7 +125,7 @@ button {
   border-right: 1px solid #d9dde3;
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 66.666%;
   height: 100%;
   min-width: 0;
 }
@@ -189,17 +189,34 @@ button {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  flex: 0 0 33.333%;
+  gap: 0;
   height: 100%;
-  min-width: 220px;
-  padding: 12px;
-  width: 280px;
+  min-width: 280px;
+  padding: 0;
 }
 
 .eaa-sidebar-title {
   color: #586170;
   font-size: 13px;
   font-weight: 650;
+}
+
+.eaa-side-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+}
+
+.eaa-image-panel {
+  border-bottom: 1px solid #d9dde3;
+  flex: 0 0 45%;
+}
+
+.eaa-log-panel {
+  flex: 1;
 }
 
 .eaa-images {
@@ -368,6 +385,54 @@ button {
   width: 100%;
 }
 
+.eaa-logs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.eaa-log-entry {
+  border-left: 3px solid #cbd5e1;
+  color: #20242a;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 0 2px 8px;
+}
+
+.eaa-log-warning,
+.eaa-log-error,
+.eaa-log-critical,
+.eaa-log-alert,
+.eaa-log-emergency {
+  border-left-color: #c2410c;
+}
+
+.eaa-log-progress {
+  border-left-color: #2563eb;
+}
+
+.eaa-log-meta {
+  color: #667085;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 6px;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.eaa-log-message {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .eaa-markdown-folded {
   max-height: 16rem;
   overflow: hidden;
@@ -497,10 +562,10 @@ button {
 
 .eaa-input-panel {
   background: #ffffff;
-  border: 1px solid #d9dde3;
-  border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-  margin: 12px 16px 16px;
+  border-top: 1px solid #d9dde3;
+  box-shadow: 0 -1px 2px rgba(16, 24, 40, 0.04);
+  flex-shrink: 0;
+  margin: 0;
   padding: 12px 14px 14px;
 }
 
@@ -629,11 +694,18 @@ button {
 
   .eaa-sidebar {
     border-top: 1px solid #d9dde3;
-    height: 190px;
+    flex: 0 0 auto;
+    height: 360px;
+    min-width: 0;
     width: 100%;
   }
 
   .eaa-chat {
     border-right: none;
+    flex: 1 1 auto;
+  }
+
+  .eaa-image-panel {
+    flex-basis: 50%;
   }
 }

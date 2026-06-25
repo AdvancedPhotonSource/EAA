@@ -27,9 +27,21 @@ export type WebUIMessage = {
   pending?: boolean;
 };
 
+export type RuntimeLogEntry = {
+  id: string;
+  timestamp: string;
+  source: string;
+  level: string;
+  message: string;
+  tool_name?: string | null;
+  progress?: number | null;
+  total?: number | null;
+};
+
 export type RuntimeSnapshot = {
   conversations?: RuntimeConversation[];
   messages?: WebUIMessage[];
+  logs?: RuntimeLogEntry[];
   status?: string;
   input_requested?: boolean;
   interrupt_requested?: boolean;
