@@ -1080,7 +1080,7 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
         "chat_graph",
     )
 
-    assert checkpoint_config["configurable"]["thread_id"] == "chat_graph"
+    assert checkpoint_config["configurable"]["thread_id"] == "default:chat_graph"
     assert shared_db.exists()
     assert not (tmp_path / "shared.chat_graph.sqlite").exists()
 
@@ -1103,6 +1103,30 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
     _, _, resumed_state = task_manager.get_checkpointed_graph("chat_graph")
     assert resumed_state is not None
     assert resumed_state.full_history == task_manager.full_history
+
+
+def test_checkpoint_thread_ids_are_scoped_by_session_id(tmp_path):
+    shared_db = tmp_path / "sessions.sqlite"
+    first_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        checkpoint_db_path=str(shared_db),
+        session_id="session-a",
+    )
+    second_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        checkpoint_db_path=str(shared_db),
+        session_id="session-b",
+    )
+
+    first_graph, first_config, _ = first_manager.get_checkpointed_graph("chat_graph")
+    second_graph, second_config, _ = second_manager.get_checkpointed_graph("chat_graph")
+
+    assert first_config["configurable"]["thread_id"] == "session-a:chat_graph"
+    assert second_config["configurable"]["thread_id"] == "session-b:chat_graph"
+    assert first_graph is first_manager.checkpoint_graphs[("chat_graph", str(shared_db.resolve()))]
+    assert second_graph is second_manager.checkpoint_graphs[("chat_graph", str(shared_db.resolve()))]
 
 
 def test_get_user_input_reads_from_webui_runtime_queue(tmp_path):

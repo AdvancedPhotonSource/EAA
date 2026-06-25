@@ -128,6 +128,8 @@ class BaseTaskManager:
         Directories searched for EAA skills.
     checkpoint_db_path : Optional[str], default="checkpoint.sqlite"
         Path to the SQLite database used for LangGraph checkpoints.
+    session_id : str, default="default"
+        Logical main-agent session id used to namespace checkpoint threads.
     transcript_db_path : Optional[str], default="transcript.sqlite"
         Path to the SQLite database used for durable WebUI transcript display.
     use_webui : bool, default=False
@@ -158,6 +160,7 @@ class BaseTaskManager:
         tools: list[BaseTool] = (),
         skill_dirs: Optional[Sequence[str]] = None,
         checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
+        session_id: str = "default",
         transcript_db_path: Optional[str] = "transcript.sqlite",
         transcript_table_name: str = "transcript_messages",
         use_webui: bool = False,
@@ -204,6 +207,9 @@ class BaseTaskManager:
         self.prune_checkpoints = prune_checkpoints
         self.is_subagent = is_subagent
         self.checkpoint_db_path = checkpoint_db_path
+        self.session_id = str(session_id).strip()
+        if not self.session_id:
+            raise ValueError("`session_id` must be a non-empty string.")
         self.transcript_db_path = transcript_db_path
         self.transcript_table_name = transcript_table_name
         self.transcript_store = SQLiteTranscriptStore(
@@ -753,7 +759,7 @@ class BaseTaskManager:
                 "Checkpointing requires `checkpoint_db_path`."
             )
         shared_path = str(Path(checkpoint_path).expanduser().resolve())
-        return shared_path, graph_name
+        return shared_path, f"{self.session_id}:{graph_name}"
 
     def get_checkpointed_graph(
         self,
