@@ -123,9 +123,55 @@ button {
 
 .eaa-chat {
   border-right: 1px solid #d9dde3;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   height: 100%;
   min-width: 0;
+}
+
+.eaa-tabs {
+  align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid #d9dde3;
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  min-height: 42px;
+  overflow-x: auto;
+  padding: 6px 10px;
+}
+
+.eaa-tab {
+  background: #f8fafc;
+  border: 1px solid #d7dde8;
+  border-radius: 6px;
+  color: #344054;
+  cursor: pointer;
+  gap: 6px;
+  max-width: 220px;
+  min-height: 30px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.eaa-tab-active {
+  background: #eef6ff;
+  border-color: #93b8e6;
+  color: #1d4f91;
+}
+
+.eaa-tab-alert {
+  border-color: #c2410c;
+}
+
+.eaa-tab-badge {
+  background: #c2410c;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
 }
 
 .eaa-messages {
@@ -133,7 +179,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 100%;
+  flex: 1;
   overflow-y: auto;
   padding: 16px;
 }
@@ -197,6 +243,16 @@ button {
 .eaa-message-tool {
   background: #f1f6f0;
   border-color: #d3e2cf;
+}
+
+.eaa-termination-marker {
+  align-self: center;
+  background: #f3f4f6;
+  border: 1px solid #d7dde8;
+  border-radius: 999px;
+  color: #667085;
+  font-size: 12px;
+  padding: 5px 10px;
 }
 
 .eaa-role {

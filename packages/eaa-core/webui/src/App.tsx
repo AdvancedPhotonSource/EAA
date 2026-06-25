@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, 
 import { CircleStop, Send, X } from "lucide-react";
 
 import { escapeHtml, renderMarkdown } from "./markdown";
-import type { PendingApproval, RuntimeSnapshot, Skill, WebUIConfig, WebUIMessage } from "./types";
+import type { PendingApproval, RuntimeConversation, RuntimeSnapshot, Skill, WebUIConfig, WebUIMessage } from "./types";
 import "./styles.css";
 
 type ConnectionState = "Connecting..." | "Connected" | "Reconnecting..." | "Interrupt requested";
@@ -281,7 +281,10 @@ function MessageView({
 }
 
 function App() {
-  const [messages, setMessages] = useState<WebUIMessage[]>([]);
+  const [conversations, setConversations] = useState<RuntimeConversation[]>([
+    { id: "primary", label: "Primary", kind: "primary", status: "idle", terminated: false, messages: [] },
+  ]);
+  const [activeConversationId, setActiveConversationId] = useState("primary");
   const [pendingCounter, setPendingCounter] = useState(0);
   const [connection, setConnection] = useState<ConnectionState>("Connecting...");
   const [status, setStatus] = useState("idle");
@@ -302,6 +305,8 @@ function App() {
   const infoTimeoutRef = useRef<number | null>(null);
 
   const processing = !inputRequested && status !== "idle";
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
+  const activeMessages = activeConversation?.messages ?? [];
 
   const followScroll = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
@@ -319,24 +324,11 @@ function App() {
     el.dataset.eaaUserScrolled = distance > 100 ? "1" : "";
   };
 
-  const registerImages = useCallback((sources: string[]) => {
-    if (!sources.length) return;
-    setSidebarImages((previous) => {
-      const seen = new Set(previous);
-      const next = [...previous];
-      for (const source of sources) {
-        if (!seen.has(source)) {
-          seen.add(source);
-          next.push(source);
-        }
-      }
-      return next;
-    });
-  }, []);
+  const registerImages = useCallback((_sources: string[]) => {}, []);
 
   useEffect(() => {
     followScroll(messagesRef.current);
-  }, [messages, followScroll]);
+  }, [activeMessages, activeConversationId, followScroll]);
 
   useEffect(() => {
     followScroll(imagesRef.current);
@@ -345,15 +337,56 @@ function App() {
   useEffect(() => {
     if (!window.MathJax?.typesetPromise || !messagesRef.current) return;
     window.MathJax.typesetPromise([messagesRef.current]).catch((error) => console.warn("MathJax typesetting failed:", error));
-  }, [messages]);
+  }, [activeMessages]);
+
+  useEffect(() => {
+    const sources: string[] = [];
+    const seen = new Set<string>();
+    for (const message of activeMessages) {
+      const role = String(message.role ?? "message");
+      const attached = Array.isArray(message.images) && message.images.length ? message.images : message.image ? [message.image] : [];
+      for (const image of attached) {
+        const source = imageSource(image);
+        if (!seen.has(source)) {
+          seen.add(source);
+          sources.push(source);
+        }
+      }
+      if (role !== "system") {
+        for (const path of parseContentImagePaths(message.content)) {
+          const source = imageSource(path);
+          if (!seen.has(source)) {
+            seen.add(source);
+            sources.push(source);
+          }
+        }
+      }
+    }
+    setSidebarImages(sources);
+  }, [activeMessages]);
+
+  const upsertConversation = useCallback((conversation: RuntimeConversation, select = false) => {
+    setConversations((previous) => {
+      const index = previous.findIndex((item) => item.id === conversation.id);
+      if (index === -1) return [...previous, { ...conversation, messages: conversation.messages ?? [] }];
+      const next = [...previous];
+      next[index] = {
+        ...next[index],
+        ...conversation,
+        messages: next[index].messages ?? conversation.messages ?? [],
+      };
+      return next;
+    });
+    if (select) setActiveConversationId(conversation.id);
+  }, []);
 
   const consumePending = useCallback(
-    (message: WebUIMessage) => {
+    (message: WebUIMessage, conversationId = "primary") => {
       const role = message.role;
       if (!["user", "user_webui"].includes(String(role))) return false;
       const trimmed = String(message.content ?? "").trim();
       for (const [id, pendingContent] of pendingMessagesRef.current.entries()) {
-        if (pendingContent === trimmed) {
+        if (id.startsWith(`${conversationId}:`) && pendingContent === trimmed) {
           pendingMessagesRef.current.delete(id);
           return true;
         }
@@ -364,15 +397,34 @@ function App() {
   );
 
   const mergeMessages = useCallback(
-    (incoming: WebUIMessage[]) => {
+    (incoming: WebUIMessage[], conversationId = "primary") => {
       const toRender: WebUIMessage[] = [];
       incoming.forEach((message, index) => {
-        const id = messageKey(message, index);
+        const id = `${conversationId}:${messageKey(message, index)}`;
         if (renderedIdsRef.current.has(id)) return;
         renderedIdsRef.current.add(id);
-        if (!consumePending(message)) toRender.push(message);
+        if (!consumePending(message, conversationId)) toRender.push(message);
       });
-      if (toRender.length) setMessages((previous) => [...previous, ...toRender]);
+      if (toRender.length) {
+        setConversations((previous) => {
+          if (!previous.some((conversation) => conversation.id === conversationId)) {
+            return [
+              ...previous,
+              {
+                id: conversationId,
+                label: conversationId.replace(/-/g, " "),
+                kind: conversationId === "primary" ? "primary" : "subagent",
+                messages: toRender,
+              },
+            ];
+          }
+          return previous.map((conversation) =>
+            conversation.id === conversationId
+              ? { ...conversation, messages: [...(conversation.messages ?? []), ...toRender] }
+              : conversation,
+          );
+        });
+      }
     },
     [consumePending],
   );
@@ -382,15 +434,18 @@ function App() {
     setInputRequested(Boolean(payload.input_requested));
     setInterruptRequested(Boolean(payload.interrupt_requested));
     if (payload.interrupt_requested) setConnection("Interrupt requested");
-  }, []);
+    const conversation = (payload as RuntimeSnapshot & { conversation?: RuntimeConversation }).conversation;
+    if (conversation) upsertConversation(conversation);
+  }, [upsertConversation]);
 
   const renderApprovalRequest = useCallback((payload: PendingApproval) => {
+    const conversationId = payload.conversation_id || "primary";
     const approvalContent = `Tool '${payload.tool_name || "tool"}' requires approval before execution.\nArguments: ${JSON.stringify(
       payload.arguments || {},
       null,
       2,
     )}\nApprove? [y/N]: `;
-    mergeMessages([{ id: `approval-${Date.now()}`, role: "system", content: approvalContent }]);
+    mergeMessages([{ id: `approval-${conversationId}-${Date.now()}`, role: "system", content: approvalContent }], conversationId);
   }, [mergeMessages]);
 
   const loadState = useCallback(async () => {
@@ -398,14 +453,24 @@ function App() {
       const response = await fetch(config.routes.state);
       if (!response.ok) throw new Error("State fetch failed");
       const payload = (await response.json()) as RuntimeSnapshot;
-      mergeMessages(Array.isArray(payload.messages) ? payload.messages : []);
+      if (Array.isArray(payload.conversations) && payload.conversations.length) {
+        setConversations(payload.conversations.map((conversation) => ({ ...conversation, messages: conversation.messages ?? [] })));
+        if (!payload.conversations.some((conversation) => conversation.id === activeConversationId)) {
+          setActiveConversationId(payload.conversations[0].id);
+        }
+      } else {
+        mergeMessages(Array.isArray(payload.messages) ? payload.messages : [], "primary");
+      }
       applyStatus(payload);
-      if (payload.pending_approval) renderApprovalRequest(payload.pending_approval);
+      for (const conversation of payload.conversations ?? []) {
+        if (conversation.pending_approval) renderApprovalRequest({ ...conversation.pending_approval, conversation_id: conversation.id });
+      }
+      if (!payload.conversations?.length && payload.pending_approval) renderApprovalRequest(payload.pending_approval);
       setConnection("Connected");
     } catch (_error) {
       setConnection("Reconnecting...");
     }
-  }, [applyStatus, mergeMessages, renderApprovalRequest]);
+  }, [activeConversationId, applyStatus, mergeMessages, renderApprovalRequest]);
 
   useEffect(() => {
     loadState();
@@ -416,8 +481,16 @@ function App() {
     source.onopen = () => setConnection("Connected");
     source.onerror = () => setConnection("Reconnecting...");
     source.addEventListener("message.created", (event) => {
-      const payload = JSON.parse(event.data || "{}") as { message?: WebUIMessage };
-      if (payload.message) mergeMessages([payload.message]);
+      const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; message?: WebUIMessage };
+      if (payload.message) mergeMessages([payload.message], payload.conversation_id || "primary");
+    });
+    source.addEventListener("conversation.created", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation?: RuntimeConversation };
+      if (payload.conversation) upsertConversation(payload.conversation, true);
+    });
+    source.addEventListener("conversation.terminated", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation?: RuntimeConversation };
+      if (payload.conversation) upsertConversation(payload.conversation);
     });
     source.addEventListener("status.changed", (event) => applyStatus(JSON.parse(event.data || "{}") as RuntimeSnapshot));
     source.addEventListener("interrupt.requested", (event) => applyStatus(JSON.parse(event.data || "{}") as RuntimeSnapshot));
@@ -428,29 +501,42 @@ function App() {
     });
     source.addEventListener("approval.requested", (event) => renderApprovalRequest(JSON.parse(event.data || "{}") as PendingApproval));
     return () => source.close();
-  }, [applyStatus, mergeMessages, renderApprovalRequest]);
+  }, [applyStatus, mergeMessages, renderApprovalRequest, upsertConversation]);
 
-  const submitApproval = async (approved: boolean) => {
+  const submitApproval = async (approved: boolean, conversationId = activeConversationId) => {
     await fetch(config.routes.approval, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved }),
+      body: JSON.stringify({ conversation_id: conversationId, approved }),
     });
   };
 
   const appendPendingMessage = (pendingContent: string) => {
     const id = `pending-${pendingCounter}`;
+    const scopedId = `primary:${id}`;
     setPendingCounter((value) => value + 1);
-    pendingMessagesRef.current.set(id, pendingContent.trim());
-    setMessages((previous) => [...previous, { id, role: "user", content: pendingContent, images: [], pending: true }]);
-    renderedIdsRef.current.add(id);
+    pendingMessagesRef.current.set(scopedId, pendingContent.trim());
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === "primary"
+          ? { ...conversation, messages: [...(conversation.messages ?? []), { id, role: "user", content: pendingContent, images: [], pending: true }] }
+          : conversation,
+      ),
+    );
+    renderedIdsRef.current.add(scopedId);
     return id;
   };
 
   const removePendingMessage = (id: string) => {
-    pendingMessagesRef.current.delete(id);
-    renderedIdsRef.current.delete(id);
-    setMessages((previous) => previous.filter((message) => message.id !== id));
+    pendingMessagesRef.current.delete(`primary:${id}`);
+    renderedIdsRef.current.delete(`primary:${id}`);
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === "primary"
+          ? { ...conversation, messages: (conversation.messages ?? []).filter((message) => message.id !== id) }
+          : conversation,
+      ),
+    );
   };
 
   const showInfoMessage = (text: string) => {
@@ -619,16 +705,36 @@ function App() {
       </header>
       <main className="eaa-main">
         <section className="eaa-chat" aria-label="Chat transcript">
+          <div className="eaa-tabs" role="tablist" aria-label="Conversations">
+            {conversations.map((conversation) => {
+              const hasApproval = Boolean(conversation.pending_approval);
+              const active = conversation.id === activeConversationId;
+              return (
+                <button
+                  className={`eaa-tab${active ? " eaa-tab-active" : ""}${hasApproval ? " eaa-tab-alert" : ""}`}
+                  key={conversation.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveConversationId(conversation.id)}
+                >
+                  <span>{conversation.label || conversation.id}</span>
+                  {hasApproval ? <span className="eaa-tab-badge">Approval</span> : null}
+                </button>
+              );
+            })}
+          </div>
           <div className="eaa-messages" ref={messagesRef} onScroll={registerScrollIntent}>
-            {messages.map((message, index) => (
+            {activeMessages.map((message, index) => (
               <MessageView
                 key={messageKey(message, index)}
                 message={message}
                 onImage={setPreviewImage}
-                onApproval={submitApproval}
+                onApproval={(approved) => submitApproval(approved, activeConversationId)}
                 registerImages={registerImages}
               />
             ))}
+            {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}
           </div>
         </section>
         <aside className="eaa-sidebar" aria-label="Images">

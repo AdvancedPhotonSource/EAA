@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.testclient import TestClient
 from fastapi.responses import Response
@@ -211,6 +212,64 @@ def test_runtime_transcript_store_uses_transcript_table(tmp_path):
     assert store.load_messages()[0]["content"] == "stored"
 
 
+def test_transcript_store_uses_configured_safe_table(tmp_path):
+    transcript_db = tmp_path / "transcript.sqlite"
+    primary_store = SQLiteTranscriptStore(str(transcript_db))
+    subagent_store = SQLiteTranscriptStore(
+        str(transcript_db),
+        table_name="transcript_messages_subagent_1",
+    )
+
+    primary_store.append_message({"role": "system", "content": "primary"})
+    subagent_store.append_message({"role": "system", "content": "subagent"})
+
+    assert primary_store.load_messages()[0]["content"] == "primary"
+    assert subagent_store.load_messages()[0]["content"] == "subagent"
+    connection = sqlite3.connect(transcript_db)
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert {"transcript_messages", "transcript_messages_subagent_1"} <= tables
+
+
+def test_runtime_state_and_approval_are_conversation_scoped(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_coding_tools=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    controller = WebUIRuntimeController(task_manager, upload_dir=str(tmp_path))
+    controller.build()
+    conversation = controller.create_conversation(label="Subagent 1")
+
+    controller.publish_message(
+        {"role": "assistant", "content": "child"},
+        conversation_id=conversation["id"],
+    )
+    snapshot = controller.snapshot()
+
+    assert [item["id"] for item in snapshot["conversations"]] == [
+        "primary",
+        conversation["id"],
+    ]
+    assert snapshot["conversations"][1]["messages"][0]["content"] == "child"
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(controller.request_approval, "primary_tool", {}, "primary")
+        for _ in range(50):
+            if controller.has_pending_approval_for_conversation("primary"):
+                break
+            time.sleep(0.01)
+        controller.submit_approval(True, conversation["id"])
+        time.sleep(0.05)
+        assert not future.done()
+        controller.submit_approval(False, "primary")
+        assert future.result(timeout=1) is False
+
+
 def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
     task_manager = BaseTaskManager(
         build=False,
@@ -229,6 +288,7 @@ def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
     state = client.get("/api/state")
     assert state.status_code == 200
     assert state.json()["messages"] == []
+    assert state.json()["conversations"][0]["id"] == "primary"
     assert state.json()["status"] == "idle"
 
     input_response = client.post("/api/input", json={"content": "hello"})

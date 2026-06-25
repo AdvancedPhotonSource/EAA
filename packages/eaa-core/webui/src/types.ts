@@ -28,6 +28,7 @@ export type WebUIMessage = {
 };
 
 export type RuntimeSnapshot = {
+  conversations?: RuntimeConversation[];
   messages?: WebUIMessage[];
   status?: string;
   input_requested?: boolean;
@@ -36,8 +37,19 @@ export type RuntimeSnapshot = {
 };
 
 export type PendingApproval = {
+  conversation_id?: string;
   tool_name?: string;
   arguments?: Record<string, unknown>;
+};
+
+export type RuntimeConversation = {
+  id: string;
+  label: string;
+  kind: "primary" | "subagent" | string;
+  status?: string;
+  terminated?: boolean;
+  messages?: WebUIMessage[];
+  pending_approval?: PendingApproval | null;
 };
 
 export type Skill = {

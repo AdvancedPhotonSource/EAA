@@ -198,6 +198,10 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
         if task_manager.is_subagent:
             captured["checkpoint_db_path"] = task_manager.checkpoint_db_path
             captured["use_webui"] = task_manager.use_webui
+            captured["runtime_controller"] = task_manager.runtime_controller
+            captured["runtime_conversation_id"] = task_manager.runtime_conversation_id
+            captured["transcript_db_path"] = task_manager.transcript_db_path
+            captured["transcript_table_name"] = task_manager.transcript_table_name
         return original_build(task_manager, *args, **kwargs)
 
     def fake_invoke_chat_model(llm, messages, tool_schemas=None):
@@ -213,11 +217,17 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
     result = subagent_tool.launch_subagent("inspect this")
 
     assert result == {"result": "subagent complete"}
-    assert captured["checkpoint_db_path"] == parent.checkpoint_db_path
+    assert captured["checkpoint_db_path"] is None
     assert captured["use_webui"] is True
+    assert captured["runtime_controller"] is parent.runtime_controller
+    assert captured["runtime_conversation_id"].startswith("subagent-")
+    assert captured["transcript_db_path"] == parent.transcript_db_path
+    assert captured["transcript_table_name"].startswith("transcript_messages_subagent_")
     assert "echo_test" in captured["tool_names"]
     assert "subagent_tool.launch_subagent" not in captured["tool_names"]
     assert "You are running as a sub-task manager" in captured["messages"][0]["content"]
+    subagent_conversation = parent.runtime_controller.snapshot()["conversations"][1]
+    assert subagent_conversation["terminated"] is True
 
 
 def test_task_graph_can_own_feedback_loop_state(monkeypatch):

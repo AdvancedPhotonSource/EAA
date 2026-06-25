@@ -28,6 +28,31 @@ class RuntimeEvent:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class RuntimeConversation:
+    """Server-owned display state for one agent conversation."""
+
+    id: str
+    label: str
+    kind: str
+    status: str = "idle"
+    terminated: bool = False
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    pending_approval: dict[str, Any] | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serializable conversation snapshot."""
+        return {
+            "id": self.id,
+            "label": self.label,
+            "kind": self.kind,
+            "status": self.status,
+            "terminated": self.terminated,
+            "messages": list(self.messages),
+            "pending_approval": self.pending_approval,
+        }
+
+
 class WebUIRuntimeController:
     """Thread-safe runtime state and command bus for one task manager."""
 
@@ -41,18 +66,74 @@ class WebUIRuntimeController:
         self.upload_dir = upload_dir
         self.input_queue: queue.Queue[str] = queue.Queue()
         self.approval_queue: queue.Queue[bool] = queue.Queue()
+        self.approval_queues: dict[str, queue.Queue[bool]] = {
+            "primary": self.approval_queue,
+        }
         self.interrupt_event = threading.Event()
         self.lock = threading.Lock()
         self.subscribers: set[queue.Queue[RuntimeEvent]] = set()
         self.messages: list[dict[str, Any]] = []
         self.message_event_counter = 0
+        self.subagent_counter = 0
         self.status = "idle"
         self.input_requested = False
         self.queued_input_count = 0
         self.pending_approval: dict[str, Any] | None = None
+        self.conversations: dict[str, RuntimeConversation] = {
+            "primary": RuntimeConversation(
+                id="primary",
+                label="Primary",
+                kind="primary",
+            )
+        }
 
     def build(self) -> None:
         """Initialize runtime state."""
+        with self.lock:
+            self.conversations.setdefault(
+                "primary",
+                RuntimeConversation(id="primary", label="Primary", kind="primary"),
+            )
+            self.approval_queues.setdefault("primary", self.approval_queue)
+
+    def create_conversation(
+        self,
+        *,
+        label: str | None = None,
+        kind: str = "subagent",
+        conversation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create and publish a conversation tab."""
+        with self.lock:
+            if conversation_id is None:
+                self.subagent_counter += 1
+                conversation_id = f"subagent-{self.subagent_counter}"
+            if label is None:
+                label = conversation_id.replace("-", " ").title()
+            conversation = RuntimeConversation(
+                id=conversation_id,
+                label=label,
+                kind=kind,
+            )
+            self.conversations[conversation_id] = conversation
+            self.approval_queues[conversation_id] = queue.Queue()
+            snapshot = conversation.snapshot()
+        self.publish("conversation.created", {"conversation": snapshot})
+        return snapshot
+
+    def ensure_conversation(self, conversation_id: str) -> RuntimeConversation:
+        """Return an existing conversation, creating a generic one if needed."""
+        with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            if conversation is None:
+                conversation = RuntimeConversation(
+                    id=conversation_id,
+                    label=conversation_id.replace("-", " ").title(),
+                    kind="subagent" if conversation_id != "primary" else "primary",
+                )
+                self.conversations[conversation_id] = conversation
+                self.approval_queues.setdefault(conversation_id, queue.Queue())
+            return conversation
 
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         """Publish one event to connected browser streams.
@@ -102,7 +183,12 @@ class WebUIRuntimeController:
             input_requested = self.input_requested
             interrupt_requested = self.interrupt_event.is_set()
             pending_approval = self.pending_approval
+            conversations = [
+                conversation.snapshot()
+                for conversation in self.conversations.values()
+            ]
         return {
+            "conversations": conversations,
             "messages": messages,
             "status": status,
             "input_requested": input_requested,
@@ -110,15 +196,25 @@ class WebUIRuntimeController:
             "pending_approval": pending_approval,
         }
 
-    def publish_message(self, message: dict[str, Any]) -> None:
+    def publish_message(self, message: dict[str, Any], conversation_id: str = "primary") -> None:
         """Publish one message to live WebUI clients."""
         payload = dict(message)
         with self.lock:
+            conversation = self.conversations.setdefault(
+                conversation_id,
+                RuntimeConversation(
+                    id=conversation_id,
+                    label=conversation_id.replace("-", " ").title(),
+                    kind="subagent" if conversation_id != "primary" else "primary",
+                ),
+            )
             if "id" not in payload:
                 self.message_event_counter += 1
                 payload["id"] = f"runtime-{self.message_event_counter}"
-            self.messages.append(payload)
-        self.publish("message.created", {"message": payload})
+            conversation.messages.append(payload)
+            if conversation_id == "primary":
+                self.messages.append(payload)
+        self.publish("message.created", {"conversation_id": conversation_id, "message": payload})
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current runtime status payload."""
@@ -129,25 +225,49 @@ class WebUIRuntimeController:
                 "interrupt_requested": self.interrupt_event.is_set(),
             }
 
-    def set_status(self, status: str, *, input_requested: bool | None = None) -> None:
+    def set_status(
+        self,
+        status: str,
+        *,
+        input_requested: bool | None = None,
+        conversation_id: str = "primary",
+    ) -> None:
         """Update session status and publish it."""
         with self.lock:
-            self.status = status
+            conversation = self.conversations.setdefault(
+                conversation_id,
+                RuntimeConversation(
+                    id=conversation_id,
+                    label=conversation_id.replace("-", " ").title(),
+                    kind="subagent" if conversation_id != "primary" else "primary",
+                ),
+            )
+            conversation.status = status
+            if conversation_id == "primary":
+                self.status = status
             if input_requested is not None:
                 self.input_requested = input_requested
-        self.publish("status.changed", self.status_payload())
+            payload = {
+                "status": self.status,
+                "input_requested": self.input_requested,
+                "interrupt_requested": self.interrupt_event.is_set(),
+                "conversation_id": conversation_id,
+                "conversation": conversation.snapshot(),
+            }
+        self.publish("status.changed", payload)
 
-    def request_input(self, prompt: str | None = None) -> str:
+    def request_input(self, prompt: str | None = None, conversation_id: str = "primary") -> str:
         """Block until the WebUI submits ordered user input."""
         with self.lock:
-            previous_status = self.status
-        self.set_status("waiting_for_input", input_requested=True)
+            conversation = self.conversations.get(conversation_id)
+            previous_status = conversation.status if conversation is not None else self.status
+        self.set_status("waiting_for_input", input_requested=True, conversation_id=conversation_id)
         if prompt:
-            self.publish("input.requested", {"prompt": prompt})
+            self.publish("input.requested", {"conversation_id": conversation_id, "prompt": prompt})
         value = self.input_queue.get()
         with self.lock:
             self.queued_input_count = max(0, self.queued_input_count - 1)
-        self.set_status(previous_status, input_requested=False)
+        self.set_status(previous_status, input_requested=False, conversation_id=conversation_id)
         return value
 
     def submit_input(self, content: str) -> bool:
@@ -179,28 +299,82 @@ class WebUIRuntimeController:
             self.clear_interrupt()
             raise KeyboardInterrupt
 
-    def request_approval(self, tool_name: str, tool_kwargs: dict[str, Any]) -> bool:
+    def request_approval(
+        self,
+        tool_name: str,
+        tool_kwargs: dict[str, Any],
+        conversation_id: str = "primary",
+    ) -> bool:
         """Publish an approval request and wait for an ordered response."""
         with self.lock:
-            previous_status = self.status
-            self.pending_approval = {"tool_name": tool_name, "arguments": tool_kwargs}
-            pending_approval = dict(self.pending_approval)
+            conversation = self.conversations.setdefault(
+                conversation_id,
+                RuntimeConversation(
+                    id=conversation_id,
+                    label=conversation_id.replace("-", " ").title(),
+                    kind="subagent" if conversation_id != "primary" else "primary",
+                ),
+            )
+            previous_status = conversation.status
+            pending_approval = {
+                "conversation_id": conversation_id,
+                "tool_name": tool_name,
+                "arguments": tool_kwargs,
+            }
+            conversation.pending_approval = dict(pending_approval)
+            if conversation_id == "primary":
+                self.pending_approval = dict(pending_approval)
+            approval_queue = self.approval_queues.setdefault(conversation_id, queue.Queue())
         self.publish("approval.requested", pending_approval)
-        self.set_status("waiting_for_approval", input_requested=True)
-        approved = self.approval_queue.get()
+        self.set_status("waiting_for_approval", input_requested=True, conversation_id=conversation_id)
+        approved = approval_queue.get()
         with self.lock:
-            self.pending_approval = None
-        self.set_status(previous_status, input_requested=False)
+            conversation = self.conversations[conversation_id]
+            conversation.pending_approval = None
+            if conversation_id == "primary":
+                self.pending_approval = None
+        self.set_status(previous_status, input_requested=False, conversation_id=conversation_id)
         return approved
 
-    def submit_approval(self, approved: bool) -> None:
+    def submit_approval(self, approved: bool, conversation_id: str = "primary") -> None:
         """Queue a tool approval decision."""
-        self.approval_queue.put(approved)
+        with self.lock:
+            approval_queue = self.approval_queues.setdefault(conversation_id, queue.Queue())
+        approval_queue.put(approved)
 
     def has_pending_approval(self) -> bool:
         """Return whether a tool approval request is waiting for a response."""
         with self.lock:
-            return self.pending_approval is not None
+            return any(
+                conversation.pending_approval is not None
+                for conversation in self.conversations.values()
+            )
+
+    def has_pending_approval_for_conversation(self, conversation_id: str = "primary") -> bool:
+        """Return whether a conversation is waiting for approval."""
+        with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            return bool(conversation and conversation.pending_approval is not None)
+
+    def terminate_conversation(self, conversation_id: str, message: str | None = None) -> None:
+        """Mark a conversation terminated and publish the terminal event."""
+        with self.lock:
+            conversation = self.conversations.setdefault(
+                conversation_id,
+                RuntimeConversation(
+                    id=conversation_id,
+                    label=conversation_id.replace("-", " ").title(),
+                    kind="subagent" if conversation_id != "primary" else "primary",
+                ),
+            )
+            conversation.terminated = True
+            conversation.status = "terminated"
+            payload = {
+                "conversation_id": conversation_id,
+                "message": message,
+                "conversation": conversation.snapshot(),
+            }
+        self.publish("conversation.terminated", payload)
 
     def ensure_upload_dir(self) -> str:
         """Ensure and return the configured upload directory."""
@@ -310,13 +484,13 @@ class WebUIRuntimeServer:
             content = str(payload.get("content") or "").strip()
             if not content:
                 return JSONResponse({"error": "No content provided"}, status_code=400)
-            if self.controller.has_pending_approval():
+            if self.controller.has_pending_approval_for_conversation("primary"):
                 normalized = content.lower()
                 if normalized in {"y", "yes"}:
-                    self.controller.submit_approval(True)
+                    self.controller.submit_approval(True, "primary")
                     return JSONResponse({"ok": True, "handled_as": "approval"}, status_code=201)
                 if normalized in {"n", "no"}:
-                    self.controller.submit_approval(False)
+                    self.controller.submit_approval(False, "primary")
                     return JSONResponse({"ok": True, "handled_as": "approval"}, status_code=201)
                 return JSONResponse(
                     {
@@ -336,7 +510,8 @@ class WebUIRuntimeServer:
 
         @app.post("/api/approval")
         async def approval(payload: dict[str, Any]) -> dict[str, bool]:
-            self.controller.submit_approval(bool(payload.get("approved")))
+            conversation_id = str(payload.get("conversation_id") or "primary")
+            self.controller.submit_approval(bool(payload.get("approved")), conversation_id)
             return {"ok": True}
 
         @app.get("/api/skill-catalog")

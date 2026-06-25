@@ -1,6 +1,7 @@
 from typing import Any, Optional
 import ast
 import json
+import re
 import sqlite3
 
 from langgraph.checkpoint.base import ChannelVersions, Checkpoint, CheckpointMetadata
@@ -274,10 +275,18 @@ class PrunableSqliteSaver(SqliteSaver):
 class SQLiteTranscriptStore:
     """SQLite store for durable transcript messages."""
 
-    def __init__(self, path: Optional[str] = None):
+    def __init__(self, path: Optional[str] = None, table_name: str = "transcript_messages"):
         """Initialize the store."""
         self.path = path
+        self.table_name = self.sanitize_table_name(table_name)
         self.connection: Optional[sqlite3.Connection] = None
+
+    @staticmethod
+    def sanitize_table_name(table_name: str) -> str:
+        """Return a safe SQLite identifier for transcript table usage."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table_name):
+            raise ValueError(f"Invalid transcript table name: {table_name!r}")
+        return table_name
 
     def connect(self) -> None:
         """Open the SQLite connection and ensure the schema exists."""
@@ -294,16 +303,16 @@ class SQLiteTranscriptStore:
         """Create transcript tables."""
         if self.connection is None:
             return
-        self.connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS transcript_messages (
+        self.connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.table_name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT,
                 tool_calls TEXT,
                 image TEXT
-            );
+            )
             """
         )
         self.connection.commit()
@@ -331,8 +340,8 @@ class SQLiteTranscriptStore:
             image_value = json.dumps(image_value)
         cursor = self.connection.cursor()
         cursor.execute(
-            """
-            INSERT INTO transcript_messages (timestamp, role, content, tool_calls, image)
+            f"""
+            INSERT INTO {self.table_name} (timestamp, role, content, tool_calls, image)
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -366,17 +375,17 @@ class SQLiteTranscriptStore:
         cursor = self.connection.cursor()
         if since_id is None:
             cursor.execute(
-                """
+                f"""
                 SELECT id, timestamp, role, content, tool_calls, image
-                FROM transcript_messages
+                FROM {self.table_name}
                 ORDER BY id
                 """
             )
         else:
             cursor.execute(
-                """
+                f"""
                 SELECT id, timestamp, role, content, tool_calls, image
-                FROM transcript_messages
+                FROM {self.table_name}
                 WHERE id > ?
                 ORDER BY id
                 """,

@@ -159,10 +159,13 @@ class BaseTaskManager:
         skill_dirs: Optional[Sequence[str]] = None,
         checkpoint_db_path: Optional[str] = "checkpoint.sqlite",
         transcript_db_path: Optional[str] = "transcript.sqlite",
+        transcript_table_name: str = "transcript_messages",
         use_webui: bool = False,
         webui_runtime_host: str = "127.0.0.1",
         webui_runtime_port: int = 8010,
         webui_upload_dir: str = ".tmp",
+        runtime_controller: WebUIRuntimeController | None = None,
+        runtime_conversation_id: str = "primary",
         use_coding_tools: bool = True,
         coding_tool_sandbox_type: SandboxType = None,
         bubblewrap_visible_dirs: Optional[Sequence[str]] = None,
@@ -202,13 +205,18 @@ class BaseTaskManager:
         self.is_subagent = is_subagent
         self.checkpoint_db_path = checkpoint_db_path
         self.transcript_db_path = transcript_db_path
-        self.transcript_store = SQLiteTranscriptStore(transcript_db_path)
+        self.transcript_table_name = transcript_table_name
+        self.transcript_store = SQLiteTranscriptStore(
+            transcript_db_path,
+            table_name=transcript_table_name,
+        )
         self.webui_runtime_host = webui_runtime_host
         self.webui_runtime_port = webui_runtime_port
         self.webui_upload_dir = webui_upload_dir
-        self.runtime_controller: WebUIRuntimeController | None = None
+        self.runtime_conversation_id = runtime_conversation_id
+        self.runtime_controller: WebUIRuntimeController | None = runtime_controller
         self.runtime_server: WebUIRuntimeServer | None = None
-        if use_webui:
+        if use_webui and runtime_controller is None:
             self.runtime_controller = WebUIRuntimeController(
                 self,
                 upload_dir=webui_upload_dir,
@@ -617,14 +625,26 @@ class BaseTaskManager:
             try:
                 if self.runtime_controller is not None:
                     self.runtime_controller.check_interrupt()
-                    self.runtime_controller.set_status("running", input_requested=False)
+                    self.runtime_controller.set_status(
+                        "running",
+                        input_requested=False,
+                        conversation_id=self.runtime_conversation_id,
+                    )
                 result = graph.invoke(active_input, **active_kwargs)
                 if self.runtime_controller is not None:
-                    self.runtime_controller.set_status("idle", input_requested=False)
+                    self.runtime_controller.set_status(
+                        "idle",
+                        input_requested=False,
+                        conversation_id=self.runtime_conversation_id,
+                    )
                 return GraphInvokeResult(final_state=result, command="completed")
             except KeyboardInterrupt:
                 if self.runtime_controller is not None:
-                    self.runtime_controller.set_status("interrupted", input_requested=False)
+                    self.runtime_controller.set_status(
+                        "interrupted",
+                        input_requested=False,
+                        conversation_id=self.runtime_conversation_id,
+                    )
                 checkpoint_config = active_kwargs.get("config")
                 checkpoint_recovered = self.recover_active_state_from_checkpoint(
                     graph=graph,
@@ -1064,9 +1084,21 @@ class BaseTaskManager:
                 if isinstance(image_urls, list):
                     display_message["images"] = image_urls
                     display_message["image"] = image_urls[0] if image_urls else None
-                self.runtime_controller.publish_message(display_message)
+                if self.runtime_conversation_id == "primary":
+                    self.runtime_controller.publish_message(display_message)
+                else:
+                    self.runtime_controller.publish_message(
+                        display_message,
+                        conversation_id=self.runtime_conversation_id,
+                    )
             else:
-                self.runtime_controller.publish_message(message)
+                if self.runtime_conversation_id == "primary":
+                    self.runtime_controller.publish_message(message)
+                else:
+                    self.runtime_controller.publish_message(
+                        message,
+                        conversation_id=self.runtime_conversation_id,
+                    )
 
     def record_transcript_message(self, message: Dict[str, Any]) -> None:
         """Persist one transcript message."""
@@ -1089,7 +1121,10 @@ class BaseTaskManager:
                     update_full_history=False,
                     write_to_webui=True,
                 )
-            return self.runtime_controller.request_input(prompt)
+            return self.runtime_controller.request_input(
+                prompt,
+                conversation_id=self.runtime_conversation_id,
+            )
         self.set_user_input_requested(True)
         message = input(prompt)
         self.set_user_input_requested(False)
@@ -1101,6 +1136,7 @@ class BaseTaskManager:
             self.runtime_controller.set_status(
                 "waiting_for_input" if requested else "running",
                 input_requested=requested,
+                conversation_id=self.runtime_conversation_id,
             )
 
     def _request_tool_approval_via_task_manager(self, tool_name: str, tool_kwargs: Dict[str, Any]) -> bool:
@@ -1111,7 +1147,11 @@ class BaseTaskManager:
             "Approve? [y/N]: "
         )
         if self.runtime_controller is not None:
-            return self.runtime_controller.request_approval(tool_name, tool_kwargs)
+            return self.runtime_controller.request_approval(
+                tool_name,
+                tool_kwargs,
+                conversation_id=self.runtime_conversation_id,
+            )
         response = self.get_user_input(prompt, display_prompt_in_webui=False)
         return response.strip().lower() in {"y", "yes"}
 
