@@ -1408,10 +1408,27 @@ class BaseTaskManager:
         max_agent_iterations : int, optional
             Maximum number of assistant tool-execution cycles before returning
             control to the caller or user.
-        n_first_images_to_keep_in_context : int, optional
-            Number of earliest image-bearing messages to keep in context.
-        n_last_images_to_keep_in_context : int, optional
-            Number of latest image-bearing messages to keep in context.
+        n_first_images_to_keep_in_context, n_last_images_to_keep_in_context : int, optional
+            Number of earliest and latest image-bearing messages to keep in
+            context. When both are ``None``, all images remain in context. If
+            either value is not ``None``, pruning runs and the ``None`` side is
+            interpreted as ``0``.
+
+            For ``n`` image-bearing messages, image ordinals are kept as
+            follows, with counts capped by the available images::
+
+                n_first_images_to_keep_in_context = 1
+                n_last_images_to_keep_in_context = 2
+                image_ordinals_kept = {0, n - 2, n - 1}
+
+                n_first_images_to_keep_in_context = None
+                n_last_images_to_keep_in_context = 2
+                image_ordinals_kept = {n - 2, n - 1}
+
+                n_first_images_to_keep_in_context = 0
+                n_last_images_to_keep_in_context = 2
+                image_ordinals_kept = {n - 2, n - 1}
+
         message_with_yielded_image : str, default="Here is the image the tool returned."
             Follow-up message used when a tool returns image paths.
         termination_behavior : {"return", "user"}, default="user"
