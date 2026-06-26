@@ -114,6 +114,9 @@ class BaseTaskManager:
     ----------
     llm_config : LLMConfig, optional
         Configuration used to build the chat model.
+    name : str, optional
+        Human-readable task manager name used when registering or launching
+        task managers from other agents.
     memory_config : Optional[MemoryManagerConfig], optional
         Configuration for the long-term memory store.
     tools : list[BaseTool], optional
@@ -142,6 +145,7 @@ class BaseTaskManager:
     def __init__(
         self,
         llm_config: LLMConfig = None,
+        name: Optional[str] = None,
         memory_config: Optional[MemoryManagerConfig] = None,
         tools: list[BaseTool] = (),
         skill_dirs: Optional[Sequence[str]] = None,
@@ -168,6 +172,7 @@ class BaseTaskManager:
                 "`transcript_db_path` for WebUI transcript persistence and "
                 "`checkpoint_db_path` for LangGraph checkpoints."
             )
+        self.name = self.resolve_name(name)
         self.chat_state = ChatGraphState()
         self.task_state = TaskManagerState()
         self.active_state: TaskManagerState = self.task_state
@@ -238,6 +243,19 @@ class BaseTaskManager:
 
         if build:
             self.build()
+
+    @classmethod
+    def get_default_name(cls) -> str:
+        """Return the default task manager name."""
+        return BaseTool.camel_to_snake(cls.__name__)
+
+    @classmethod
+    def resolve_name(cls, name: Optional[str]) -> str:
+        """Return a validated task manager name."""
+        resolved_name = cls.get_default_name() if name is None else str(name).strip()
+        if not resolved_name:
+            raise ValueError("`name` must be a non-empty string when provided.")
+        return resolved_name
 
     def get_default_system_prompt(self) -> str:
         """Return the default system prompt for the task manager."""

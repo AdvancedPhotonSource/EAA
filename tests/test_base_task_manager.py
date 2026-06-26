@@ -10,6 +10,7 @@ from eaa_core.api.llm_config import OpenAIConfig
 from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.message_proc import generate_openai_message
 from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.task_manager.persistence import SQLiteTranscriptStore
 from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, FeedbackLoopState, TaskManagerState
 from eaa_core.tool.base import BaseTool, tool
 from eaa_core.tool.subagent import SubagentTool
@@ -106,6 +107,29 @@ class TaskChatRequestTaskManager(BaseTaskManager):
         return graph_builder.compile(checkpointer=checkpointer)
 
 
+class RecordingSubtaskManager(BaseTaskManager):
+    """Test helper that records launch-time runtime configuration."""
+
+    def run(self, **kwargs):
+        """Run the recording subtask manager."""
+        self.recorded_kwargs = kwargs
+        self.recorded_checkpoint_db_path = self.checkpoint_db_path
+        self.recorded_transcript_db_path = self.transcript_db_path
+        self.recorded_transcript_table_name = self.transcript_table_name
+        self.recorded_runtime_controller = self.runtime_controller
+        self.recorded_runtime_conversation_id = self.runtime_conversation_id
+        self.recorded_use_webui = self.use_webui
+        self.update_message_history(
+            {"role": "system", "content": "subtask ran"},
+        )
+        return "subtask complete"
+
+
+def preserve_registered_task_managers():
+    """Return a copy of the global task-manager registry for test isolation."""
+    return dict(SubagentTool.registered_task_managers)
+
+
 def test_merge_tools_ignores_hidden_tool_name_clashes():
     class FirstTool(BaseTool):
         @tool(name="first")
@@ -165,6 +189,26 @@ def test_default_tools_include_subagent_tool():
 
     assert task_manager.tool_manager.subagent_tool is not None
     assert "subagent_tool.launch_subagent" in task_manager.tool_executor.tool_specs
+    assert (
+        "subagent_tool.list_registered_task_managers"
+        in task_manager.tool_executor.tool_specs
+    )
+    assert "subagent_tool.launch_subtask_manager" in task_manager.tool_executor.tool_specs
+
+
+def test_task_manager_has_default_and_custom_name():
+    default_task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
+    custom_task_manager = BaseTaskManager(
+        build=False,
+        checkpoint_db_path=None,
+        name="custom",
+    )
+
+    assert default_task_manager.name == "base_task_manager"
+    assert custom_task_manager.name == "custom"
+
+    with pytest.raises(ValueError, match="name.*non-empty"):
+        BaseTaskManager(build=False, checkpoint_db_path=None, name=" ")
 
 
 def test_default_tools_include_literal_eval_tool_without_approval():
@@ -297,6 +341,88 @@ def test_launch_subagent_inherits_tools_except_subagent(monkeypatch, tmp_path):
     assert "You are running as a sub-task manager" in captured["messages"][0]["content"]
     subagent_conversation = parent.runtime_controller.snapshot()["conversations"][1]
     assert subagent_conversation["terminated"] is True
+
+
+def test_list_registered_task_managers_returns_specs(tmp_path):
+    previous_task_managers = preserve_registered_task_managers()
+    SubagentTool.registered_task_managers.clear()
+    try:
+        parent = BaseTaskManager(build=False, checkpoint_db_path=None)
+        subagent_tool = SubagentTool(parent)
+        task_manager = RecordingSubtaskManager(
+            build=False,
+            checkpoint_db_path=None,
+            name="recording",
+        )
+
+        SubagentTool.add_task_managers(task_manager)
+
+        assert subagent_tool.list_registered_task_managers() == [
+            {
+                "name": "recording",
+                "task_class_name": "RecordingSubtaskManager",
+                "run_method_docstring": "Run the recording subtask manager.",
+            }
+        ]
+    finally:
+        SubagentTool.registered_task_managers.clear()
+        SubagentTool.registered_task_managers.update(previous_task_managers)
+
+
+def test_launch_subtask_manager_uses_registered_manager_runtime(tmp_path):
+    previous_task_managers = preserve_registered_task_managers()
+    SubagentTool.registered_task_managers.clear()
+    try:
+        transcript_db = tmp_path / "transcript.sqlite"
+        parent = BaseTaskManager(
+            build=False,
+            checkpoint_db_path=str(tmp_path / "parent_checkpoint.sqlite"),
+            transcript_db_path=str(transcript_db),
+            use_webui=True,
+        )
+        parent.build_db()
+        subagent_tool = SubagentTool(parent)
+        task_manager = RecordingSubtaskManager(
+            build=False,
+            checkpoint_db_path=str(tmp_path / "child_checkpoint.sqlite"),
+            transcript_db_path=str(tmp_path / "child_transcript.sqlite"),
+            name="recording",
+        )
+
+        SubagentTool.add_task_managers(task_manager)
+        result = subagent_tool.launch_subtask_manager(
+            task_manager_name="recording",
+            task_manager_kwargs={"value": 3},
+        )
+
+        assert result == {"result": "subtask complete"}
+        assert task_manager.recorded_kwargs == {"value": 3}
+        assert task_manager.recorded_checkpoint_db_path is None
+        assert task_manager.recorded_transcript_db_path == parent.transcript_db_path
+        assert task_manager.recorded_transcript_table_name.startswith(
+            "transcript_messages_subagent_"
+        )
+        assert task_manager.recorded_runtime_controller is parent.runtime_controller
+        assert task_manager.recorded_runtime_conversation_id.startswith("subagent-")
+        assert task_manager.recorded_use_webui is True
+        assert task_manager.checkpoint_db_path == str(tmp_path / "child_checkpoint.sqlite")
+        assert task_manager.transcript_db_path == str(tmp_path / "child_transcript.sqlite")
+        assert task_manager.runtime_controller is None
+
+        snapshot = parent.runtime_controller.snapshot()
+        subtask_conversation = snapshot["conversations"][1]
+        assert subtask_conversation["label"] == "recording"
+        assert subtask_conversation["terminated"] is True
+        assert subtask_conversation["messages"][0]["content"] == "subtask ran"
+        assert SQLiteTranscriptStore(str(transcript_db)).load_messages() == []
+        subtask_messages = SQLiteTranscriptStore(
+            str(transcript_db),
+            table_name=task_manager.recorded_transcript_table_name,
+        ).load_messages()
+        assert subtask_messages[0]["content"] == "subtask ran"
+    finally:
+        SubagentTool.registered_task_managers.clear()
+        SubagentTool.registered_task_managers.update(previous_task_managers)
 
 
 def test_task_graph_can_own_feedback_loop_state(monkeypatch):
