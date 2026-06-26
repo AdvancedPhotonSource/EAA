@@ -658,9 +658,12 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             memory_config=self.memory_config,
             tools=[self.acquisition_tool],
             checkpoint_db_path=None,
-            use_coding_tools=False,
             build=True,
         )
+        checker_task_manager.tool_manager.disable_simple_python_eval_tool()
+        checker_task_manager.tool_manager.disable_workspace_tool()
+        checker_task_manager.tool_manager.disable_coding_tool()
+        checker_task_manager.tool_manager.disable_subagent_tool()
         checker_task_manager.update_message_history(
             build_skill_context_message(
                 SkillMetadata(

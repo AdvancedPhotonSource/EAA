@@ -24,7 +24,6 @@ class DummyAcquireImageTool(BaseTool):
 def test_roi_search_task_manager_run_uses_conversation(monkeypatch):
     task_manager = ROISearchTaskManager(
         build=False,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )
@@ -50,7 +49,6 @@ def test_roi_search_task_manager_run_uses_conversation(monkeypatch):
 def test_roi_search_task_manager_can_embed_intermediate_images(monkeypatch):
     task_manager = ROISearchTaskManager(
         build=False,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         memory_config=MemoryManagerConfig(enabled=False),
         checkpoint_db_path=None,
@@ -79,7 +77,6 @@ def test_roi_search_task_manager_requires_memory_config_for_intermediate_embeddi
     with pytest.raises(ValueError, match="memory_config"):
         ROISearchTaskManager(
             build=False,
-            use_coding_tools=False,
             image_acquisition_tool=DummyAcquireImageTool(),
             checkpoint_db_path=None,
             embed_intermediate_images=True,
@@ -89,7 +86,6 @@ def test_roi_search_task_manager_requires_memory_config_for_intermediate_embeddi
 def test_multi_agent_roi_search_uses_dedicated_graph_then_conversation(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=True,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )
@@ -153,7 +149,6 @@ def test_multi_agent_roi_search_uses_dedicated_graph_then_conversation(monkeypat
 def test_multi_agent_roi_search_can_embed_intermediate_centering_images(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=True,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         memory_config=MemoryManagerConfig(enabled=False),
         checkpoint_db_path=None,
@@ -215,7 +210,6 @@ def test_multi_agent_roi_search_requires_memory_config_for_intermediate_embeddin
     with pytest.raises(ValueError, match="memory_config"):
         MultiAgentROISearchTaskManager(
             build=False,
-            use_coding_tools=False,
             image_acquisition_tool=DummyAcquireImageTool(),
             checkpoint_db_path=None,
             embed_intermediate_images=True,
@@ -225,7 +219,6 @@ def test_multi_agent_roi_search_requires_memory_config_for_intermediate_embeddin
 def test_multi_agent_roi_search_repeats_until_feature_present(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=True,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )
@@ -301,7 +294,6 @@ def test_multi_agent_roi_search_repeats_until_feature_present(monkeypatch):
 def test_multi_agent_roi_search_reprompts_position_proposer_on_bad_response(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=True,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )
@@ -356,7 +348,6 @@ def test_multi_agent_roi_search_reprompts_position_proposer_on_bad_response(monk
 def test_multi_agent_roi_search_reprompts_image_checker_on_invalid_json(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=True,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )
@@ -414,7 +405,6 @@ def test_multi_agent_roi_search_reprompts_image_checker_on_invalid_json(monkeypa
 def test_feature_tracking_task_manager_run_uses_conversation(monkeypatch):
     task_manager = FeatureTrackingTaskManager(
         build=False,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )
@@ -444,7 +434,6 @@ def test_feature_tracking_task_manager_no_longer_owns_fov_search():
 def test_multi_agent_roi_search_keyboard_interrupt_resumes_same_graph(monkeypatch):
     task_manager = MultiAgentROISearchTaskManager(
         build=False,
-        use_coding_tools=False,
         image_acquisition_tool=DummyAcquireImageTool(),
         checkpoint_db_path=None,
     )

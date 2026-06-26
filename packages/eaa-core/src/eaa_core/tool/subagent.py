@@ -60,7 +60,7 @@ class SubagentTool(BaseTool):
             transcript_table_name = f"transcript_messages_{table_suffix}"
         inherited_tools = [
             tool_object
-            for tool_object in self.task_manager.tool_executor.tools
+            for tool_object in self.task_manager.tool_manager
             if not isinstance(tool_object, SubagentTool)
         ]
         sub_task_manager = BaseTaskManager(
@@ -74,9 +74,6 @@ class SubagentTool(BaseTool):
             use_webui=self.task_manager.use_webui,
             runtime_controller=runtime_controller,
             runtime_conversation_id=conversation_id or "primary",
-            use_coding_tools=self.task_manager.use_coding_tools,
-            coding_tool_sandbox_type=self.task_manager.coding_tool_sandbox_type,
-            bubblewrap_visible_dirs=self.task_manager.bubblewrap_visible_dirs,
             prune_checkpoints=self.task_manager.prune_checkpoints,
             is_subagent=True,
         )

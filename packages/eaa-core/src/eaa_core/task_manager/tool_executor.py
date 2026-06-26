@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Sequence
 import json
 import logging
 
@@ -31,10 +31,11 @@ class SerialToolExecutor:
     def __init__(
         self,
         approval_handler: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        tools: Optional[list[BaseTool]] = None,
     ) -> None:
         """Initialize the executor."""
         self.approval_handler = approval_handler
-        self.tools: list[BaseTool] = []
+        self.tools: list[BaseTool] = tools if tools is not None else []
         self.tool_specs: dict[str, ExposedToolSpec] = {}
         self.tool_execution_history: list[dict[str, Any]] = []
 
@@ -45,7 +46,8 @@ class SerialToolExecutor:
         for tool in tools:
             if not isinstance(tool, BaseTool):
                 raise ValueError("Input should be a BaseTool or a list of BaseTool objects.")
-            self.tools.append(tool)
+            if tool not in self.tools:
+                self.tools.append(tool)
             for exposed in tool.exposed_tools:
                 if not exposed.model_visible:
                     continue
@@ -59,6 +61,20 @@ class SerialToolExecutor:
                     model_visible=exposed.model_visible,
                 )
                 self.tool_specs[spec.name] = spec
+
+    def unregister_tool(self, tool: BaseTool) -> None:
+        """Unregister one tool object and its exposed model-visible specs."""
+        if not isinstance(tool, BaseTool):
+            raise ValueError("Input should be a BaseTool object.")
+        if tool in self.tools:
+            self.tools.remove(tool)
+        self.unregister_tool_specs(tool.exposed_tools)
+
+    def unregister_tool_specs(self, exposed_tools: Sequence[ExposedToolSpec]) -> None:
+        """Remove exposed tool specs matching the given exposed tool records."""
+        for exposed in exposed_tools:
+            if exposed.model_visible:
+                self.tool_specs.pop(exposed.name, None)
 
     def list_tool_schemas(self) -> list[dict[str, Any]]:
         """Return model-facing OpenAI tool schemas."""

@@ -77,7 +77,6 @@ def test_resolve_skill_matches_requested_name_not_first_catalog_entry():
 def test_base_task_manager_uses_builtin_core_skills_by_default():
     task_manager = BaseTaskManager(
         skill_dirs=None,
-        use_coding_tools=False,
         build=False,
     )
 
@@ -89,7 +88,6 @@ def test_base_task_manager_uses_builtin_core_skills_by_default():
 def test_base_task_manager_allows_explicit_empty_skill_dirs():
     task_manager = BaseTaskManager(
         skill_dirs=[],
-        use_coding_tools=False,
         build=False,
     )
 
@@ -100,7 +98,6 @@ def test_base_task_manager_allows_explicit_empty_skill_dirs():
 def test_imaging_base_task_manager_uses_builtin_core_and_imaging_skills_by_default():
     task_manager = ImagingBaseTaskManager(
         skill_dirs=None,
-        use_coding_tools=False,
         build=False,
     )
 
@@ -129,7 +126,6 @@ def test_skill_command_injects_only_skill_md(tmp_path):
     (reference_dir / "extra.md").write_text("do not inject")
     task_manager = BaseTaskManager(
         skill_dirs=[str(tmp_path / "skills")],
-        use_coding_tools=False,
         build=False,
     )
 
@@ -156,7 +152,6 @@ def test_skill_selection_can_appear_inside_user_text(tmp_path):
     )
     task_manager = BaseTaskManager(
         skill_dirs=[str(tmp_path / "skills")],
-        use_coding_tools=False,
         build=False,
     )
 
@@ -181,7 +176,6 @@ def test_chat_input_preserves_trailing_skill_command_text(tmp_path):
     task_manager = QueuedInputTaskManager(
         ["/skill demo what does this skill talk about?"],
         skill_dirs=[str(tmp_path / "skills")],
-        use_coding_tools=False,
         checkpoint_db_path=None,
         build=True,
     )
@@ -208,7 +202,6 @@ def test_feedback_human_gate_preserves_trailing_skill_command_text(tmp_path):
     task_manager = QueuedInputTaskManager(
         ["/skill demo what does this skill talk about?"],
         skill_dirs=[str(tmp_path / "skills")],
-        use_coding_tools=False,
         checkpoint_db_path=None,
         build=True,
     )

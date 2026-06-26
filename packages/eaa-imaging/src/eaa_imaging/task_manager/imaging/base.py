@@ -63,7 +63,7 @@ class ImagingBaseTaskManager(BaseTaskManager):
         )
             
     def prerun_check(self, *args, **kwargs) -> bool:
-        if len(self.tool_executor.tools) == 0:
+        if len(self.tool_manager) == 0:
             logger.warning("No tools registered for the main agent.")
         return super().prerun_check(*args, **kwargs)
     

@@ -54,7 +54,6 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
 
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         checkpoint_db_path=str(shared_db),
     )
     task_manager.model = object()
@@ -90,7 +89,7 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
 
 
 def test_runtime_controller_queues_user_input(tmp_path):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
     controller.submit_input("submitted from browser")
 
@@ -98,7 +97,7 @@ def test_runtime_controller_queues_user_input(tmp_path):
 
 
 def test_runtime_controller_publishes_display_logs(tmp_path):
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
     controller.max_log_entries = 1
     subscriber = controller.subscribe()
@@ -138,7 +137,6 @@ def test_task_manager_registers_tools_with_runtime(tmp_path):
 
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=True,
         transcript_db_path=str(tmp_path / "transcript.sqlite"),
     )
@@ -160,7 +158,6 @@ def test_transcript_messages_are_agent_owned_without_webui(tmp_path):
     transcript_db = tmp_path / "shared.sqlite"
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=False,
         transcript_db_path=str(transcript_db),
     )
@@ -177,7 +174,6 @@ def test_query_messages_reads_explicit_transcript_messages(tmp_path):
     shared_db = tmp_path / "shared.sqlite"
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=True,
         transcript_db_path=str(shared_db),
     )
@@ -195,7 +191,6 @@ def test_webui_publish_does_not_persist_transcript(tmp_path):
     transcript_db = tmp_path / "shared.sqlite"
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=True,
         transcript_db_path=str(transcript_db),
     )
@@ -214,7 +209,6 @@ def test_webui_publish_does_not_persist_transcript(tmp_path):
 def test_webui_publish_does_not_use_transcript_payload(tmp_path, monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=True,
         transcript_db_path=str(tmp_path / "shared.sqlite"),
     )
@@ -237,7 +231,6 @@ def test_webui_publish_does_not_use_transcript_payload(tmp_path, monkeypatch):
 def test_webui_publish_does_not_wait_for_transcript_write(tmp_path, monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=True,
         transcript_db_path=str(tmp_path / "shared.sqlite"),
     )
@@ -298,7 +291,6 @@ def test_transcript_store_uses_configured_safe_table(tmp_path):
 def test_runtime_state_and_approval_are_conversation_scoped(tmp_path):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         transcript_db_path=str(tmp_path / "transcript.sqlite"),
     )
     controller = WebUIRuntimeController(task_manager, upload_dir=str(tmp_path))
@@ -333,7 +325,6 @@ def test_runtime_state_and_approval_are_conversation_scoped(tmp_path):
 def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         transcript_db_path=str(tmp_path / "transcript.sqlite"),
     )
     task_manager.build_db()
@@ -383,7 +374,6 @@ def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
 def test_runtime_state_uses_live_messages_not_transcript_db(tmp_path):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         transcript_db_path=str(tmp_path / "transcript.sqlite"),
     )
     task_manager.build_db()
@@ -405,7 +395,6 @@ def test_runtime_state_uses_live_messages_not_transcript_db(tmp_path):
 def test_runtime_publish_normalizes_structured_content_for_display(tmp_path):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         use_webui=True,
         transcript_db_path=str(tmp_path / "transcript.sqlite"),
     )
@@ -441,7 +430,6 @@ def test_runtime_publish_normalizes_structured_content_for_display(tmp_path):
 def test_record_transcript_message_does_not_read_back_row(tmp_path, monkeypatch):
     task_manager = BaseTaskManager(
         build=False,
-        use_coding_tools=False,
         transcript_db_path=str(tmp_path / "transcript.sqlite"),
     )
     task_manager.build_db()
@@ -462,7 +450,7 @@ def test_record_transcript_message_does_not_read_back_row(tmp_path, monkeypatch)
 
 
 def test_runtime_message_ids_are_unique_under_concurrent_publish():
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
 
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -481,7 +469,7 @@ def test_runtime_message_ids_are_unique_under_concurrent_publish():
 
 
 def test_runtime_interrupt_publishes_explicit_event():
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
     subscriber = controller.subscribe()
 
@@ -495,7 +483,7 @@ def test_runtime_interrupt_publishes_explicit_event():
 
 
 def test_runtime_input_and_approval_restore_previous_status():
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
 
     controller.submit_input("queued")
@@ -587,7 +575,7 @@ def test_html_webui_static_assets_are_mounted(tmp_path):
 def test_runtime_image_response_sets_cache_headers(tmp_path):
     image_path = tmp_path / "image.png"
     image_path.write_bytes(b"png-data")
-    task_manager = BaseTaskManager(build=False, use_coding_tools=False)
+    task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
 
     response = controller.image_response(str(image_path))

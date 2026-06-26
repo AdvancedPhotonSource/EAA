@@ -49,14 +49,8 @@ from eaa_core.task_manager.state import (
 )
 from eaa_core.task_manager.tool_executor import SerialToolExecutor
 from eaa_core.tool.base import BaseTool
-from eaa_core.tool.coding import (
-    BashCodingTool,
-    SimplePythonEvalTool,
-    PythonCodingTool,
-    SandboxType,
-)
-from eaa_core.tool.subagent import SubagentTool
-from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
+from eaa_core.tool.coding import SandboxType
+from eaa_core.tool.tool_manager import ToolManager
 
 logger = logging.getLogger(__name__)
 SKILL_SELECTION_PATTERN = re.compile(r"(?P<prefix>^|\s)/skill\s+(?P<name>\S+)")
@@ -90,7 +84,7 @@ class TaskManagerAgentAdapter:
 
     def __init__(self, task_manager: "BaseTaskManager"):
         self.task_manager = task_manager
-        self.tool_manager = task_manager.tool_executor
+        self.tool_manager = task_manager.tool_manager
 
     def receive(
         self,
@@ -134,14 +128,6 @@ class BaseTaskManager:
         Path to the SQLite database used for durable WebUI transcript display.
     use_webui : bool, default=False
         Whether to enable WebUI-driven user input and WebUI display writes.
-    use_coding_tools : bool, default=True
-        Whether to register built-in coding tools.
-    coding_tool_sandbox_type : {"bubblewrap", "container"} or None, optional
-        Sandbox implementation used by built-in coding tools. ``None`` runs
-        code directly in the configured working directory.
-    bubblewrap_visible_dirs : Optional[Sequence[str]], optional
-        Additional paths to bind into bubblewrap at the same absolute paths.
-        The current working directory is always bound.
     prune_checkpoints : bool, default=True
         Whether to keep only the latest checkpoint per graph thread in the
         checkpoint database.
@@ -169,9 +155,6 @@ class BaseTaskManager:
         webui_upload_dir: str = ".tmp",
         runtime_controller: WebUIRuntimeController | None = None,
         runtime_conversation_id: str = "primary",
-        use_coding_tools: bool = True,
-        coding_tool_sandbox_type: SandboxType = None,
-        bubblewrap_visible_dirs: Optional[Sequence[str]] = None,
         prune_checkpoints: bool = True,
         build: bool = True,
         is_subagent: bool = False,
@@ -192,17 +175,11 @@ class BaseTaskManager:
         if isinstance(memory_config, dict):
             memory_config = MemoryManagerConfig.from_dict(memory_config)
         self.memory_config = memory_config
-        self.tools = list(tools)
         self.skill_dirs = (
             list(BUILTIN_SKILL_DIRS) if skill_dirs is None else list(skill_dirs)
         )
         self.skill_catalog: list[SkillMetadata] = discover_skills(self.skill_dirs)
         self.use_webui = use_webui
-        self.use_coding_tools = use_coding_tools
-        self.coding_tool_sandbox_type = coding_tool_sandbox_type
-        self.bubblewrap_visible_dirs = (
-            list(bubblewrap_visible_dirs) if bubblewrap_visible_dirs is not None else None
-        )
         self.coding_tool_request_approval = True
         self.prune_checkpoints = prune_checkpoints
         self.is_subagent = is_subagent
@@ -233,9 +210,18 @@ class BaseTaskManager:
                 port=webui_runtime_port,
             )
         self.memory_manager = MemoryManager(self)
+        self.tool_manager = ToolManager(
+            self,
+            tools=tools,
+            skill_dirs=self.skill_dirs,
+            coding_tool_request_approval=self.coding_tool_request_approval,
+            include_subagent_tool=not self.is_subagent,
+        )
         self.tool_executor = SerialToolExecutor(
             approval_handler=self._request_tool_approval_via_task_manager,
+            tools=self.tool_manager,
         )
+        self.tool_manager.bind_executor(self.tool_executor)
         self.model = None
         self.agent = TaskManagerAgentAdapter(self)
         self.node_factory = NodeFactory(self)
@@ -723,7 +709,7 @@ class BaseTaskManager:
 
     def build_tools(self, *args, **kwargs):
         """Register local tools and built-in helper tools."""
-        self.register_tools(self._collect_base_tools())
+        self.tool_manager.build()
 
     def build_memory_store(self) -> None:
         """Build the long-term memory store used by the chat graph."""
@@ -833,99 +819,9 @@ class BaseTaskManager:
                     )
         return graph, config, loaded_state
 
-    def _collect_base_tools(self) -> list[BaseTool]:
-        tools: list[BaseTool] = list(self.tools)
-        self._merge_tools(tools, self._build_default_tools())
-        return tools
-
-    def _merge_tools(self, tools: list[BaseTool], new_tools: list[BaseTool]) -> None:
-        """Merge tool lists while avoiding duplicated tool names."""
-        seen_names = self._collect_tool_names(tools)
-        for tool in new_tools:
-            tool_names = self._collect_tool_names([tool])
-            if tool_names and tool_names & seen_names:
-                continue
-            tools.append(tool)
-            seen_names.update(tool_names)
-
     def _collect_tool_names(self, tools: list[BaseTool]) -> set[str]:
         """Collect model-visible exposed tool names from tool objects."""
-        names: set[str] = set()
-        for tool in tools:
-            for exposed in tool.exposed_tools:
-                if exposed.model_visible:
-                    names.add(exposed.name)
-        return names
-
-    def _build_default_tools(self) -> list[BaseTool]:
-        """Return default built-in tools."""
-        tools: list[BaseTool] = []
-        if not self.use_coding_tools:
-            return tools
-        tools.extend(
-            [
-                SimplePythonEvalTool(),
-                FileSystemTool(read_whitelist_paths=self.skill_dirs),
-                ImageRenderingTool(),
-                PythonCodingTool(
-                    sandbox_type=self.coding_tool_sandbox_type,
-                    bubblewrap_visible_dirs=self.bubblewrap_visible_dirs,
-                    require_approval=self.coding_tool_request_approval,
-                ),
-                BashCodingTool(
-                    sandbox_type=self.coding_tool_sandbox_type,
-                    bubblewrap_visible_dirs=self.bubblewrap_visible_dirs,
-                    require_approval=self.coding_tool_request_approval,
-                ),
-                UvTool(),
-            ]
-        )
-        if not self.is_subagent:
-            tools.append(SubagentTool(self))
-        return tools
-
-    def set_coding_tool_sandbox_type(
-        self,
-        type: SandboxType,
-        visible_dirs: Optional[Sequence[str]] = None,
-    ) -> None:
-        """Set the sandbox type for built-in Python and Bash coding tools.
-
-        Parameters
-        ----------
-        type : {"bubblewrap", "container"} or None
-            Sandbox implementation to use. ``None`` runs without a sandbox.
-        visible_dirs : sequence of str, optional
-            Additional bubblewrap-visible paths. When omitted, bubblewrap only
-            binds the current working directory as a visible data path.
-        """
-        self.coding_tool_sandbox_type = type
-        self.bubblewrap_visible_dirs = list(visible_dirs) if visible_dirs is not None else None
-        for coding_tool in self._iter_coding_tools():
-            coding_tool.set_sandbox_type(
-                self.coding_tool_sandbox_type,
-                visible_dirs=self.bubblewrap_visible_dirs,
-            )
-
-    def set_coding_tool_request_approval(self, request_approval: bool) -> None:
-        """Set approval requirements for both Python and Bash coding tools."""
-        self.coding_tool_request_approval = request_approval
-        for coding_tool in self._iter_coding_tools():
-            coding_tool.require_approval = request_approval
-            for exposed in coding_tool.exposed_tools:
-                if not exposed.model_visible or exposed.require_approval is not None:
-                    continue
-                spec = self.tool_executor.tool_specs.get(exposed.name)
-                if spec is not None:
-                    spec.require_approval = request_approval
-
-    def _iter_coding_tools(self) -> list[PythonCodingTool | BashCodingTool]:
-        """Return registered Python and Bash coding tool instances."""
-        return [
-            tool
-            for tool in self.tool_executor.tools
-            if isinstance(tool, (PythonCodingTool, BashCodingTool))
-        ]
+        return self.tool_manager._collect_tool_names(tools)
 
     def handle_runtime_command(self, command: UserInputCommand) -> bool:
         """Apply runtime configuration commands.
@@ -949,7 +845,7 @@ class BaseTaskManager:
             except ValueError as exc:
                 self.record_system_message(str(exc), update_context=True, write_to_webui=True)
                 return True
-            self.set_coding_tool_request_approval(request_approval)
+            self.tool_manager.set_coding_tool_request_approval(request_approval)
             state = "enabled" if request_approval else "disabled"
             self.record_system_message(
                 f"Coding tool approval is now {state}.",
@@ -965,7 +861,10 @@ class BaseTaskManager:
             except ValueError as exc:
                 self.record_system_message(str(exc), update_context=True, write_to_webui=True)
                 return True
-            self.set_coding_tool_sandbox_type(sandbox_type, visible_dirs=visible_dirs)
+            self.tool_manager.set_coding_tool_sandbox_type(
+                sandbox_type,
+                visible_dirs=visible_dirs,
+            )
             sandbox_label = "None" if sandbox_type is None else sandbox_type
             visible_label = ", ".join(visible_dirs) if visible_dirs else "current working directory only"
             self.record_system_message(
@@ -1017,14 +916,7 @@ class BaseTaskManager:
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
         """Register one or more tools with the serial executor."""
-        if not isinstance(tools, (list, tuple)):
-            tool_list = [tools]
-        else:
-            tool_list = list(tools)
-        if self.runtime_controller is not None:
-            for tool in tool_list:
-                self.runtime_controller.register_tool(tool)
-        self.tool_executor.register_tools(tools)
+        self.tool_manager.register_tools(tools)
 
     def record_system_message(
         self,
