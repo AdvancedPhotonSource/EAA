@@ -238,7 +238,8 @@ class CodingTool(BaseTool):
             "/proc",
             "--dev",
             "/dev",
-            "--tmpfs",
+            "--bind",
+            "/tmp",
             "/tmp",
         ]
         for path in self._bubblewrap_system_bind_paths():

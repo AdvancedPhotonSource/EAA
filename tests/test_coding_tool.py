@@ -184,6 +184,11 @@ class TestCodingTool(tutils.BaseTester):
         assert captured["which_name"] == "bwrap"
         assert "/usr/bin" in captured["which_path"].split(os.pathsep)
         assert captured["command"][0] == "/usr/bin/bwrap"
+        assert ["--bind", "/tmp", "/tmp"] == captured["command"][7:10]
+        assert ["--tmpfs", "/tmp"] not in [
+            captured["command"][index : index + 2]
+            for index in range(len(captured["command"]) - 1)
+        ]
         assert captured["env"]["PATH"] == captured["which_path"]
 
 
