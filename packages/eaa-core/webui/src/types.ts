@@ -7,6 +7,7 @@ export type WebUIRoutes = {
   approval: string;
   upload: string;
   skillCatalog: string;
+  toolSchemas: string;
   mathjax: string;
 };
 
@@ -69,10 +70,25 @@ export type Skill = {
   description?: string;
 };
 
+export type ToolSchema = {
+  type?: string;
+  function?: {
+    name?: string;
+    description?: string;
+    parameters?: {
+      properties?: Record<string, unknown>;
+      required?: string[];
+      [key: string]: unknown;
+    };
+  };
+};
+
 declare global {
   interface Window {
     EAA_WEBUI_CONFIG?: WebUIConfig;
     MathJax?: {
+      tex?: Record<string, unknown>;
+      svg?: Record<string, unknown>;
       typesetPromise?: (elements: Element[]) => Promise<void>;
     };
   }

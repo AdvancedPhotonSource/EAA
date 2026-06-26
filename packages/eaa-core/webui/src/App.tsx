@@ -1,5 +1,18 @@
 import { FormEvent, KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleStop, Send, X } from "lucide-react";
+import {
+  Bot,
+  CircleStop,
+  HelpCircle,
+  Image as ImageIcon,
+  Maximize2,
+  MessageCircle,
+  Paperclip,
+  Send,
+  Settings,
+  TerminalSquare,
+  Wrench,
+  X,
+} from "lucide-react";
 
 import { escapeHtml, renderMarkdown } from "./markdown";
 import type {
@@ -8,21 +21,28 @@ import type {
   RuntimeLogEntry,
   RuntimeSnapshot,
   Skill,
+  ToolSchema,
   WebUIConfig,
   WebUIMessage,
 } from "./types";
 import "./styles.css";
 
 type ConnectionState = "Connecting..." | "Connected" | "Reconnecting..." | "Interrupt requested";
+type ViewName = "chat" | "tools" | "settings";
 type SlashSuggestion = {
   key: string;
   name: string;
   detail: string;
   value: string;
 };
+type ImageItem = {
+  source: string;
+  title: string;
+  messageDomId: string;
+};
 
 const defaultConfig: WebUIConfig = {
-  title: "EAA WebUI",
+  title: "EAA Control Center",
   runtimeUrl: "http://127.0.0.1:8010",
   pollIntervalMs: 1000,
   routes: {
@@ -34,37 +54,52 @@ const defaultConfig: WebUIConfig = {
     approval: "/api/approval",
     upload: "/api/upload-image",
     skillCatalog: "/api/skill-catalog",
+    toolSchemas: "/api/tool-schemas",
     mathjax: "/static/mathjax",
   },
 };
 
 const config = window.EAA_WEBUI_CONFIG ?? defaultConfig;
 
+const mathJaxScriptUrl = () => `${config.routes.mathjax.replace(/\/$/, "")}/es5/tex-svg-full.js`;
+
+const configureMathJax = () => {
+  const current = window.MathJax ?? {};
+  window.MathJax = {
+    ...current,
+    tex: {
+      ...(current.tex ?? {}),
+      inlineMath: [["\\(", "\\)"]],
+      displayMath: [
+        ["$$", "$$"],
+        ["\\[", "\\]"],
+      ],
+      processEscapes: true,
+    },
+    svg: {
+      ...(current.svg ?? {}),
+      fontCache: "global",
+    },
+  };
+};
+
+const ensureMathJaxScript = () => {
+  const existing = Array.from(document.scripts).find((script) => script.dataset.eaaMathjax === "true");
+  if (existing) return existing;
+  const script = document.createElement("script");
+  script.src = mathJaxScriptUrl();
+  script.defer = true;
+  script.dataset.eaaMathjax = "true";
+  script.addEventListener("error", () => console.warn(`MathJax failed to load from ${mathJaxScriptUrl()}`));
+  document.head.appendChild(script);
+  return script;
+};
+
 const slashCommands: SlashSuggestion[] = [
-  {
-    key: "/exit",
-    name: "/exit",
-    detail: "Exit the current loop. Usage: /exit",
-    value: "/exit",
-  },
-  {
-    key: "/chat",
-    name: "/chat",
-    detail: "Enter chat mode. Usage: /chat",
-    value: "/chat",
-  },
-  {
-    key: "/monitor",
-    name: "/monitor",
-    detail: "Enter monitoring mode. Usage: /monitor <task description>",
-    value: "/monitor ",
-  },
-  {
-    key: "/skill",
-    name: "/skill",
-    detail: "Display or load agent skills. Usage: /skill [name]",
-    value: "/skill ",
-  },
+  { key: "/exit", name: "/exit", detail: "Exit the current loop. Usage: /exit", value: "/exit" },
+  { key: "/chat", name: "/chat", detail: "Enter chat mode. Usage: /chat", value: "/chat" },
+  { key: "/monitor", name: "/monitor", detail: "Enter monitoring mode. Usage: /monitor <task description>", value: "/monitor " },
+  { key: "/skill", name: "/skill", detail: "Display or load agent skills. Usage: /skill [name]", value: "/skill " },
   {
     key: "/setcodingtoolapproval",
     name: "/setcodingtoolapproval",
@@ -77,15 +112,18 @@ const slashCommands: SlashSuggestion[] = [
     detail: "Set the coding tool sandbox. Usage: /setcodingtoolsandboxtype none|bubblewrap|container [visible_dir ...]",
     value: "/setcodingtoolsandboxtype ",
   },
-  {
-    key: "/return",
-    name: "/return",
-    detail: "Return to the upper-level task. Usage: /return",
-    value: "/return",
-  },
+  { key: "/return", name: "/return", detail: "Return to the upper-level task. Usage: /return", value: "/return" },
 ];
 
-const roleLabel = (role: string) => (role === "user_webui" ? "user" : role);
+const roleLabel = (role: string) => (role === "user_webui" || role === "user" ? "You" : role === "assistant" ? "EAA Main Agent" : role);
+
+const roleAvatarLetter = (role: string) => {
+  if (role === "assistant") return "A";
+  if (role === "system") return "S";
+  if (role === "tool") return "T";
+  if (role === "user" || role === "user_webui") return "Y";
+  return role.slice(0, 1).toUpperCase() || "M";
+};
 
 const parseContentImagePaths = (content: unknown): string[] => {
   const paths: string[] = [];
@@ -100,6 +138,29 @@ const imageSource = (image: unknown) => {
   if (value.startsWith("data:image")) return value;
   return `${config.routes.image}?path=${encodeURIComponent(value)}`;
 };
+
+const messageDomId = (conversationId: string, message: WebUIMessage, index: number) =>
+  `message-${conversationId}-${String(message.id ?? index).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
+const messageContentKey = (message: WebUIMessage) => `${message.role ?? ""}:${String(message.content ?? "").trim()}`;
+
+const stringHash = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+const imagePathTitle = (pathOrSource: unknown) => {
+  const raw = String(pathOrSource ?? "");
+  if (!raw || raw.startsWith("data:image")) return null;
+  const path = raw.startsWith("/api/image") ? decodeURIComponent(raw.split("path=")[1] || "") : raw;
+  const name = path.split(/[\\/]/).filter(Boolean).pop();
+  return name || null;
+};
+
+const currentImageTimeTitle = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 const isApprovalMessage = (message: WebUIMessage) =>
   String(message.role ?? "") === "system" && /Approve\?\s*\[y\/N\]:/i.test(String(message.content ?? ""));
@@ -139,7 +200,6 @@ const formatApproval = (content: unknown) => {
 };
 
 const messageKey = (message: WebUIMessage, index: number) => String(message.id ?? `message-${index}`);
-
 const logKey = (log: RuntimeLogEntry, index: number) => String(log.id ?? `log-${index}`);
 
 const formatLogTime = (timestamp: string) => {
@@ -200,15 +260,17 @@ function CodeBlock({ content }: { content: unknown }) {
 }
 
 function MessageView({
+  conversationId,
+  index,
   message,
   onImage,
   onApproval,
-  registerImages,
 }: {
+  conversationId: string;
+  index: number;
   message: WebUIMessage;
   onImage: (src: string) => void;
   onApproval: (approved: boolean) => Promise<void>;
-  registerImages: (sources: string[]) => void;
 }) {
   const [approvalSubmitted, setApprovalSubmitted] = useState(false);
   const role = String(message.role ?? "message");
@@ -236,63 +298,172 @@ function MessageView({
     return sources;
   }, [message, role]);
 
-  useEffect(() => {
-    registerImages(imageSources);
-  }, [imageSources, registerImages]);
-
   const submitApproval = async (approved: boolean) => {
     setApprovalSubmitted(true);
     await onApproval(approved);
   };
 
   return (
-    <article className={`eaa-message eaa-message-${role}`}>
-      <div className="eaa-role">{roleLabel(role)}</div>
-      {content ? (
-        isApprovalMessage(message) ? (
-          <ApprovalContent content={content} />
-        ) : role === "tool" ? (
-          <CodeBlock content={content} />
-        ) : (
-          <MarkdownBlock content={content} role={role} />
-        )
-      ) : null}
-      {message.tool_calls !== null && message.tool_calls !== undefined && String(message.tool_calls).trim() !== "" ? (
-        <details className="eaa-tool-call-details" open>
-          <summary>Tool calls</summary>
-          <pre>{String(message.tool_calls).trim()}</pre>
-        </details>
-      ) : null}
-      {imageSources.length ? (
-        <div className="eaa-message-images">
-          {imageSources.map((source) => (
-            <button className="eaa-image-button" key={source} type="button" onClick={() => onImage(source)}>
-              <img className="eaa-message-image" src={source} loading="lazy" decoding="async" alt="" />
+    <article className={`eaa-message eaa-message-${role}`} id={messageDomId(conversationId, message, index)}>
+      <div className="eaa-message-meta">
+        <div className={`eaa-avatar eaa-avatar-${role}`}>{roleAvatarLetter(role)}</div>
+        <div className="eaa-role">{roleLabel(role)}</div>
+      </div>
+      <div className="eaa-message-body">
+        {content ? (
+          isApprovalMessage(message) ? (
+            <ApprovalContent content={content} />
+          ) : role === "tool" ? (
+            <CodeBlock content={content} />
+          ) : (
+            <MarkdownBlock content={content} role={role} />
+          )
+        ) : null}
+        {message.tool_calls !== null && message.tool_calls !== undefined && String(message.tool_calls).trim() !== "" ? (
+          <details className="eaa-tool-call-details" open>
+            <summary>Tool calls</summary>
+            <pre>{String(message.tool_calls).trim()}</pre>
+          </details>
+        ) : null}
+        {imageSources.length ? (
+          <div className="eaa-message-images">
+            {imageSources.map((source) => (
+              <button className="eaa-image-button" key={source} type="button" onClick={() => onImage(source)}>
+                <img className="eaa-message-image" src={source} loading="lazy" decoding="async" alt="" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {isApprovalMessage(message) ? (
+          <div className="eaa-approval-actions">
+            <button className="eaa-approval-button eaa-approval-yes" disabled={approvalSubmitted} type="button" onClick={() => submitApproval(true)}>
+              Yes
             </button>
+            <button className="eaa-approval-button eaa-approval-no" disabled={approvalSubmitted} type="button" onClick={() => submitApproval(false)}>
+              No
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function ToolsView({ tools }: { tools: ToolSchema[] }) {
+  return (
+    <section className="eaa-view eaa-tools-view" aria-label="Registered tools">
+      <div className="eaa-view-header">
+        <h2>Tools</h2>
+        <span>{tools.length} registered</span>
+      </div>
+      <div className="eaa-tool-list">
+        {tools.map((tool, index) => {
+          const fn = tool.function ?? {};
+          const parameters = fn.parameters ?? {};
+          const properties = parameters.properties ?? {};
+          const required = new Set(parameters.required ?? []);
+          return (
+            <article className="eaa-tool-card" key={`${fn.name ?? "tool"}-${index}`}>
+              <div>
+                <h3>{fn.name || `Tool ${index + 1}`}</h3>
+                <p>{fn.description || "No description provided."}</p>
+              </div>
+              <div className="eaa-argument-table">
+                {Object.keys(properties).length ? (
+                  Object.entries(properties).map(([name, schema]) => (
+                    <div className="eaa-argument-row" key={name}>
+                      <div>
+                        <strong>{name}</strong>
+                        {required.has(name) ? <span>Required</span> : null}
+                      </div>
+                      <pre>{JSON.stringify(schema, null, 2)}</pre>
+                    </div>
+                  ))
+                ) : (
+                  <div className="eaa-empty-inline">No arguments.</div>
+                )}
+              </div>
+            </article>
+          );
+        })}
+        {!tools.length ? <div className="eaa-empty-state">No tools are registered with the agent.</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function SettingsView({ title, onTitleChange }: { title: string; onTitleChange: (title: string) => void }) {
+  return (
+    <section className="eaa-view eaa-settings-view" aria-label="Settings">
+      <div className="eaa-view-header">
+        <h2>Settings</h2>
+      </div>
+      <label className="eaa-setting-field">
+        <span>WebUI title</span>
+        <input value={title} onChange={(event) => onTitleChange(event.target.value)} />
+      </label>
+    </section>
+  );
+}
+
+function HelpDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="eaa-modal-backdrop" onClick={onClose}>
+      <div className="eaa-help-dialog" role="dialog" aria-modal="true" aria-label="Help" onClick={(event) => event.stopPropagation()}>
+        <div className="eaa-dialog-header">
+          <h2>Slash Commands</h2>
+          <button type="button" aria-label="Close help" onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="eaa-command-list">
+          {slashCommands.map((command) => (
+            <div className="eaa-command-row" key={command.key}>
+              <code>{command.name}</code>
+              <span>{command.detail}</span>
+            </div>
           ))}
         </div>
-      ) : null}
-      {isApprovalMessage(message) ? (
-        <div className="eaa-approval-actions">
-          <button
-            className="eaa-approval-button eaa-approval-yes"
-            disabled={approvalSubmitted}
-            type="button"
-            onClick={() => submitApproval(true)}
-          >
-            Yes
-          </button>
-          <button
-            className="eaa-approval-button eaa-approval-no"
-            disabled={approvalSubmitted}
-            type="button"
-            onClick={() => submitApproval(false)}
-          >
-            No
+      </div>
+    </div>
+  );
+}
+
+function ImageGalleryDialog({
+  images,
+  onClose,
+  onPreview,
+  onJumpToMessage,
+}: {
+  images: ImageItem[];
+  onClose: () => void;
+  onPreview: (source: string) => void;
+  onJumpToMessage: (messageId: string) => void;
+}) {
+  return (
+    <div className="eaa-modal-backdrop" onClick={onClose}>
+      <div className="eaa-gallery-dialog" role="dialog" aria-modal="true" aria-label="Image gallery" onClick={(event) => event.stopPropagation()}>
+        <div className="eaa-dialog-header">
+          <h2>Image Gallery</h2>
+          <button type="button" aria-label="Close image gallery" onClick={onClose}>
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
-      ) : null}
-    </article>
+        <div className="eaa-gallery-grid">
+          {images.map((image) => (
+            <article className="eaa-gallery-card" key={image.source}>
+              <button className="eaa-gallery-image-button" type="button" onClick={() => onPreview(image.source)}>
+                <img src={image.source} loading="lazy" decoding="async" alt="" />
+              </button>
+              <button className="eaa-gallery-title" type="button" onClick={() => onJumpToMessage(image.messageDomId)}>
+                {image.title}
+              </button>
+            </article>
+          ))}
+          {!images.length ? <div className="eaa-empty-state">No images yet.</div> : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -301,6 +472,7 @@ function App() {
     { id: "primary", label: "Primary", kind: "primary", status: "idle", terminated: false, messages: [] },
   ]);
   const [activeConversationId, setActiveConversationId] = useState("primary");
+  const [activeView, setActiveView] = useState<ViewName>("chat");
   const [pendingCounter, setPendingCounter] = useState(0);
   const [connection, setConnection] = useState<ConnectionState>("Connecting...");
   const [status, setStatus] = useState("idle");
@@ -310,16 +482,23 @@ function App() {
   const [content, setContent] = useState("");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsLoaded, setSkillsLoaded] = useState(false);
+  const [toolSchemas, setToolSchemas] = useState<ToolSchema[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [sidebarImages, setSidebarImages] = useState<string[]>([]);
+  const [sidebarImages, setSidebarImages] = useState<ImageItem[]>([]);
   const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [mathJaxReady, setMathJaxReady] = useState(Boolean(window.MathJax?.typesetPromise));
+  const [uiTitle, setUiTitle] = useState(config.title);
   const messagesRef = useRef<HTMLDivElement>(null);
   const imagesRef = useRef<HTMLDivElement>(null);
   const logsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const pendingMessagesRef = useRef<Map<string, string>>(new Map());
+  const imageFallbackTitlesRef = useRef<Map<string, string>>(new Map());
+  const closedConversationIdsRef = useRef<Set<string>>(new Set());
   const infoTimeoutRef = useRef<number | null>(null);
 
   const processing = !inputRequested && status !== "idle";
@@ -342,84 +521,129 @@ function App() {
     el.dataset.eaaUserScrolled = distance > 100 ? "1" : "";
   };
 
-  const registerImages = useCallback((_sources: string[]) => {}, []);
+  useEffect(() => {
+    document.title = uiTitle || config.title;
+  }, [uiTitle]);
 
   useEffect(() => {
     followScroll(messagesRef.current);
   }, [activeMessages, activeConversationId, followScroll]);
 
   useEffect(() => {
-    followScroll(imagesRef.current);
-  }, [sidebarImages, followScroll]);
-
-  useEffect(() => {
     followScroll(logsRef.current);
   }, [logs, followScroll]);
 
   useEffect(() => {
-    if (!window.MathJax?.typesetPromise || !messagesRef.current) return;
-    window.MathJax.typesetPromise([messagesRef.current]).catch((error) => console.warn("MathJax typesetting failed:", error));
-  }, [activeMessages]);
+    if (mathJaxReady || window.MathJax?.typesetPromise) {
+      setMathJaxReady(true);
+      return;
+    }
+    configureMathJax();
+    ensureMathJaxScript();
+    const interval = window.setInterval(() => {
+      if (window.MathJax?.typesetPromise) {
+        setMathJaxReady(true);
+        window.clearInterval(interval);
+      }
+    }, 100);
+    return () => window.clearInterval(interval);
+  }, [mathJaxReady]);
 
   useEffect(() => {
-    const sources: string[] = [];
+    if (!mathJaxReady || !window.MathJax?.typesetPromise || !messagesRef.current) return;
+    window.MathJax.typesetPromise([messagesRef.current]).catch((error) => console.warn("MathJax typesetting failed:", error));
+  }, [activeMessages, mathJaxReady]);
+
+  useEffect(() => {
+    const items: ImageItem[] = [];
     const seen = new Set<string>();
-    for (const message of activeMessages) {
+    activeMessages.forEach((message, index) => {
       const role = String(message.role ?? "message");
       const attached = Array.isArray(message.images) && message.images.length ? message.images : message.image ? [message.image] : [];
-      for (const image of attached) {
+      const addImage = (image: unknown) => {
         const source = imageSource(image);
-        if (!seen.has(source)) {
-          seen.add(source);
-          sources.push(source);
+        if (seen.has(source)) return;
+        seen.add(source);
+        const pathTitle = imagePathTitle(image);
+        if (!pathTitle && !imageFallbackTitlesRef.current.has(source)) {
+          imageFallbackTitlesRef.current.set(source, currentImageTimeTitle());
         }
-      }
-      if (role !== "system") {
-        for (const path of parseContentImagePaths(message.content)) {
-          const source = imageSource(path);
-          if (!seen.has(source)) {
-            seen.add(source);
-            sources.push(source);
-          }
-        }
-      }
-    }
-    setSidebarImages(sources);
-  }, [activeMessages]);
+        items.push({
+          source,
+          title: pathTitle ?? imageFallbackTitlesRef.current.get(source) ?? currentImageTimeTitle(),
+          messageDomId: messageDomId(activeConversationId, message, index),
+        });
+      };
+      attached.forEach(addImage);
+      if (role !== "system") parseContentImagePaths(message.content).forEach(addImage);
+    });
+    setSidebarImages(items);
+  }, [activeMessages, activeConversationId]);
 
   const upsertConversation = useCallback((conversation: RuntimeConversation, select = false) => {
+    if (conversation.id !== "primary" && closedConversationIdsRef.current.has(conversation.id)) return;
     setConversations((previous) => {
       const index = previous.findIndex((item) => item.id === conversation.id);
       if (index === -1) return [...previous, { ...conversation, messages: conversation.messages ?? [] }];
       const next = [...previous];
+      const existingMessages = next[index].messages ?? [];
+      const mergedMessages = [...existingMessages];
+      const seenMessages = new Set(
+        existingMessages.map((message, messageIndex) =>
+          String(message.id ?? `${message.role ?? ""}:${message.content ?? ""}:${messageIndex}`),
+        ),
+      );
+      const seenUserContent = new Set(
+        existingMessages
+          .filter((message) => ["user", "user_webui"].includes(String(message.role)))
+          .map((message) => messageContentKey(message)),
+      );
+      for (const [messageIndex, message] of (conversation.messages ?? []).entries()) {
+        const key = String(message.id ?? `${message.role ?? ""}:${message.content ?? ""}:${messageIndex}`);
+        renderedIdsRef.current.add(`${conversation.id}:${messageKey(message, messageIndex)}`);
+        if (seenMessages.has(key)) continue;
+        if (["user", "user_webui"].includes(String(message.role)) && seenUserContent.has(messageContentKey(message))) continue;
+        seenMessages.add(key);
+        if (["user", "user_webui"].includes(String(message.role))) seenUserContent.add(messageContentKey(message));
+        mergedMessages.push(message);
+      }
       next[index] = {
         ...next[index],
         ...conversation,
-        messages: next[index].messages ?? conversation.messages ?? [],
+        messages: mergedMessages,
       };
       return next;
     });
     if (select) setActiveConversationId(conversation.id);
   }, []);
 
-  const consumePending = useCallback(
-    (message: WebUIMessage, conversationId = "primary") => {
-      const role = message.role;
-      if (!["user", "user_webui"].includes(String(role))) return false;
-      const trimmed = String(message.content ?? "").trim();
-      for (const [id, pendingContent] of pendingMessagesRef.current.entries()) {
-        if (id.startsWith(`${conversationId}:`) && pendingContent === trimmed) {
-          pendingMessagesRef.current.delete(id);
-          return true;
-        }
+  const consumePending = useCallback((message: WebUIMessage, conversationId = "primary") => {
+    const role = message.role;
+    if (!["user", "user_webui"].includes(String(role))) return false;
+    const trimmed = String(message.content ?? "").trim();
+    for (const [id, pendingContent] of pendingMessagesRef.current.entries()) {
+      if (id.startsWith(`${conversationId}:`) && pendingContent === trimmed) {
+        pendingMessagesRef.current.delete(id);
+        const pendingId = id.slice(conversationId.length + 1);
+        setConversations((previous) =>
+          previous.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  messages: (conversation.messages ?? []).map((item) => (item.id === pendingId ? { ...message, pending: false } : item)),
+                }
+              : conversation,
+          ),
+        );
+        return true;
       }
-      return false;
-    },
-    [],
-  );
+    }
+    return false;
+  }, []);
 
   const mergeMessages = useCallback(
     (incoming: WebUIMessage[], conversationId = "primary") => {
+      if (conversationId !== "primary" && closedConversationIdsRef.current.has(conversationId)) return;
       const toRender: WebUIMessage[] = [];
       incoming.forEach((message, index) => {
         const id = `${conversationId}:${messageKey(message, index)}`;
@@ -451,24 +675,40 @@ function App() {
     [consumePending],
   );
 
-  const applyStatus = useCallback((payload: RuntimeSnapshot) => {
-    setStatus(payload.status ?? "idle");
-    setInputRequested(Boolean(payload.input_requested));
-    setInterruptRequested(Boolean(payload.interrupt_requested));
-    if (payload.interrupt_requested) setConnection("Interrupt requested");
-    const conversation = (payload as RuntimeSnapshot & { conversation?: RuntimeConversation }).conversation;
-    if (conversation) upsertConversation(conversation);
-  }, [upsertConversation]);
+  const applyStatus = useCallback(
+    (payload: RuntimeSnapshot) => {
+      setStatus(payload.status ?? "idle");
+      setInputRequested(Boolean(payload.input_requested));
+      setInterruptRequested(Boolean(payload.interrupt_requested));
+      if (payload.interrupt_requested) setConnection("Interrupt requested");
+      const conversation = (payload as RuntimeSnapshot & { conversation?: RuntimeConversation }).conversation;
+      if (conversation) upsertConversation(conversation);
+    },
+    [upsertConversation],
+  );
 
-  const renderApprovalRequest = useCallback((payload: PendingApproval) => {
-    const conversationId = payload.conversation_id || "primary";
-    const approvalContent = `Tool '${payload.tool_name || "tool"}' requires approval before execution.\nArguments: ${JSON.stringify(
-      payload.arguments || {},
-      null,
-      2,
-    )}\nApprove? [y/N]: `;
-    mergeMessages([{ id: `approval-${conversationId}-${Date.now()}`, role: "system", content: approvalContent }], conversationId);
-  }, [mergeMessages]);
+  const renderApprovalRequest = useCallback(
+    (payload: PendingApproval) => {
+      const conversationId = payload.conversation_id || "primary";
+      const approvalContent = `Tool '${payload.tool_name || "tool"}' requires approval before execution.\nArguments: ${JSON.stringify(
+        payload.arguments || {},
+        null,
+        2,
+      )}\nApprove? [y/N]: `;
+      mergeMessages(
+        [{ id: `approval-${conversationId}-${payload.tool_name || "tool"}-${stringHash(approvalContent)}`, role: "system", content: approvalContent }],
+        conversationId,
+      );
+    },
+    [mergeMessages],
+  );
+
+  const loadToolSchemas = useCallback(async () => {
+    const response = await fetch(config.routes.toolSchemas);
+    if (!response.ok) return;
+    const payload = (await response.json()) as { tools?: ToolSchema[] };
+    setToolSchemas(Array.isArray(payload.tools) ? payload.tools : []);
+  }, []);
 
   const loadState = useCallback(async () => {
     try {
@@ -476,9 +716,12 @@ function App() {
       if (!response.ok) throw new Error("State fetch failed");
       const payload = (await response.json()) as RuntimeSnapshot;
       if (Array.isArray(payload.conversations) && payload.conversations.length) {
-        setConversations(payload.conversations.map((conversation) => ({ ...conversation, messages: conversation.messages ?? [] })));
-        if (!payload.conversations.some((conversation) => conversation.id === activeConversationId)) {
-          setActiveConversationId(payload.conversations[0].id);
+        const visibleConversations = payload.conversations.filter(
+          (conversation) => conversation.id === "primary" || !closedConversationIdsRef.current.has(conversation.id),
+        );
+        setConversations(visibleConversations.map((conversation) => ({ ...conversation, messages: conversation.messages ?? [] })));
+        if (!visibleConversations.some((conversation) => conversation.id === activeConversationId)) {
+          setActiveConversationId(visibleConversations[0]?.id ?? "primary");
         }
       } else {
         mergeMessages(Array.isArray(payload.messages) ? payload.messages : [], "primary");
@@ -497,7 +740,8 @@ function App() {
 
   useEffect(() => {
     loadState();
-  }, [loadState]);
+    void loadToolSchemas();
+  }, [loadState, loadToolSchemas]);
 
   useEffect(() => {
     const source = new EventSource(config.routes.events);
@@ -538,6 +782,13 @@ function App() {
     });
   };
 
+  const closeConversation = (conversationId: string) => {
+    if (conversationId === "primary") return;
+    closedConversationIdsRef.current.add(conversationId);
+    setConversations((previous) => previous.filter((conversation) => conversation.id !== conversationId));
+    if (activeConversationId === conversationId) setActiveConversationId("primary");
+  };
+
   const appendPendingMessage = (pendingContent: string) => {
     const id = `pending-${pendingCounter}`;
     const scopedId = `primary:${id}`;
@@ -545,7 +796,12 @@ function App() {
     pendingMessagesRef.current.set(scopedId, pendingContent.trim());
     setConversations((previous) =>
       previous.map((conversation) =>
-        conversation.id === "primary"
+        conversation.id === "primary" &&
+        !(conversation.messages ?? []).some(
+          (message) =>
+            ["user", "user_webui"].includes(String(message.role)) &&
+            String(message.content ?? "").trim() === pendingContent.trim(),
+        )
           ? { ...conversation, messages: [...(conversation.messages ?? []), { id, role: "user", content: pendingContent, images: [], pending: true }] }
           : conversation,
       ),
@@ -579,7 +835,14 @@ function App() {
     if (processing) return;
     const trimmed = content.trim();
     if (!trimmed) return;
-    const pendingId = status === "waiting_for_approval" ? null : appendPendingMessage(trimmed);
+    const activeApprovalPending = Boolean(activeConversation?.pending_approval) || status === "waiting_for_approval";
+    if (activeApprovalPending && ["y", "yes", "n", "no"].includes(trimmed.toLowerCase())) {
+      await submitApproval(["y", "yes"].includes(trimmed.toLowerCase()), activeConversationId);
+      setContent("");
+      setSuggestionsOpen(false);
+      return;
+    }
+    const pendingId = activeApprovalPending ? null : appendPendingMessage(trimmed);
     const response = await fetch(config.routes.send, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -699,9 +962,20 @@ function App() {
     }
   };
 
+  const jumpToImageMessage = (messageId: string) => {
+    setActiveView("chat");
+    requestAnimationFrame(() => {
+      document.getElementById(messageId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
   useEffect(() => {
     const close = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setPreviewImage(null);
+      if (event.key === "Escape") {
+        setPreviewImage(null);
+        setHelpOpen(false);
+        setGalleryOpen(false);
+      }
     };
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
@@ -720,120 +994,206 @@ function App() {
           {infoMessage.text}
         </div>
       ) : null}
-      <header className="eaa-header">
-        <div className="eaa-title">{config.title}</div>
-        <div className="eaa-header-actions">
-          <button className="eaa-interrupt" type="button" disabled={status === "idle" && !interruptRequested} onClick={() => void requestInterrupt()}>
-            <CircleStop size={16} aria-hidden="true" />
-            <span>Interrupt</span>
-          </button>
-          <div className="eaa-status">{connection}</div>
+      <aside className="eaa-nav" aria-label="Primary navigation">
+        <div className="eaa-brand">
+          <div className="eaa-brand-mark">
+            <Bot size={26} aria-hidden="true" />
+          </div>
+          <div>
+            <div className="eaa-brand-title">EAA</div>
+            <div className="eaa-brand-subtitle">Agentic AI Assistant for Instrument Control</div>
+          </div>
         </div>
-      </header>
-      <main className="eaa-main">
-        <section className="eaa-chat" aria-label="Chat transcript">
-          <div className="eaa-tabs" role="tablist" aria-label="Conversations">
-            {conversations.map((conversation) => {
-              const hasApproval = Boolean(conversation.pending_approval);
-              const active = conversation.id === activeConversationId;
-              return (
-                <button
-                  className={`eaa-tab${active ? " eaa-tab-active" : ""}${hasApproval ? " eaa-tab-alert" : ""}`}
-                  key={conversation.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setActiveConversationId(conversation.id)}
-                >
-                  <span>{conversation.label || conversation.id}</span>
-                  {hasApproval ? <span className="eaa-tab-badge">Approval</span> : null}
-                </button>
-              );
-            })}
+        <nav className="eaa-nav-links">
+          <button className={activeView === "chat" ? "active" : ""} type="button" onClick={() => setActiveView("chat")}>
+            <MessageCircle size={22} aria-hidden="true" />
+            <span>Chat</span>
+          </button>
+          <button className={activeView === "tools" ? "active" : ""} type="button" onClick={() => setActiveView("tools")}>
+            <Wrench size={22} aria-hidden="true" />
+            <span>Tools</span>
+          </button>
+          <button className={activeView === "settings" ? "active" : ""} type="button" onClick={() => setActiveView("settings")}>
+            <Settings size={22} aria-hidden="true" />
+            <span>Settings</span>
+          </button>
+        </nav>
+        <div className="eaa-connection-card">
+          <div className={`eaa-connection-dot eaa-connection-${connection.replace(/\W+/g, "-").toLowerCase()}`} />
+          <div>
+            <div>Agent Process</div>
+            <span>{connection}</span>
           </div>
-          <div className="eaa-messages" ref={messagesRef} onScroll={registerScrollIntent}>
-            {activeMessages.map((message, index) => (
-              <MessageView
-                key={messageKey(message, index)}
-                message={message}
-                onImage={setPreviewImage}
-                onApproval={(approved) => submitApproval(approved, activeConversationId)}
-                registerImages={registerImages}
-              />
-            ))}
-            {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}
+        </div>
+      </aside>
+      <div className="eaa-workspace">
+        <header className="eaa-header">
+          <div className="eaa-title">{uiTitle || config.title}</div>
+          <div className="eaa-header-actions">
+            <button className="eaa-header-button" type="button" onClick={() => setHelpOpen(true)}>
+              <HelpCircle size={17} aria-hidden="true" />
+              <span>Help</span>
+            </button>
+            <button className="eaa-icon-button" type="button" aria-label="Interrupt agent" disabled={status === "idle" && !interruptRequested} onClick={() => void requestInterrupt()}>
+              <CircleStop size={18} aria-hidden="true" />
+            </button>
           </div>
-          <form className="eaa-input-panel" onSubmit={onSubmit}>
-            {processing ? (
-              <div className="eaa-processing" aria-label="Agent is processing" role="status">
-                <span className="eaa-processing-dot" />
-                <span className="eaa-processing-dot" />
-                <span className="eaa-processing-dot" />
-              </div>
-            ) : null}
-            <div className="eaa-input-row">
-              <textarea
-                ref={inputRef}
-                className="eaa-input"
-                rows={3}
-                placeholder="Type a message. Paste an image or use <img /absolute/path/to/image.png>."
-                value={content}
-                onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 150)}
-                onChange={(event) => void onInputChange(event.target.value)}
-                onKeyDown={onKeyDown}
-                onPaste={onPaste}
-              />
-              {suggestionsOpen && slashSuggestions.length ? (
-                <div className="eaa-slash-suggestions">
-                  {slashSuggestions.map((suggestion) => (
-                    <button
-                      className="eaa-slash-suggestion"
-                      key={suggestion.key}
-                      type="button"
-                      onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
+        </header>
+        {activeView === "chat" ? (
+          <main className="eaa-main">
+            <section className="eaa-chat" aria-label="Chat transcript">
+              <div className="eaa-tabs" role="tablist" aria-label="Conversations">
+                {conversations.map((conversation) => {
+                  const hasApproval = Boolean(conversation.pending_approval);
+                  const active = conversation.id === activeConversationId;
+                  const closable = conversation.id !== "primary" && conversation.kind !== "primary";
+                  return (
+                    <div
+                      className={`eaa-tab${active ? " eaa-tab-active" : ""}${hasApproval ? " eaa-tab-alert" : ""}`}
+                      key={conversation.id}
+                      role="tab"
+                      aria-selected={active}
                     >
-                      <span className="eaa-slash-name">{suggestion.name}</span>
-                      <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <button className="eaa-send" type="submit" disabled={processing}>
-                <Send size={16} aria-hidden="true" />
-                <span>Send</span>
-              </button>
-            </div>
-          </form>
-        </section>
-        <aside className="eaa-sidebar" aria-label="Images and logs">
-          <div className="eaa-side-panel eaa-image-panel">
-            <div className="eaa-sidebar-title">Images</div>
-            <div className="eaa-images" ref={imagesRef} onScroll={registerScrollIntent}>
-              {sidebarImages.map((source) => (
-                <button className="eaa-image-button" key={source} type="button" onClick={() => setPreviewImage(source)}>
-                  <img className="eaa-sidebar-image" src={source} loading="lazy" decoding="async" alt="" />
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="eaa-side-panel eaa-log-panel">
-            <div className="eaa-sidebar-title">Logs</div>
-            <div className="eaa-logs" ref={logsRef} onScroll={registerScrollIntent}>
-              {logs.map((log, index) => (
-                <div className={`eaa-log-entry eaa-log-${String(log.level || "info").toLowerCase()}`} key={logKey(log, index)}>
-                  <div className="eaa-log-meta">
-                    <span>{formatLogTime(log.timestamp)}</span>
-                    <span>{log.source}</span>
-                    <span>{log.level}</span>
-                    {log.tool_name ? <span>{log.tool_name}</span> : null}
+                      <button className="eaa-tab-select" type="button" onClick={() => setActiveConversationId(conversation.id)}>
+                        <span>{conversation.kind === "primary" ? "Main Agent" : conversation.label || conversation.id}</span>
+                      </button>
+                      {hasApproval ? <span className="eaa-tab-badge">Approval</span> : null}
+                      {closable ? (
+                        <button
+                          className="eaa-tab-close"
+                          type="button"
+                          aria-label={`Close ${conversation.label || conversation.id}`}
+                          onClick={() => closeConversation(conversation.id)}
+                        >
+                          <X size={14} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="eaa-messages" ref={messagesRef} onScroll={registerScrollIntent}>
+                {activeMessages.map((message, index) => (
+                  <MessageView
+                    conversationId={activeConversationId}
+                    index={index}
+                    key={messageKey(message, index)}
+                    message={message}
+                    onImage={setPreviewImage}
+                    onApproval={(approved) => submitApproval(approved, activeConversationId)}
+                  />
+                ))}
+                {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}
+              </div>
+              <form className="eaa-input-panel" onSubmit={onSubmit}>
+                {processing ? (
+                  <div className="eaa-processing" aria-label="Agent is processing" role="status">
+                    <span className="eaa-processing-dot" />
+                    <span className="eaa-processing-dot" />
+                    <span className="eaa-processing-dot" />
                   </div>
-                  <div className="eaa-log-message">{log.message}</div>
+                ) : null}
+                <div className="eaa-input-row">
+                  <textarea
+                    ref={inputRef}
+                    className="eaa-input"
+                    rows={3}
+                    placeholder="Message EAA..."
+                    value={content}
+                    onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 150)}
+                    onChange={(event) => void onInputChange(event.target.value)}
+                    onKeyDown={onKeyDown}
+                    onPaste={onPaste}
+                  />
+                  {suggestionsOpen && slashSuggestions.length ? (
+                    <div className="eaa-slash-suggestions">
+                      {slashSuggestions.map((suggestion) => (
+                        <button
+                          className="eaa-slash-suggestion"
+                          key={suggestion.key}
+                          type="button"
+                          onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
+                        >
+                          <span className="eaa-slash-name">{suggestion.name}</span>
+                          <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <button className="eaa-attach" type="button" aria-label="Paste or attach image">
+                    <Paperclip size={18} aria-hidden="true" />
+                  </button>
+                  <button className="eaa-send" type="submit" disabled={processing} aria-label="Send message">
+                    <Send size={18} aria-hidden="true" />
+                  </button>
                 </div>
-              ))}
-            </div>
-          </div>
-        </aside>
-      </main>
+                <div className="eaa-disclaimer">EAA can make mistakes. Verify critical results.</div>
+              </form>
+            </section>
+            <aside className="eaa-sidebar" aria-label="Images and logs">
+              <div className="eaa-side-panel eaa-image-panel">
+                <div className="eaa-panel-header">
+                  <div>
+                    <ImageIcon size={17} aria-hidden="true" />
+                    <span>Images ({sidebarImages.length})</span>
+                  </div>
+                  <button className="eaa-panel-icon" type="button" aria-label="Open image gallery" onClick={() => setGalleryOpen(true)}>
+                    <Maximize2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="eaa-images" ref={imagesRef}>
+                  {sidebarImages.map((image) => (
+                    <div className="eaa-sidebar-image-card" key={image.source}>
+                      <button className="eaa-image-button" type="button" onClick={() => setPreviewImage(image.source)}>
+                        <img className="eaa-sidebar-image" src={image.source} loading="lazy" decoding="async" alt="" />
+                      </button>
+                      <button className="eaa-image-title" type="button" onClick={() => jumpToImageMessage(image.messageDomId)}>
+                        {image.title}
+                      </button>
+                    </div>
+                  ))}
+                  {!sidebarImages.length ? <div className="eaa-empty-inline">No images yet.</div> : null}
+                </div>
+              </div>
+              <div className="eaa-side-panel eaa-log-panel">
+                <div className="eaa-panel-header">
+                  <div>
+                    <TerminalSquare size={17} aria-hidden="true" />
+                    <span>Live Log</span>
+                  </div>
+                </div>
+                <div className="eaa-logs" ref={logsRef} onScroll={registerScrollIntent}>
+                  {logs.map((log, index) => (
+                    <div className={`eaa-log-entry eaa-log-${String(log.level || "info").toLowerCase()}`} key={logKey(log, index)}>
+                      <span>{formatLogTime(log.timestamp)}</span>
+                      <span>[{String(log.level || "info").toUpperCase()}]</span>
+                      {log.tool_name ? <span>{log.tool_name}</span> : null}
+                      <span>{log.message}</span>
+                    </div>
+                  ))}
+                  {!logs.length ? <div className="eaa-empty-inline">No log entries yet.</div> : null}
+                </div>
+              </div>
+            </aside>
+          </main>
+        ) : activeView === "tools" ? (
+          <ToolsView tools={toolSchemas} />
+        ) : (
+          <SettingsView title={uiTitle} onTitleChange={setUiTitle} />
+        )}
+      </div>
+      {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
+      {galleryOpen ? (
+        <ImageGalleryDialog
+          images={sidebarImages}
+          onClose={() => setGalleryOpen(false)}
+          onPreview={setPreviewImage}
+          onJumpToMessage={(messageId) => {
+            setGalleryOpen(false);
+            jumpToImageMessage(messageId);
+          }}
+        />
+      ) : null}
       {previewImage ? (
         <div className="eaa-browser-image-preview open" aria-hidden="false" onClick={() => setPreviewImage(null)}>
           <button className="eaa-browser-image-preview-close" type="button" aria-label="Close image preview">

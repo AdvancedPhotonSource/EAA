@@ -242,6 +242,14 @@ class WebUIRuntimeController:
             "logs": logs,
         }
 
+    def tool_schema_snapshot(self) -> list[dict[str, Any]]:
+        """Return tool schemas registered with the task manager."""
+        tool_executor = getattr(self.task_manager, "tool_executor", None)
+        list_tool_schemas = getattr(tool_executor, "list_tool_schemas", None)
+        if not callable(list_tool_schemas):
+            return []
+        return list_tool_schemas()
+
     def publish_message(self, message: dict[str, Any], conversation_id: str = "primary") -> None:
         """Publish one message to live WebUI clients."""
         payload = dict(message)
@@ -599,6 +607,10 @@ class WebUIRuntimeServer:
                     self.controller.task_manager.skill_catalog
                 )
             }
+
+        @app.get("/api/tool-schemas")
+        async def tool_schemas() -> dict[str, list[dict[str, Any]]]:
+            return {"tools": self.controller.tool_schema_snapshot()}
 
         @app.get("/api/image")
         def image(path: str) -> Any:

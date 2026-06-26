@@ -6,8 +6,24 @@ const escapeHtml = (value: unknown): string =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const mathPattern = /(\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$)/g;
+
+const protectMath = (text: string) => {
+  const math: string[] = [];
+  const protectedText = text.replace(mathPattern, (match) => {
+    const id = math.length;
+    math.push(match);
+    return `\u0000MATH${id}\u0000`;
+  });
+  return { protectedText, math };
+};
+
+const restoreMath = (text: string, math: string[]) =>
+  text.replace(/\u0000MATH(\d+)\u0000/g, (_match, id: string) => escapeHtml(math[Number(id)] ?? ""));
+
 const inlineMarkdown = (text: string): string => {
-  let output = escapeHtml(text);
+  const { protectedText, math } = protectMath(text);
+  let output = escapeHtml(protectedText);
   const code: string[] = [];
   output = output.replace(/(`+)([\s\S]*?)\1/g, (_match, _ticks: string, value: string) => {
     const id = code.length;
@@ -20,7 +36,8 @@ const inlineMarkdown = (text: string): string => {
   );
   output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   output = output.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  return output.replace(/\u0000CODE(\d+)\u0000/g, (_match, id: string) => code[Number(id)] ?? "");
+  output = output.replace(/\u0000CODE(\d+)\u0000/g, (_match, id: string) => code[Number(id)] ?? "");
+  return restoreMath(output, math);
 };
 
 const renderTable = (lines: string[]): string => {
@@ -43,6 +60,7 @@ export const renderMarkdown = (markdown: unknown): string => {
   const blocks: string[] = [];
   let paragraph: string[] = [];
   let code: string[] | null = null;
+  let displayMath: { end: string; lines: string[] } | null = null;
   let table: string[] = [];
   let list: { ordered: boolean; items: string[]; itemIndents: number[]; start: number | null } | null = null;
 
@@ -70,6 +88,14 @@ export const renderMarkdown = (markdown: unknown): string => {
   };
 
   for (const line of lines) {
+    if (displayMath !== null) {
+      displayMath.lines.push(line);
+      if (line.trim().endsWith(displayMath.end)) {
+        blocks.push(`<div class="eaa-math-block">${escapeHtml(displayMath.lines.join("\n"))}</div>`);
+        displayMath = null;
+      }
+      continue;
+    }
     const fence = line.match(/^```|^~~~/);
     if (fence && code === null) {
       flushParagraph();
@@ -85,6 +111,28 @@ export const renderMarkdown = (markdown: unknown): string => {
     }
     if (code !== null) {
       code.push(line);
+      continue;
+    }
+    const trimmedLine = line.trim();
+    if ((trimmedLine === "\\[" || trimmedLine.startsWith("\\[")) && !trimmedLine.endsWith("\\]")) {
+      flushParagraph();
+      flushTable();
+      flushList();
+      displayMath = { end: "\\]", lines: [line] };
+      continue;
+    }
+    if (trimmedLine === "$$" || (trimmedLine.startsWith("$$") && !trimmedLine.endsWith("$$"))) {
+      flushParagraph();
+      flushTable();
+      flushList();
+      displayMath = { end: "$$", lines: [line] };
+      continue;
+    }
+    if (/^\s*(\\\[[\s\S]*\\\]|\$\$[\s\S]*\$\$)\s*$/.test(line)) {
+      flushParagraph();
+      flushTable();
+      flushList();
+      blocks.push(`<div class="eaa-math-block">${escapeHtml(line.trim())}</div>`);
       continue;
     }
     if (list && /^\s+/.test(line) && list.items.length) {
@@ -133,6 +181,7 @@ export const renderMarkdown = (markdown: unknown): string => {
     flushList();
     paragraph.push(line);
   }
+  if (displayMath !== null) blocks.push(`<div class="eaa-math-block">${escapeHtml(displayMath.lines.join("\n"))}</div>`);
   if (code !== null) blocks.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
   flushTable();
   flushList();

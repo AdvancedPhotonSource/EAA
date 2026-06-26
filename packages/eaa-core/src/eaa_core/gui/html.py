@@ -38,6 +38,7 @@ class HTMLWebUIBase:
     approval_route = "/api/approval"
     upload_route = "/api/upload-image"
     skill_catalog_route = "/api/skill-catalog"
+    tool_schema_route = "/api/tool-schemas"
     mathjax_route = "/static/mathjax"
     webui_static_route = "/static/webui"
     markdown_extras = ["fenced-code-blocks", "tables", "code-friendly", "break-on-newline"]
@@ -240,6 +241,7 @@ class HTMLWebUIBase:
                 "approval": self.approval_route,
                 "upload": self.upload_route,
                 "skillCatalog": self.skill_catalog_route,
+                "toolSchemas": self.tool_schema_route,
                 "mathjax": self.mathjax_route,
             },
         }
@@ -248,16 +250,8 @@ class HTMLWebUIBase:
         """Return the runtime configuration script injected before React loads."""
         return f"""<script>
     window.EAA_WEBUI_CONFIG = {json.dumps(self.page_config())};
-    window.MathJax = {{
-      tex: {{
-        inlineMath: [['\\\\(', '\\\\)']],
-        displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
-        processEscapes: true
-      }},
-      svg: {{ fontCache: 'global' }}
-    }};
   </script>
-  <script defer src=\"{self.mathjax_route}/es5/tex-svg-full.js\"></script>"""
+  <link rel=\"preload\" as=\"script\" href=\"{self.mathjax_route}/es5/tex-svg-full.js\">"""
 
     def missing_build_html(self) -> str:
         """Return a minimal page when packaged WebUI assets are missing."""
@@ -282,6 +276,8 @@ class HTMLWebUIBase:
         document = self.webui_index_html()
         document = document.replace("<title>EAA WebUI</title>", f"<title>{html.escape(self.title)}</title>")
         config_script = self.page_config_script()
+        if "<head>" in document:
+            return document.replace("<head>", f"<head>\n  {config_script}", 1)
         if "</head>" in document:
             return document.replace("</head>", f"  {config_script}\n</head>", 1)
         return f"{config_script}\n{document}"
