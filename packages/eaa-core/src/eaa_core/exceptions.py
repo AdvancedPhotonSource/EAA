@@ -1,5 +1,5 @@
 class MaxRoundsReached(Exception):
-    """Raised when a feedback loop exceeds its round budget."""
+    """Raised when a task workflow exceeds its round budget."""
 
     def __init__(self, message: str = "Maximum number of rounds reached."):
         """Initialize the exception."""

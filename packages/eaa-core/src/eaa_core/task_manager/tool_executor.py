@@ -235,7 +235,6 @@ class SerialToolExecutor:
         tool_response: Dict[str, Any],
         *,
         message_with_yielded_image: str,
-        allow_non_image_tool_responses: bool,
     ) -> list[dict[str, Any]]:
         """Generate follow-up messages after a tool finishes.
 
@@ -245,8 +244,6 @@ class SerialToolExecutor:
             Normalized tool response message.
         message_with_yielded_image : str
             User-facing text used when an image path is returned.
-        allow_non_image_tool_responses : bool
-            Whether non-image tool results are acceptable in the current flow.
 
         Returns
         -------
@@ -265,26 +262,7 @@ class SerialToolExecutor:
                     role="user",
                 )
             )
-        elif not allow_non_image_tool_responses:
-            followup_messages.append(cls.build_non_image_tool_warning())
         return followup_messages
-
-    @staticmethod
-    def build_non_image_tool_warning() -> dict[str, Any]:
-        """Build a warning message for unexpected non-image tool results.
-
-        Returns
-        -------
-        dict[str, Any]
-            User message warning about the unexpected tool result type.
-        """
-        return generate_openai_message(
-            content=(
-                "The tool should return a JSON payload with a valid `img_path`, "
-                "but no image path was found. Make sure you called the right tool correctly."
-            ),
-            role="user",
-        )
 
     @staticmethod
     def serialize_result(result: Any) -> str:

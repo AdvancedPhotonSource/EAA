@@ -69,7 +69,6 @@ def test_query_messages_reads_checkpoint_history(tmp_path, monkeypatch):
         full_history=[],
         round_index=0,
         termination_behavior="user",
-        store_all_images_in_context=True,
         bootstrap_message="hello",
         await_user_input=False,
     )

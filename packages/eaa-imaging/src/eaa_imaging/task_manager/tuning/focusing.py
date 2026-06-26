@@ -16,7 +16,7 @@ from eaa_core.exceptions import MaxRoundsReached
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.prompts import render_prompt_template
 from eaa_core.task_manager.state import (
-    FeedbackLoopState,
+    TaskManagerState,
     load_latest_checkpoint_state_from_connection,
 )
 from eaa_core.tool.base import BaseTool
@@ -47,11 +47,11 @@ class FocusingNodeFactory(NodeFactory):
         """
         super().__init__(task_manager)
 
-    def route_after_tool_execution(self, state: FeedbackLoopState) -> str:
+    def route_after_tool_execution(self, state: TaskManagerState) -> str:
         """Route post-tool execution for the focusing workflow.
 
         Args:
-            state: Active feedback-loop state.
+            state: Active task state.
 
         Returns:
             Next node name.
@@ -60,11 +60,11 @@ class FocusingNodeFactory(NodeFactory):
             return "image_registration"
         return super().route_after_tool_execution(state)
 
-    def image_registration(self, state: FeedbackLoopState) -> dict[str, object]:
+    def image_registration(self, state: TaskManagerState) -> dict[str, object]:
         """Handle image-acquisition follow-up with registration.
 
         Args:
-            state: Active feedback-loop state.
+            state: Active task state.
 
         Returns:
             Updated graph state payload.
@@ -98,18 +98,17 @@ class FocusingNodeFactory(NodeFactory):
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
                     message_with_yielded_image=state.message_with_yielded_image,
-                    allow_non_image_tool_responses=state.allow_non_image_tool_responses,
                 )
             )
 
         self.apply_followup_messages_for_state(state, followup_messages)
         return state.model_dump()
 
-    def image_followup(self, state: FeedbackLoopState) -> dict[str, object]:
+    def image_followup(self, state: TaskManagerState) -> dict[str, object]:
         """Append focusing-specific follow-up messages after tool execution.
 
         Args:
-            state: Active feedback-loop state.
+            state: Active task state.
 
         Returns:
             Updated graph state payload.
@@ -143,7 +142,6 @@ class FocusingNodeFactory(NodeFactory):
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
                     message_with_yielded_image=state.message_with_yielded_image,
-                    allow_non_image_tool_responses=state.allow_non_image_tool_responses,
                 )
             )
 
@@ -277,10 +275,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         Returns
         -------
         CompiledStateGraph
-            Compiled focusing feedback-loop graph.
+            Compiled focusing task graph.
         """
         node_factory = FocusingNodeFactory(self)
-        builder = StateGraph(FeedbackLoopState)
+        builder = StateGraph(TaskManagerState)
         builder.add_node(
             "handle_human_gate",
             node_factory.handle_human_gate,
@@ -292,17 +290,17 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         builder.add_node(
             "execute_tools",
             node_factory.execute_tools,
-            input_schema=FeedbackLoopState,
+            input_schema=TaskManagerState,
         )
         builder.add_node(
             "image_registration",
             node_factory.image_registration,
-            input_schema=FeedbackLoopState,
+            input_schema=TaskManagerState,
         )
         builder.add_node(
             "image_followup",
             node_factory.image_followup,
-            input_schema=FeedbackLoopState,
+            input_schema=TaskManagerState,
         )
         builder.add_node(
             "finalize_round",
@@ -311,7 +309,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         builder.add_node(
             "call_model",
             node_factory.call_model,
-            input_schema=FeedbackLoopState,
+            input_schema=TaskManagerState,
         )
         builder.add_edge(START, "call_model")
         builder.add_conditional_edges(
@@ -338,13 +336,13 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
         )
         return builder.compile(checkpointer=checkpointer)
 
-    def should_run_image_registration(self, state: FeedbackLoopState) -> bool:
+    def should_run_image_registration(self, state: TaskManagerState) -> bool:
         """Return whether the registration node should run for the latest tool batch.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop state.
+        state : TaskManagerState
+            Active task state.
 
         Returns
         -------
@@ -726,9 +724,9 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             add_reference_image_to_images_acquired
         )
         self.active_reference_image_path = reference_image_path
-        
+
         self.set_active_state(
-            FeedbackLoopState(
+            TaskManagerState(
                 messages=list(self.context),
                 full_history=list(self.full_history),
                 round_index=0,
@@ -739,14 +737,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                 max_rounds=max_iters,
                 n_first_images_to_keep_in_context=1,
                 n_last_images_to_keep_in_context=n_last_images_to_keep_in_context,
-                allow_non_image_tool_responses=True,
                 allow_multiple_tool_calls=False,
-                expected_tool_call_sequence=[
-                    "scan_line",
-                    "set_parameters",
-                    "acquire_image",
-                ],
-                expected_tool_call_sequence_tolerance=1,
                 termination_behavior=kwargs.pop("termination_behavior", "ask"),
                 max_arounds_reached_behavior=kwargs.pop(
                     "max_arounds_reached_behavior",
@@ -802,7 +793,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             or len(snapshot.values) == 0
         )
         if not fallback_loaded and snapshot.values is not None:
-            resumed_state = FeedbackLoopState.model_validate(snapshot.values)
+            resumed_state = TaskManagerState.model_validate(snapshot.values)
         else:
             resolved_checkpoint_path, _ = self.resolve_checkpoint_storage(
                 "task_graph",
@@ -817,7 +808,7 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
                     f"No task-graph checkpoint found in shared checkpoint DB "
                     f"{resolved_checkpoint_path}."
                 )
-            resumed_state = FeedbackLoopState.model_validate(latest_state)
+            resumed_state = TaskManagerState.model_validate(latest_state)
         restart_from_human_gate = (
             fallback_loaded
             or resumed_state.exit_requested
@@ -837,11 +828,10 @@ class ScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskManager):
             )
         final_state = graph.invoke(None, config=checkpoint_config)
         self.set_active_state(
-            FeedbackLoopState.model_validate(final_state),
+            TaskManagerState.model_validate(final_state),
             "task_graph",
         )
-        if isinstance(self.task_state, FeedbackLoopState) and self.task_state.chat_requested:
+        if self.task_state.chat_requested:
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )

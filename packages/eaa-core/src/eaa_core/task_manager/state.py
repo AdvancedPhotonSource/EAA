@@ -16,7 +16,19 @@ class TaskManagerState(BaseModel):
     full_history: list[dict[str, Any]] = Field(default_factory=list)
     await_user_input: bool = False
     round_index: int = 0
-    store_all_images_in_context: bool = True
+    initial_prompt: str = ""
+    initial_image_path: Optional[str | list[str]] = None
+    initial_prompt_pending: bool = True
+    message_with_yielded_image: str = "Here is the image the tool returned."
+    max_rounds: int = 99
+    n_first_images_to_keep_in_context: Optional[int] = None
+    n_last_images_to_keep_in_context: Optional[int] = None
+    allow_multiple_tool_calls: bool = False
+    termination_behavior: Literal["ask", "return", "user"] = "ask"
+    max_arounds_reached_behavior: Literal["return", "raise"] = "return"
+    chat_requested: bool = False
+    exit_requested: bool = False
+    return_requested: bool = False
 
     def copy_messages_and_history_from_state(
         self,
@@ -106,13 +118,8 @@ class ChatGraphState(TaskManagerState):
     termination_behavior: Literal["return", "user"] = "user"
     bootstrap_message: Optional[Any] = None
     max_agent_iterations: Optional[int] = None
-    n_first_images_to_keep_in_context: Optional[int] = None
-    n_last_images_to_keep_in_context: Optional[int] = None
-    message_with_yielded_image: str = "Here is the image the tool returned."
     monitor_requested: bool = False
     monitor_task_description: str = ""
-    exit_requested: bool = False
-    return_requested: bool = False
 
 
 CheckpointStateName = Literal["ChatGraphState", "TaskManagerState"]
@@ -182,9 +189,6 @@ def build_compatible_checkpoint_state(
     shared_fields = {
         "await_user_input": True,
         "round_index": int(state_data.get("round_index", 0) or 0),
-        "store_all_images_in_context": bool(
-            state_data.get("store_all_images_in_context", True)
-        ),
     }
     if target_state_name == "ChatGraphState":
         state = ChatGraphState(
@@ -215,24 +219,3 @@ class ChatRuntimeContext:
 
     memory_namespace: str
     memory_store: Any = None
-
-
-class FeedbackLoopState(TaskManagerState):
-    """State used by the base feedback-loop graph."""
-
-    initial_prompt: str = ""
-    initial_image_path: Optional[str | list[str]] = None
-    initial_prompt_pending: bool = True
-    message_with_yielded_image: str = "Here is the image the tool returned."
-    max_rounds: int = 99
-    n_first_images_to_keep_in_context: Optional[int] = None
-    n_last_images_to_keep_in_context: Optional[int] = None
-    allow_non_image_tool_responses: bool = True
-    allow_multiple_tool_calls: bool = False
-    expected_tool_call_sequence: Optional[list[str]] = None
-    expected_tool_call_sequence_tolerance: int = 0
-    termination_behavior: Literal["ask", "return"] = "ask"
-    max_arounds_reached_behavior: Literal["return", "raise"] = "return"
-    chat_requested: bool = False
-    exit_requested: bool = False
-    return_requested: bool = False

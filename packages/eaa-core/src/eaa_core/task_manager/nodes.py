@@ -17,7 +17,6 @@ from eaa_core.task_manager.commands import parse_user_input_command
 from eaa_core.task_manager.state import (
     ChatGraphState,
     ChatRuntimeContext,
-    FeedbackLoopState,
     TaskManagerState,
 )
 
@@ -63,13 +62,13 @@ class NodeFactory:
         """
         return not has_tool_call(state.latest_response)
 
-    def feedback_response_requires_user_input(self, state: FeedbackLoopState) -> bool:
-        """Return whether the latest feedback response should prompt the user.
+    def feedback_response_requires_user_input(self, state: TaskManagerState) -> bool:
+        """Return whether the latest task response should prompt the user.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop graph state.
+        state : TaskManagerState
+            Active task graph state.
 
         Returns
         -------
@@ -124,7 +123,6 @@ class NodeFactory:
         state: TaskManagerState,
         messages: list[dict[str, object]],
         *,
-        store_all_images_in_context: bool = True,
         runtime_context: ChatRuntimeContext | None = None,
     ) -> None:
         """Append follow-up messages directly to a graph state.
@@ -135,29 +133,16 @@ class NodeFactory:
             Active graph state to mutate.
         messages : list[dict[str, object]]
             Follow-up messages to append in order.
-        store_all_images_in_context : bool, default=True
-            Whether image-bearing follow-up messages should remain in
-            ``state.messages``. Messages are always recorded in
-            ``state.full_history``.
         runtime_context : ChatRuntimeContext, optional
             Runtime context used to persist trigger-marked follow-up memories.
-
-        Notes
-        -----
-        When ``store_all_images_in_context`` is ``False``, image-bearing
-        follow-up messages are treated as transcript-only messages so they do
-        not bloat the active model context.
         """
         for message in messages:
-            update_context = True
-            if self.task_manager._message_contains_image(message) and not store_all_images_in_context:
-                update_context = False
             if not self.task_manager.use_webui:
                 print_message(message)
             self.update_message_history_for_state(
                 state,
                 message,
-                update_context=update_context,
+                update_context=True,
                 update_full_history=True,
             )
             self.task_manager.memory_manager.save_triggered_user_memory(
@@ -269,65 +254,6 @@ class NodeFactory:
                 update_full_history=True,
             )
         return state.model_dump()
-
-    def enforce_tool_call_sequence_for_state(
-        self,
-        state: FeedbackLoopState,
-        expected_tool_call_sequence: list[str],
-        tolerance: int = 0,
-    ) -> None:
-        """Append a warning if recent tool calls violate the expected sequence.
-
-        Parameters
-        ----------
-        state : FeedbackLoopState
-            Active feedback-loop state.
-        expected_tool_call_sequence : list[str]
-            Expected repeating sequence of tool names.
-        tolerance : int, default=0
-            Number of recent mismatches to ignore when comparing the observed
-            suffix against the expected sequence.
-
-        Notes
-        -----
-        When the recent tool-call suffix cannot be aligned with the expected
-        sequence, a synthetic user message is appended to ``state.messages`` to
-        steer the model back onto the expected workflow.
-        """
-        if len(self.task_manager.tool_executor.tool_execution_history) <= 1:
-            return
-        n_actual = min(
-            len(self.task_manager.tool_executor.tool_execution_history),
-            len(expected_tool_call_sequence),
-        ) - tolerance
-        if n_actual <= 0:
-            return
-        actual_sequence = [
-            entry["tool_name"].rsplit(".", maxsplit=1)[-1]
-            for entry in self.task_manager.tool_executor.tool_execution_history[-n_actual:]
-        ]
-        expected_sequence = [
-            name.rsplit(".", maxsplit=1)[-1]
-            for name in expected_tool_call_sequence
-        ]
-        expanded_expected = expected_sequence * 2
-        for index in range(len(expanded_expected) - len(actual_sequence) + 1):
-            if expanded_expected[index : index + len(actual_sequence)] == actual_sequence:
-                return
-        self.update_message_history_for_state(
-            state,
-            generate_openai_message(
-                content=(
-                    f"The tool call sequence {actual_sequence} is not as expected. "
-                    "Are you making the right tool calls in the right order? "
-                    "If this is intended to address an exception, ignore this message."
-                ),
-                role="user",
-            ),
-            update_context=True,
-            update_full_history=False,
-            write_to_webui=False,
-        )
 
     def await_or_ingest_user_input(self, state: ChatGraphState) -> dict[str, object]:
         """Ingest bootstrap input or wait for the next interactive chat turn.
@@ -523,11 +449,11 @@ class NodeFactory:
         -----
         Behavior depends on the state subtype and state flags.
 
-        - For feedback-loop states, if ``state.initial_prompt_pending`` is
-          ``True``, the node sends ``state.initial_prompt`` together with
-          ``state.initial_image_path`` on top of the current context. After the
-          assistant response is recorded, ``state.initial_prompt_pending`` is
-          set to ``False``.
+        - For task states with a configured initial prompt or image, if
+          ``state.initial_prompt_pending`` is ``True``, the node sends
+          ``state.initial_prompt`` together with ``state.initial_image_path``
+          on top of the current context. After the assistant response is
+          recorded, ``state.initial_prompt_pending`` is set to ``False``.
         - Otherwise, the node sends only the prepared context.
         - For chat states whose last message is from the user, long-term memory
           snippets are injected when ``runtime.context`` provides a memory
@@ -537,15 +463,18 @@ class NodeFactory:
           ``chat_response_requires_user_input`` or
           ``feedback_response_requires_user_input`` depending on the state type.
         """
+        is_task_state = not isinstance(state, ChatGraphState)
+        has_initial_prompt = bool(state.initial_prompt or state.initial_image_path)
+        uses_task_workflow_response_rules = is_task_state and has_initial_prompt
         await_user_input_resolver = (
             self.feedback_response_requires_user_input
-            if isinstance(state, FeedbackLoopState)
+            if uses_task_workflow_response_rules
             else self.chat_response_requires_user_input
         )
         message = None
         image_path = None
         context = list(state.messages)
-        if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
+        if uses_task_workflow_response_rules and state.initial_prompt_pending:
             message = self.task_manager.expand_skill_command_in_text(state.initial_prompt)
             image_path = state.initial_image_path
             if image_path is not None and isinstance(message, list) and message:
@@ -588,7 +517,7 @@ class NodeFactory:
                 latest_message,
                 runtime.context,
             )
-        if isinstance(state, FeedbackLoopState) and state.initial_prompt_pending:
+        if uses_task_workflow_response_rules and state.initial_prompt_pending:
             state.initial_prompt_pending = False
             result["initial_prompt_pending"] = False
         if isinstance(state, ChatGraphState) and not has_tool_call(state.latest_response or {}):
@@ -639,33 +568,14 @@ class NodeFactory:
 
         Notes
         -----
-        Feedback-loop states use the follow-up text and validation settings
-        stored on the state. Plain chat states use a default image follow-up
-        message and allow non-image tool outputs.
+        Tool-result follow-up handling uses the settings stored on the state
+        in later graph nodes.
         """
-        if isinstance(state, FeedbackLoopState):
-            return self.task_manager.execute_tools_for_state(
-                state,
-                message_with_yielded_image=state.message_with_yielded_image,
-                allow_non_image_tool_responses=state.allow_non_image_tool_responses,
-                store_all_images_in_context=state.store_all_images_in_context,
-            )
-        return self.task_manager.execute_tools_for_state(
-            state,
-            message_with_yielded_image=getattr(
-                state,
-                "message_with_yielded_image",
-                "Here is the image the tool returned.",
-            ),
-            allow_non_image_tool_responses=True,
-            store_all_images_in_context=state.store_all_images_in_context,
-        )
+        return self.execute_tools_for_state(state)
 
     def tool_followup_required(
         self,
         state: TaskManagerState,
-        *,
-        allow_non_image_tool_responses: bool,
     ) -> bool:
         """Return whether the latest tool batch requires follow-up handling.
 
@@ -673,9 +583,6 @@ class NodeFactory:
         ----------
         state : TaskManagerState
             Active graph state after tool execution.
-        allow_non_image_tool_responses : bool
-            Whether non-image tool outputs are acceptable for the current
-            workflow.
 
         Returns
         -------
@@ -685,9 +592,8 @@ class NodeFactory:
 
         Notes
         -----
-        Follow-up is required when any tool result emits follow-up messages,
-        returns image paths, or returns a non-image payload in a flow that
-        requires image output.
+        Follow-up is required when any tool result emits follow-up messages or
+        returns image paths.
         """
         tool_messages = state.latest_tool_messages
         for tool_message in tool_messages:
@@ -702,8 +608,6 @@ class NodeFactory:
             )
             if len(image_paths) > 0:
                 return True
-            if not allow_non_image_tool_responses:
-                return True
         return False
 
     def build_tool_followup_messages(
@@ -711,7 +615,6 @@ class NodeFactory:
         state: TaskManagerState,
         *,
         message_with_yielded_image: str,
-        allow_non_image_tool_responses: bool,
     ) -> list[dict[str, object]]:
         """Build follow-up messages for the latest tool batch.
 
@@ -721,16 +624,12 @@ class NodeFactory:
             Active graph state after tool execution.
         message_with_yielded_image : str
             User-facing text used when a tool returns image paths.
-        allow_non_image_tool_responses : bool
-            Whether non-image tool outputs are acceptable for the current
-            workflow.
 
         Returns
         -------
         list[dict[str, object]]
             Follow-up messages derived from the most recent tool responses,
-            including emitted follow-up messages, image-yield messages, and
-            non-image warnings when required.
+            including emitted follow-up messages and image-yield messages.
         """
         tool_messages = state.latest_tool_messages
         followup_messages: list[dict[str, object]] = []
@@ -739,7 +638,6 @@ class NodeFactory:
                 self.task_manager.tool_executor.build_tool_followup_messages(
                     tool_message,
                     message_with_yielded_image=message_with_yielded_image,
-                    allow_non_image_tool_responses=allow_non_image_tool_responses,
                 )
             )
         return followup_messages
@@ -766,10 +664,8 @@ class NodeFactory:
 
         Notes
         -----
-        Feedback-loop states use per-workflow follow-up settings stored on the
-        state. Chat states always use the default image follow-up wording and
-        may optionally omit image messages from the active context when
-        ``state.store_all_images_in_context`` is ``False``.
+        Task states use per-workflow follow-up settings stored on the state.
+        Chat states always use the default image follow-up wording.
 
         Exceptions raised while materializing follow-up messages, such as
         failures to read an ``img_path`` returned by a tool, are converted into
@@ -777,11 +673,10 @@ class NodeFactory:
         continue and the model can react to the failure.
         """
         try:
-            if isinstance(state, FeedbackLoopState):
+            if not isinstance(state, ChatGraphState):
                 followup_messages = self.build_tool_followup_messages(
                     state,
                     message_with_yielded_image=state.message_with_yielded_image,
-                    allow_non_image_tool_responses=state.allow_non_image_tool_responses,
                 )
                 self.apply_followup_messages_for_state(
                     state,
@@ -796,12 +691,10 @@ class NodeFactory:
                     "message_with_yielded_image",
                     "Here is the image the tool returned.",
                 ),
-                allow_non_image_tool_responses=True,
             )
             self.apply_followup_messages_for_state(
                 state,
                 followup_messages,
-                store_all_images_in_context=state.store_all_images_in_context,
                 runtime_context=None if runtime is None else runtime.context,
             )
             return state.model_dump()
@@ -835,21 +728,10 @@ class NodeFactory:
         -------
         str
             ``"image_followup"`` when tool outputs require follow-up,
-            ``"finalize_round"`` for feedback-loop states that can advance
-            directly, or ``"call_model"`` for plain chat states.
+            otherwise ``"finalize_round"``.
         """
-        allow_non_image_tool_responses = (
-            state.allow_non_image_tool_responses
-            if isinstance(state, FeedbackLoopState)
-            else True
-        )
-        if self.tool_followup_required(
-            state,
-            allow_non_image_tool_responses=allow_non_image_tool_responses,
-        ):
+        if self.tool_followup_required(state):
             return "image_followup"
-        if isinstance(state, FeedbackLoopState):
-            return "finalize_round"
         return "finalize_round"
 
     def finalize_chat_round(self, state: ChatGraphState) -> dict[str, object]:
@@ -893,19 +775,19 @@ class NodeFactory:
             return "await_or_ingest_user_input"
         return "call_model"
 
-    def route_after_feedback_response(self, state: FeedbackLoopState) -> str:
-        """Route feedback-loop execution after each assistant response.
+    def route_after_feedback_response(self, state: TaskManagerState) -> str:
+        """Route task execution after each assistant response.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop graph state after ``call_model`` or another
+        state : TaskManagerState
+            Active task graph state after ``call_model`` or another
             assistant-producing node.
 
         Returns
         -------
         str
-            Next node name for the feedback workflow.
+            Next node name for the task workflow.
 
         Notes
         -----
@@ -939,13 +821,13 @@ class NodeFactory:
             return "reprompt_model"
         return "execute_tools"
 
-    def handle_human_gate(self, state: FeedbackLoopState) -> dict[str, object]:
+    def handle_human_gate(self, state: TaskManagerState) -> dict[str, object]:
         """Handle ``TERMINATE`` and ``NEED HUMAN`` responses.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop graph state.
+        state : TaskManagerState
+            Active task graph state.
 
         Returns
         -------
@@ -1034,13 +916,13 @@ class NodeFactory:
             await_user_input_resolver=self.feedback_response_requires_user_input,
         )
 
-    def reprompt_model(self, state: FeedbackLoopState) -> dict[str, object]:
+    def reprompt_model(self, state: TaskManagerState) -> dict[str, object]:
         """Reprompt the model when the previous response violated loop rules.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop graph state.
+        state : TaskManagerState
+            Active task graph state.
 
         Returns
         -------
@@ -1075,13 +957,13 @@ class NodeFactory:
             await_user_input_resolver=self.feedback_response_requires_user_input,
         )
 
-    def finalize_round(self, state: FeedbackLoopState) -> dict[str, object]:
-        """Finalize one feedback-loop round and prune image context if needed.
+    def finalize_round(self, state: TaskManagerState) -> dict[str, object]:
+        """Finalize one task round and prune image context if needed.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop graph state after tool execution and optional
+        state : TaskManagerState
+            Active task graph state after tool execution and optional
             follow-up handling.
 
         Returns
@@ -1093,9 +975,6 @@ class NodeFactory:
         -----
         Finalization performs three state-dependent steps.
 
-        - If ``state.expected_tool_call_sequence`` is set, the recent tool
-          execution history is validated and a warning is appended on
-          mismatch.
         - If ``state.n_first_images_to_keep_in_context`` or
           ``state.n_last_images_to_keep_in_context`` is set, image messages in
           ``state.messages`` are pruned while preserving the configured number
@@ -1104,12 +983,6 @@ class NodeFactory:
           raised when the new round index reaches ``state.max_rounds`` and
           ``state.max_arounds_reached_behavior`` is ``"raise"``.
         """
-        if state.expected_tool_call_sequence is not None:
-            self.enforce_tool_call_sequence_for_state(
-                state,
-                state.expected_tool_call_sequence,
-                state.expected_tool_call_sequence_tolerance,
-            )
         if (
             state.n_last_images_to_keep_in_context is not None
             or state.n_first_images_to_keep_in_context is not None
@@ -1119,7 +992,7 @@ class NodeFactory:
             state.messages = purge_context_images(
                 context=state.messages,
                 keep_first_n=keep_first,
-                keep_last_n=keep_last - 1,
+                keep_last_n=keep_last,
                 keep_text=True,
             )
         state.round_index += 1
@@ -1127,19 +1000,19 @@ class NodeFactory:
             raise MaxRoundsReached()
         return state.model_dump()
 
-    def route_after_feedback_round(self, state: FeedbackLoopState) -> str:
-        """Route after a feedback-loop round completes.
+    def route_after_feedback_round(self, state: TaskManagerState) -> str:
+        """Route after a task round completes.
 
         Parameters
         ----------
-        state : FeedbackLoopState
-            Active feedback-loop graph state after ``finalize_round``.
+        state : TaskManagerState
+            Active task graph state after ``finalize_round``.
 
         Returns
         -------
         str
             ``END`` when ``state.round_index`` has reached ``state.max_rounds``;
-            otherwise ``"call_model"`` for the next feedback turn.
+            otherwise ``"call_model"`` for the next task turn.
         """
         if state.round_index >= state.max_rounds:
             return END

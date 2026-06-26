@@ -158,7 +158,7 @@ class FeatureTrackingTaskManager(ImagingBaseTaskManager):
         add_reference_image_to_images_acquired : bool, optional
             Whether to stitch the reference image onto newly acquired images.
         max_rounds : int, optional
-            Maximum number of feedback-loop rounds to allow.
+            Maximum number of workflow rounds to allow.
         n_first_images_to_keep_in_context : int, optional
             Number of earliest images to keep in context when pruning.
         n_last_images_to_keep_in_context : int, optional

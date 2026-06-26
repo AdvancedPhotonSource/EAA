@@ -83,7 +83,7 @@ class MultiAgentROISearchState(TaskManagerState):
 
 
 class ROISearchTaskManager(ImagingBaseTaskManager):
-    """Search for a region of interest using the shared feedback-loop graph."""
+    """Search for a region of interest using task-manager graph helpers."""
 
     def __init__(
         self,
@@ -117,7 +117,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         build : bool, optional
             Whether to build the task manager immediately.
         embed_intermediate_images : bool, default=False
-            Whether to mark intermediate feedback-loop image messages for
+            Whether to mark intermediate workflow image messages for
             long-term-memory embedding.
         *args
             Positional arguments forwarded to ``ImagingBaseTaskManager``.
@@ -171,7 +171,7 @@ class ROISearchTaskManager(ImagingBaseTaskManager):
         step_size : tuple[float, float], optional
             Initial grid-search step size in ``(dy, dx)`` order.
         max_rounds : int, optional
-            Maximum number of feedback-loop rounds to allow.
+            Maximum number of workflow rounds to allow.
         n_first_images_to_keep_in_context : int, optional
             Number of earliest images to keep in context when pruning.
         n_last_images_to_keep_in_context : int, optional
@@ -344,7 +344,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         *args,
         **kwargs,
     ) -> None:
-        """Run multi-agent ROI search followed by feedback-loop centering.
+        """Run multi-agent ROI search followed by iterative centering.
 
         Parameters
         ----------
@@ -361,11 +361,11 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         max_search_rounds : int, optional
             Maximum number of proposer/checker attempts before failing.
         max_centering_rounds : int, optional
-            Maximum number of final-centering feedback-loop rounds.
+            Maximum number of final-centering workflow rounds.
         n_first_images_to_keep_in_context : int, optional
-            Number of earliest images to keep in feedback-loop context.
+            Number of earliest images to keep in centering context.
         n_last_images_to_keep_in_context : int, optional
-            Number of latest images to keep in feedback-loop context.
+            Number of latest images to keep in centering context.
         initial_prompt : str, optional
             Explicit prompt override. When provided, the geometry arguments and
             feature description must be omitted.
@@ -421,7 +421,6 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         )
         if invoke_result.command == "chat":
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )
             return
@@ -437,7 +436,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             raise TypeError("Multi-agent ROI search returned an unexpected state model.")
         if not search_state.foi_present or search_state.last_image_path is None:
             raise RuntimeError("ROI search ended before finding the feature of interest.")
-        self.run_final_centering_feedback_loop(
+        self.run_final_centering_workflow(
             search_state,
             max_rounds=max_centering_rounds,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
@@ -499,7 +498,6 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         )
         if invoke_result.command == "chat":
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )
             return
@@ -512,7 +510,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         )
         search_state = self.task_state
         if isinstance(search_state, MultiAgentROISearchState) and search_state.foi_present:
-            self.run_final_centering_feedback_loop(search_state)
+            self.run_final_centering_workflow(search_state)
 
     def build_roi_search_prompt(
         self,
@@ -866,7 +864,7 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             "arguments": self.tool_executor.parse_arguments(function.get("arguments")),
         }
 
-    def run_final_centering_feedback_loop(
+    def run_final_centering_workflow(
         self,
         search_state: MultiAgentROISearchState,
         *,
@@ -876,14 +874,14 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
         termination_behavior: Literal["ask", "return"] = "ask",
         max_arounds_reached_behavior: Literal["return", "raise"] = "return",
     ) -> None:
-        """Run the final feedback-loop centering workflow.
+        """Run the final iterative centering workflow.
 
         Parameters
         ----------
         search_state : MultiAgentROISearchState
             Completed multi-agent search state.
         max_rounds : int, optional
-            Maximum number of feedback-loop rounds.
+            Maximum number of workflow rounds.
         n_first_images_to_keep_in_context : int, optional
             Number of earliest images to keep in context.
         n_last_images_to_keep_in_context : int, optional

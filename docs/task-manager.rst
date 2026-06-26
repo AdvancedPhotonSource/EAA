@@ -41,20 +41,6 @@ Chat graph
 This is what backs ``run_conversation()`` and
 ``run_conversation_from_checkpoint()``.
 
-Feedback-loop graph
-~~~~~~~~~~~~~~~~~~~
-
-``build_feedback_loop_graph()`` creates the iterative tool-driving graph. It:
-
-- starts from an ``initial_prompt``
-- expects tool calls on each model turn
-- optionally reprompts the model if the turn is invalid
-- executes tool calls and injects follow-up messages
-- supports human gates via ``NEED HUMAN`` and termination via ``TERMINATE``
-
-This is what backs ``run_feedback_loop()`` and
-``run_feedback_loop_from_checkpoint()``.
-
 Customization
 -------------
 
@@ -133,22 +119,19 @@ Checkpointing and resume
 Checkpointing uses the same SQLite database referenced by ``checkpoint_db_path`` by
 default. The ``run_*_from_checkpoint()`` methods also accept a
 ``checkpoint_db_path`` override when you need to resume from a different SQLite
-file. The checkpoint database can hold:
-
-- LangGraph checkpoints
+file. The checkpoint database stores LangGraph checkpoints.
 
 WebUI display messages live in ``transcript_db_path``. Browser input and status
 live in the task-manager-owned runtime controller.
 
-The base task manager exposes three resume paths:
+The base task manager exposes two resume paths:
 
 - ``run_conversation_from_checkpoint()``
-- ``run_feedback_loop_from_checkpoint()``
 - ``run_from_checkpoint()`` for managers that implement ``task_graph``
 
 Important details:
 
 - ``prune_checkpoints=True`` keeps only the newest checkpoint per graph thread
-- chat, feedback loop, and task graph each get their own checkpoint thread id
+- chat and task graph each get their own checkpoint thread id
 - the WebUI reads transcript messages from ``transcript_db_path`` through the
   agent runtime API

@@ -8,7 +8,7 @@ as a workspace with multiple installable packages, currently `eaa-core` and
 ## Current Status
 
 - Core agent runtime: `packages/eaa-core/src/eaa_core/task_manager/base.py`
-- Reusable built-in graphs: chat and feedback loop
+- Reusable built-in graph: chat
 - Concrete workflows: ROI search, feature tracking, parameter tuning, Bayesian
   optimization, and analytical task managers under
   `packages/eaa-*/src/eaa_*/task_manager/`
@@ -99,15 +99,12 @@ For a workflow-oriented manager, see `examples/roi_search.py`.
 
 ## Built-In Graphs and Workflows
 
-The reusable graphs shipped in the base runtime are:
-
-- `chat_graph` for interactive conversation
-- `feedback_loop_graph` for iterative tool-driven workflows
+The base runtime ships `chat_graph` for interactive conversation.
 
 `build_task_graph()` is available as a subclass hook for custom LangGraph
 workflows, but the task managers currently in this repository mostly either:
 
-- reuse `run_feedback_loop()` / `run_conversation()`, or
+- reuse `run_conversation()`, or
 - implement an analytical workflow directly in Python while still updating
   message history and WebUI state through task-manager helpers
 
@@ -154,7 +151,6 @@ Each resume entrypoint also accepts ``checkpoint_db_path`` if you need to load
 checkpoints from a different SQLite file. The base task manager exposes:
 
 - `run_conversation_from_checkpoint()`
-- `run_feedback_loop_from_checkpoint()`
 - `run_from_checkpoint()` for subclasses that implement `task_graph`
 
 ## Long-Term Memory

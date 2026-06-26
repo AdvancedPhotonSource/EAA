@@ -11,7 +11,7 @@ from eaa_core.api.memory import MemoryManagerConfig
 from eaa_core.message_proc import generate_openai_message
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.persistence import SQLiteTranscriptStore
-from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, FeedbackLoopState, TaskManagerState
+from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, TaskManagerState
 from eaa_core.tool.base import BaseTool, tool
 from eaa_core.tool.subagent import SubagentTool
 from eaa_core.tool.tool_manager import ToolManager
@@ -69,15 +69,15 @@ class InterruptibleCheckpointTaskManager(BaseTaskManager):
         return graph_builder.compile(checkpointer=checkpointer)
 
 
-class FeedbackStateTaskManager(BaseTaskManager):
-    """Test helper with a task graph backed by feedback-loop state."""
+class TaskWorkflowStateTaskManager(BaseTaskManager):
+    """Test helper with a task graph backed by task-manager state."""
 
     def build_task_graph(self, checkpointer: Any = None) -> Any:
-        """Build a task graph that preserves feedback-specific fields."""
-        graph_builder = StateGraph(FeedbackLoopState)
+        """Build a task graph that preserves task workflow fields."""
+        graph_builder = StateGraph(TaskManagerState)
 
-        def mark_chat_requested(state: FeedbackLoopState) -> dict[str, bool]:
-            """Mark the feedback-style task graph as ready for chat handoff."""
+        def mark_chat_requested(state: TaskManagerState) -> dict[str, bool]:
+            """Mark the task graph as ready for chat handoff."""
             return {"chat_requested": True}
 
         graph_builder.add_node("mark_chat_requested", mark_chat_requested)
@@ -425,14 +425,14 @@ def test_launch_subtask_manager_uses_registered_manager_runtime(tmp_path):
         SubagentTool.registered_task_managers.update(previous_task_managers)
 
 
-def test_task_graph_can_own_feedback_loop_state(monkeypatch):
-    task_manager = FeedbackStateTaskManager(
+def test_task_graph_can_own_task_manager_state(monkeypatch):
+    task_manager = TaskWorkflowStateTaskManager(
         build=False,
         checkpoint_db_path=None,
     )
     task_manager.task_graph = task_manager.build_task_graph()
     task_manager.set_active_state(
-        FeedbackLoopState(initial_prompt="task prompt", termination_behavior="return"),
+        TaskManagerState(initial_prompt="task prompt", termination_behavior="return"),
         "task_graph",
     )
 
@@ -447,15 +447,12 @@ def test_task_graph_can_own_feedback_loop_state(monkeypatch):
 
     task_manager.run()
 
-    assert isinstance(task_manager.task_state, FeedbackLoopState)
+    assert isinstance(task_manager.task_state, TaskManagerState)
     assert task_manager.task_state.chat_requested is True
     assert task_manager.active_state is task_manager.task_state
     assert captured["count"] == 1
     assert captured["active_state"] is task_manager.task_state
-    assert captured["kwargs"] == {
-        "store_all_images_in_context": True,
-        "termination_behavior": "user",
-    }
+    assert captured["kwargs"] == {"termination_behavior": "user"}
 
 
 def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
@@ -486,10 +483,7 @@ def test_task_graph_can_request_chat_handoff_from_task_state(monkeypatch):
     assert isinstance(captured["active_state"], TaskChatRequestState)
     assert captured["active_state"].messages == [{"role": "user", "content": "task context"}]
     assert captured["active_state"].round_index == 3
-    assert captured["kwargs"] == {
-        "store_all_images_in_context": True,
-        "termination_behavior": "user",
-    }
+    assert captured["kwargs"] == {"termination_behavior": "user"}
 
 
 def test_session_db_path_raises_with_new_database_guidance(tmp_path):
@@ -536,7 +530,7 @@ def test_chat_graph_requests_user_input_after_plain_assistant_reply(monkeypatch)
     assert [message["role"] for message in task_manager.full_history] == ["user", "assistant"]
 
 
-def test_feedback_initial_response_sets_await_user_input(monkeypatch):
+def test_task_initial_response_sets_await_user_input(monkeypatch):
     task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
     task_manager.model = object()
 
@@ -545,7 +539,7 @@ def test_feedback_initial_response_sets_await_user_input(monkeypatch):
 
     monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
 
-    state = FeedbackLoopState(initial_prompt="test prompt")
+    state = TaskManagerState(initial_prompt="test prompt")
     result = task_manager.node_factory.call_model(state)
 
     assert result["await_user_input"] is True
@@ -1049,6 +1043,44 @@ def test_chat_round_prunes_context_images_without_pruning_full_history(tmp_path)
     assert len(history_images) == 3
 
 
+def test_chat_round_zero_image_retention_strips_context_images(tmp_path):
+    from PIL import Image
+
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (1, 1), color=(0, 0, 0)).save(image_path)
+    task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
+    state = ChatGraphState(
+        messages=[generate_openai_message(content="image", image_path=str(image_path))],
+        full_history=[generate_openai_message(content="image", image_path=str(image_path))],
+        n_first_images_to_keep_in_context=0,
+        n_last_images_to_keep_in_context=0,
+    )
+
+    task_manager.node_factory.finalize_chat_round(state)
+
+    assert isinstance(state.messages[0]["content"], str)
+    assert isinstance(state.full_history[0]["content"], list)
+
+
+def test_task_round_zero_image_retention_strips_context_images(tmp_path):
+    from PIL import Image
+
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (1, 1), color=(0, 0, 0)).save(image_path)
+    task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
+    state = TaskManagerState(
+        messages=[generate_openai_message(content="image", image_path=str(image_path))],
+        full_history=[generate_openai_message(content="image", image_path=str(image_path))],
+        n_first_images_to_keep_in_context=0,
+        n_last_images_to_keep_in_context=0,
+    )
+
+    task_manager.node_factory.finalize_round(state)
+
+    assert isinstance(state.messages[0]["content"], str)
+    assert isinstance(state.full_history[0]["content"], list)
+
+
 def test_terminate_is_plain_chat_response(monkeypatch):
     task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
     task_manager.model = object()
@@ -1243,7 +1275,6 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
         full_history=[],
         round_index=0,
         termination_behavior="user",
-        store_all_images_in_context=True,
         bootstrap_message="hello",
         await_user_input=False,
     )
@@ -1362,20 +1393,15 @@ def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
     task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
     captured = {}
 
-    def fake_execute_tools_for_state(
-        state,
-        *,
-        message_with_yielded_image,
-        allow_non_image_tool_responses,
-        store_all_images_in_context=True,
-    ):
+    def fake_execute_tools_for_state(state):
         captured["state"] = state
-        captured["message_with_yielded_image"] = message_with_yielded_image
-        captured["allow_non_image_tool_responses"] = allow_non_image_tool_responses
-        captured["store_all_images_in_context"] = store_all_images_in_context
         return state.model_dump()
 
-    monkeypatch.setattr(task_manager, "execute_tools_for_state", fake_execute_tools_for_state)
+    monkeypatch.setattr(
+        task_manager.node_factory,
+        "execute_tools_for_state",
+        fake_execute_tools_for_state,
+    )
 
     state = TaskManagerState(
         messages=[
@@ -1386,9 +1412,6 @@ def test_execute_tools_accepts_base_task_manager_state(monkeypatch):
 
     assert result == state.model_dump()
     assert captured["state"] is state
-    assert captured["message_with_yielded_image"] == "Here is the image the tool returned."
-    assert captured["allow_non_image_tool_responses"] is True
-    assert captured["store_all_images_in_context"] is True
 
 
 def test_image_followup_converts_followup_exceptions_into_messages(monkeypatch):
@@ -1639,7 +1662,7 @@ def test_feedback_followup_triggered_memory_reuses_memory_manager(monkeypatch):
 
     monkeypatch.setattr("eaa_core.task_manager.memory_manager.invoke_chat_model", fake_invoke_chat_model)
 
-    state = FeedbackLoopState()
+    state = TaskManagerState()
     message = {
         "role": "user",
         "content": [

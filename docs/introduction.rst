@@ -22,7 +22,7 @@ At a high level the pieces connect like this:
         v
    BaseTaskManager
         |
-        +--> chat_graph / feedback_loop_graph / custom workflow
+        +--> chat_graph / task_graph / custom workflow
         |
         +--> chat model built from an LLMConfig
         |
@@ -60,13 +60,10 @@ Key components
 Current workflow boundary
 -------------------------
 
-The reusable built-in graphs shipped by the base runtime are:
-
-- the chat graph
-- the feedback-loop graph
+The base runtime ships the reusable chat graph.
 
 The repository currently does not ship task-manager subclasses with their own
 custom ``task_graph`` implementation. Instead, concrete managers mostly either
-reuse the base graphs or implement analytical workflows directly in Python while
+reuse the base chat graph or implement analytical workflows directly in Python while
 still updating the shared transcript and WebUI state through task-manager
 helpers.

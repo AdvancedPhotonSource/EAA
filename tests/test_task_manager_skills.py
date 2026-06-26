@@ -1,7 +1,7 @@
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.nodes import NodeFactory
 from eaa_core.task_manager.skills import SkillMetadata, discover_skills, resolve_skill
-from eaa_core.task_manager.state import ChatGraphState, FeedbackLoopState
+from eaa_core.task_manager.state import ChatGraphState, TaskManagerState
 from eaa_imaging.task_manager.imaging.base import ImagingBaseTaskManager
 
 
@@ -212,7 +212,7 @@ def test_feedback_human_gate_preserves_trailing_skill_command_text(tmp_path):
         return {"role": "assistant", "content": "summary"}, kwargs.get("message")
 
     task_manager.invoke_model_raw = fake_invoke_model_raw
-    state = FeedbackLoopState(await_user_input=True)
+    state = TaskManagerState(await_user_input=True)
 
     NodeFactory(task_manager).handle_human_gate(state)
 

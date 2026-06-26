@@ -1229,45 +1229,6 @@ class BaseTaskManager:
                 )
                 return
 
-    def enforce_tool_call_sequence(
-        self,
-        expected_tool_call_sequence: list[str],
-        tolerance: int = 0,
-    ) -> None:
-        """Warn the model if the recent tool-call order differs from the expected sequence."""
-        if len(self.tool_executor.tool_execution_history) <= 1:
-            return
-        n_actual = min(
-            len(self.tool_executor.tool_execution_history),
-            len(expected_tool_call_sequence),
-        ) - tolerance
-        if n_actual <= 0:
-            return
-        actual_sequence = [
-            entry["tool_name"].rsplit(".", maxsplit=1)[-1]
-            for entry in self.tool_executor.tool_execution_history[-n_actual:]
-        ]
-        expected_sequence = [
-            name.rsplit(".", maxsplit=1)[-1]
-            for name in expected_tool_call_sequence
-        ]
-        expanded_expected = expected_sequence * 2
-        for index in range(len(expanded_expected) - len(actual_sequence) + 1):
-            if expanded_expected[index : index + len(actual_sequence)] == actual_sequence:
-                return
-        self.update_message_history(
-            generate_openai_message(
-                content=(
-                    f"The tool call sequence {actual_sequence} is not as expected. "
-                    "Are you making the right tool calls in the right order? "
-                    "If this is intended to address an exception, ignore this message."
-                ),
-                role="user",
-            ),
-            update_context=True,
-            update_full_history=False,
-        )
-
     def prerun_check(self, *args, **kwargs) -> bool:
         """Run preflight validation before execution."""
         return True
@@ -1304,7 +1265,6 @@ class BaseTaskManager:
         )
         if invoke_result.command == "chat":
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )
             return
@@ -1317,7 +1277,6 @@ class BaseTaskManager:
         self.set_active_state(state_model.model_validate(final_state), "task_graph")
         if bool(getattr(self.task_state, "chat_requested", False)):
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )
 
@@ -1368,7 +1327,6 @@ class BaseTaskManager:
         )
         if invoke_result.command == "chat":
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )
             return
@@ -1378,45 +1336,8 @@ class BaseTaskManager:
         self.set_active_state(state_model.model_validate(final_state), "task_graph")
         if bool(getattr(self.task_state, "chat_requested", False)):
             self.run_conversation(
-                store_all_images_in_context=True,
                 termination_behavior="user",
             )
-
-    def _message_contains_image(self, message: dict[str, Any]) -> bool:
-        """Return whether a message contains image payloads."""
-        return get_message_elements_as_text(message)["image"] is not None
-
-    def execute_tools_for_state(
-        self,
-        state: TaskManagerState,
-        *,
-        message_with_yielded_image: str,
-        allow_non_image_tool_responses: bool,
-        store_all_images_in_context: bool = True,
-    ) -> dict[str, Any]:
-        """Execute tool calls for a graph state.
-
-        Parameters
-        ----------
-        state : TaskManagerState
-            Active graph state whose latest assistant response will be
-            executed.
-        message_with_yielded_image : str
-            Compatibility argument retained for callers that still route tool
-            execution through the task manager boundary.
-        allow_non_image_tool_responses : bool
-            Compatibility argument retained for callers that still route tool
-            execution through the task manager boundary.
-        store_all_images_in_context : bool, default=True
-            Compatibility argument retained for callers that still route tool
-            execution through the task manager boundary.
-
-        Returns
-        -------
-        dict[str, Any]
-            Updated graph state payload.
-        """
-        return self.node_factory.execute_tools_for_state(state)
 
     def build_chat_graph(self, checkpointer: Any = None):
         """Build the base chat graph."""
@@ -1469,7 +1390,6 @@ class BaseTaskManager:
     def run_conversation(
         self,
         message: Optional[str | Dict[str, Any] | list[Dict[str, Any]]] = None,
-        store_all_images_in_context: bool = True,
         max_agent_iterations: Optional[int] = None,
         n_first_images_to_keep_in_context: Optional[int] = None,
         n_last_images_to_keep_in_context: Optional[int] = None,
@@ -1485,8 +1405,6 @@ class BaseTaskManager:
         ----------
         message : str or dict or list of dict, optional
             Optional bootstrap message payload for the next chat turn.
-        store_all_images_in_context : bool, default=True
-            Whether all images should remain in the active chat context.
         max_agent_iterations : int, optional
             Maximum number of assistant tool-execution cycles before returning
             control to the caller or user.
@@ -1511,7 +1429,6 @@ class BaseTaskManager:
         initial_state = ChatGraphState(
             round_index=self.active_state.round_index,
             termination_behavior=termination_behavior or "user",
-            store_all_images_in_context=store_all_images_in_context,
             bootstrap_message=message,
             max_agent_iterations=max_agent_iterations,
             n_first_images_to_keep_in_context=n_first_images_to_keep_in_context,
