@@ -6,9 +6,11 @@ import ast
 import operator
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 from typing import Annotated, Any, Dict, Literal, Optional, Sequence
 
 from eaa_core.tool.base import BaseTool, check, tool
@@ -225,10 +227,11 @@ class CodingTool(BaseTool):
         input_text: Optional[str],
         workdir: str,
     ) -> subprocess.CompletedProcess[str]:
-        if shutil.which("bwrap") is None:
+        bwrap_path = shutil.which("bwrap", path=env.get("PATH"))
+        if bwrap_path is None:
             raise RuntimeError("No bubblewrap runtime found (expected `bwrap`).")
         bubblewrap_cmd = [
-            "bwrap",
+            bwrap_path,
             "--die-with-parent",
             "--unshare-all",
             "--proc",
@@ -268,13 +271,82 @@ class CodingTool(BaseTool):
         paths = list(self.bubblewrap_visible_dirs or [])
         paths.append(os.getcwd())
         paths.append(workdir)
+        paths.extend(self._bubblewrap_python_import_bind_paths())
         resolved: list[str] = []
         for path in paths:
-            real_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
-            if not os.path.exists(real_path) or real_path in resolved:
-                continue
-            resolved.append(real_path)
+            for bind_path in self._existing_bind_path_variants(path):
+                if bind_path in resolved:
+                    continue
+                resolved.append(bind_path)
         return resolved
+
+    @staticmethod
+    def _existing_bind_path_variants(path: str) -> list[str]:
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.exists(abs_path):
+            return []
+
+        paths = [abs_path]
+        real_path = os.path.realpath(abs_path)
+        if real_path != abs_path and os.path.exists(real_path):
+            paths.append(real_path)
+        return paths
+
+    def _bubblewrap_python_import_bind_paths(self) -> list[str]:
+        paths = [
+            path
+            for path in sys.path
+            if path and os.path.isabs(os.path.expanduser(path))
+        ]
+        paths.extend(self._pth_path_entries())
+        return paths
+
+    @classmethod
+    def _pth_path_entries(cls) -> list[str]:
+        paths: list[str] = []
+        for site_dir in cls._site_package_dirs():
+            site_path = Path(site_dir)
+            if not site_path.is_dir():
+                continue
+            for pth_file in sorted(site_path.glob("*.pth")):
+                paths.extend(cls._read_pth_path_entries(pth_file))
+        return paths
+
+    @staticmethod
+    def _site_package_dirs() -> list[str]:
+        paths: list[str] = []
+        try:
+            paths.extend(site.getsitepackages())
+        except AttributeError:
+            pass
+        try:
+            paths.append(site.getusersitepackages())
+        except AttributeError:
+            pass
+
+        resolved: list[str] = []
+        for path in paths:
+            if path and path not in resolved:
+                resolved.append(path)
+        return resolved
+
+    @staticmethod
+    def _read_pth_path_entries(pth_file: Path) -> list[str]:
+        entries: list[str] = []
+        try:
+            lines = pth_file.read_text().splitlines()
+        except OSError:
+            return entries
+
+        for line in lines:
+            entry = line.strip()
+            if not entry or entry.startswith("#") or entry.startswith("import "):
+                continue
+            path = Path(entry).expanduser()
+            if not path.is_absolute():
+                path = pth_file.parent / path
+            entries.append(str(path))
+        return entries
 
     @staticmethod
     def _select_container_runtime() -> Optional[str]:
@@ -293,6 +365,40 @@ class CodingTool(BaseTool):
         env_file.flush()
         env_file.close()
         return env_file.name
+
+    def _build_execution_env(self) -> Dict[str, str]:
+        """Return a stable environment for noninteractive tool subprocesses."""
+        env = os.environ.copy()
+        env.update(self._environment)
+
+        env["PATH"] = self._build_execution_path(env.get("PATH"))
+        if "VIRTUAL_ENV" not in env and sys.prefix != sys.base_prefix:
+            env["VIRTUAL_ENV"] = sys.prefix
+        if "HOME" not in env:
+            home = os.path.expanduser("~")
+            if home != "~":
+                env["HOME"] = home
+        env.setdefault("LANG", "C.UTF-8")
+        return env
+
+    @staticmethod
+    def _build_execution_path(current_path: Optional[str]) -> str:
+        paths = [
+            str(Path(sys.executable).absolute().parent),
+            *(current_path or "").split(os.pathsep),
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        resolved: list[str] = []
+        for path in paths:
+            if not path or path in resolved:
+                continue
+            resolved.append(path)
+        return os.pathsep.join(resolved)
 
     @staticmethod
     def _prepare_source_code(code: str) -> str:
@@ -387,8 +493,7 @@ class PythonCodingTool(CodingTool):
         prepared_code = self._prepare_source_code(code)
         exec_timeout = float(timeout) if timeout is not None else self._default_timeout
         exec_cwd = cwd or self._working_directory
-        env = os.environ.copy()
-        env.update(self._environment)
+        env = self._build_execution_env()
         tmp_file = None
         try:
             if self.sandbox_type == "container":
@@ -523,8 +628,7 @@ class BashCodingTool(CodingTool):
             raise TypeError("code must be a string containing Bash source")
         exec_timeout = float(timeout) if timeout is not None else self._default_timeout
         exec_cwd = cwd or self._working_directory
-        env = os.environ.copy()
-        env.update(self._environment)
+        env = self._build_execution_env()
         tmp_file = None
         try:
             if self.sandbox_type == "container":
