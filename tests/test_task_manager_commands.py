@@ -18,11 +18,8 @@ def test_parse_user_input_command_recognizes_commands():
     assert sandbox.argument == "bubblewrap /tmp"
 
 
-def test_parse_user_input_command_preserves_messages_and_monitor_argument():
+def test_parse_user_input_command_preserves_unknown_messages():
     message = parse_user_input_command("/unknown command")
-    monitor = parse_user_input_command("/monitor check beam drift")
 
     assert message.kind == "message"
     assert message.text == "/unknown command"
-    assert monitor.kind == "monitor"
-    assert monitor.argument == "check beam drift"

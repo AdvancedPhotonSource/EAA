@@ -8,7 +8,6 @@ import logging
 import re
 import shlex
 import sqlite3
-import time
 
 from langgraph.graph import START, StateGraph
 
@@ -550,13 +549,6 @@ class BaseTaskManager:
                 return "completed"
             if command.kind in {"exit", "return", "chat"}:
                 return command.kind
-            if command.kind == "monitor":
-                self.record_system_message(
-                    "The `/monitor` command is only supported from chat mode.",
-                    update_context=True,
-                    write_to_webui=True,
-                )
-                continue
             for user_message in self.expand_skill_command_in_text(command.text):
                 if not self.use_webui:
                     print_message(user_message)
@@ -737,6 +729,39 @@ class BaseTaskManager:
         """Build the task-manager-specific graph if needed."""
         return None
 
+    def get_task_state_model(self) -> type[TaskManagerState]:
+        """Return the pydantic state model used by the task graph."""
+        return TaskManagerState
+
+    def get_checkpoint_state_model(
+        self,
+        graph_name: GraphName,
+    ) -> type[TaskManagerState]:
+        """Return the pydantic state model used for a checkpointed graph."""
+        if graph_name == "chat_graph":
+            return ChatGraphState
+        if graph_name == "task_graph":
+            return self.get_task_state_model()
+        raise ValueError(f"Unsupported graph name for checkpoint loading: {graph_name}.")
+
+    def build_compatible_checkpoint_state(
+        self,
+        state_model: type[TaskManagerState],
+        incoming_state: TaskManagerState | dict[str, Any],
+    ) -> Optional[TaskManagerState]:
+        """Translate a checkpoint payload into the requested graph state model."""
+        if state_model is ChatGraphState:
+            return build_compatible_checkpoint_state("ChatGraphState", incoming_state)
+        if state_model is TaskManagerState:
+            return build_compatible_checkpoint_state("TaskManagerState", incoming_state)
+        shared_state = build_compatible_checkpoint_state(
+            "TaskManagerState",
+            incoming_state,
+        )
+        if shared_state is None:
+            return None
+        return state_model.model_validate(shared_state.model_dump())
+
     def resolve_checkpoint_storage(
         self,
         graph_name: str,
@@ -817,7 +842,7 @@ class BaseTaskManager:
         )
         loaded_state: Optional[TaskManagerState] = None
         if load_state:
-            state_model = get_checkpoint_state_model(graph_name)
+            state_model = self.get_checkpoint_state_model(graph_name)
             snapshot = graph.get_state(config)
             if (
                 snapshot.created_at is not None
@@ -831,8 +856,8 @@ class BaseTaskManager:
                     prune_checkpoints=self.prune_checkpoints,
                 )
                 if latest_state is not None:
-                    loaded_state = build_compatible_checkpoint_state(
-                        state_model.__name__,
+                    loaded_state = self.build_compatible_checkpoint_state(
+                        state_model,
                         latest_state,
                     )
         return graph, config, loaded_state
@@ -1170,65 +1195,6 @@ class BaseTaskManager:
             print(text)
         return text
 
-    def enter_monitoring_mode(self, task_description: str):
-        """Parse and launch a monitoring workflow."""
-        parsing_prompt = (
-            "Parse the following task description and return a JSON object with:\n"
-            "- task_description: str\n"
-            "- time_interval: float\n"
-            "Return only the JSON object.\n"
-            f"Task description: {task_description}\n"
-        )
-        local_context: list[dict[str, Any]] = []
-        while True:
-            response, outgoing = self.invoke_model_raw(
-                parsing_prompt,
-                context=local_context,
-                return_outgoing_message=True,
-            )
-            self.update_message_history(outgoing, update_context=False, update_full_history=True)
-            self.update_message_history(response, update_context=False, update_full_history=True)
-            local_context.extend([outgoing, response])
-            try:
-                parsed = json.loads(response["content"])
-            except json.JSONDecodeError:
-                parsing_prompt = self.get_user_input(
-                    prompt=f"Failed to parse the task description. Please try again. {response['content']}",
-                    display_prompt_in_webui=self.use_webui,
-                )
-                continue
-            break
-        self.run_monitoring(
-            task_description=parsed["task_description"],
-            time_interval=parsed["time_interval"],
-        )
-
-    def run_monitoring(
-        self,
-        task_description: str,
-        time_interval: float,
-        initial_prompt: Optional[str] = None,
-    ):
-        """Run a periodic monitoring loop."""
-        if initial_prompt is None:
-            initial_prompt = (
-                "You are given the following monitoring task: "
-                f"{task_description}\n"
-                "Add TERMINATE if everything is fine or fixed. Add NEED HUMAN if immediate input is required."
-            )
-        while True:
-            try:
-                self.run_conversation(message=initial_prompt, termination_behavior="return")
-                time.sleep(time_interval)
-            except KeyboardInterrupt:
-                self.update_message_history(
-                    generate_openai_message(
-                        content="Keyboard interrupt detected. Terminating monitoring task.",
-                        role="system",
-                    )
-                )
-                return
-
     def prerun_check(self, *args, **kwargs) -> bool:
         """Run preflight validation before execution."""
         return True
@@ -1479,8 +1445,6 @@ class BaseTaskManager:
             return
         final_state = invoke_result.final_state
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
-        if self.chat_state.monitor_requested:
-            self.enter_monitoring_mode(self.chat_state.monitor_task_description)
 
     def run_conversation_from_checkpoint(
         self,
@@ -1549,5 +1513,3 @@ class BaseTaskManager:
             return
         final_state = invoke_result.final_state
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
-        if self.chat_state.monitor_requested:
-            self.enter_monitoring_mode(self.chat_state.monitor_task_description)

@@ -7,7 +7,6 @@ UserCommandKind = Literal[
     "exit",
     "return",
     "chat",
-    "monitor",
     "skill",
     "set_coding_tool_approval",
     "set_coding_tool_sandbox_type",
@@ -64,8 +63,6 @@ def parse_user_input_command(user_input: str) -> UserInputCommand:
             argument=skill_name.strip(),
             text=remaining_text.strip(),
         )
-    if command_lower == "/monitor" and argument:
-        return UserInputCommand(kind="monitor", argument=argument)
     if command_lower == "/setcodingtoolapproval":
         return UserInputCommand(kind="set_coding_tool_approval", argument=argument)
     if command_lower == "/setcodingtoolsandboxtype":

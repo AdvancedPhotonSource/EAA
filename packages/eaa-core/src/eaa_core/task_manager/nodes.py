@@ -286,9 +286,6 @@ class NodeFactory:
               Sets ``state.exit_requested``.
           ``/return``
               Sets ``state.return_requested``.
-          ``/monitor <task>``
-              Sets ``state.monitor_requested`` and stores the task
-              description in ``state.monitor_task_description``.
           ``/skill``
               Without an argument, displays available skills. With an
               argument, appends the selected ``SKILL.md`` to context.
@@ -352,11 +349,6 @@ class NodeFactory:
             if command.kind == "return":
                 state.return_requested = True
                 return state.model_dump()
-            if command.kind == "monitor":
-                state.monitor_requested = True
-                state.monitor_task_description = command.argument
-                state.await_user_input = False
-                return state.model_dump()
             if command.kind == "skill" and not command.argument:
                 self.task_manager.display_available_skills()
                 continue
@@ -414,14 +406,10 @@ class NodeFactory:
         Returns
         -------
         str
-            ``END`` when the input node requested exit, return, or monitoring;
+            ``END`` when the input node requested exit or return;
             otherwise ``"call_model"``.
         """
-        if (
-            state.monitor_requested
-            or state.exit_requested
-            or state.return_requested
-        ):
+        if state.exit_requested or state.return_requested:
             return END
         return "call_model"
 

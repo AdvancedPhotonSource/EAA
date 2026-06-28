@@ -118,8 +118,6 @@ class ChatGraphState(TaskManagerState):
     termination_behavior: Literal["return", "user"] = "user"
     bootstrap_message: Optional[Any] = None
     max_agent_iterations: Optional[int] = None
-    monitor_requested: bool = False
-    monitor_task_description: str = ""
 
 
 CheckpointStateName = Literal["ChatGraphState", "TaskManagerState"]
@@ -195,10 +193,6 @@ def build_compatible_checkpoint_state(
             **shared_fields,
             bootstrap_message=None,
             termination_behavior="user",
-            monitor_requested=bool(state_data.get("monitor_requested", False)),
-            monitor_task_description=str(
-                state_data.get("monitor_task_description", "") or ""
-            ),
             exit_requested=False,
             return_requested=False,
         )

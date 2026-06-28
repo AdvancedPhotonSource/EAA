@@ -835,28 +835,6 @@ def test_checkpointed_interruption_recovery_survives_multiple_interruptions(tmp_
     assert task_manager.invoke_count == 3
 
 
-def test_run_conversation_monitor_command_hands_off_to_task_manager(monkeypatch):
-    task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
-    task_manager.chat_graph = task_manager.build_chat_graph()
-
-    captured: dict[str, Any] = {}
-
-    def fake_enter_monitoring_mode(task_description: str):
-        captured["task_description"] = task_description
-        captured["state"] = task_manager.active_state
-
-    monkeypatch.setattr(task_manager, "get_user_input", lambda *args, **kwargs: "/monitor check beam drift")
-    monkeypatch.setattr(task_manager, "enter_monitoring_mode", fake_enter_monitoring_mode)
-
-    task_manager.run_conversation(termination_behavior="user")
-
-    assert captured["task_description"] == "check beam drift"
-    assert isinstance(captured["state"], ChatGraphState)
-    assert captured["state"].monitor_requested is True
-    assert captured["state"].messages == []
-    assert captured["state"].full_history == []
-
-
 def test_run_conversation_accepts_dict_and_list_messages(monkeypatch):
     task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
     task_manager.model = object()
