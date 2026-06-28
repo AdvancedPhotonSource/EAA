@@ -15,9 +15,9 @@ from eaa_core.message_proc import print_message
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.skills import SkillMetadata, build_skill_context_message
 from eaa_core.tool.base import BaseTool
+from eaa_core.tool.mcp_adapter import MCPRPCWrapper
 
 from eaa_imaging.tool.imaging.acquisition import AcquireImage
-from eaa_imaging.tool.imaging.mcp_acquisition import ensure_acquisition_tool_interface
 from eaa_core.tool.param_tuning import SetParameters
 from eaa_core.task_manager.tuning.base import BaseParameterTuningTaskManager
 from eaa_imaging.tool.imaging.registration import ImageRegistration
@@ -160,8 +160,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         """
         if acquisition_tool is None:
             raise ValueError("`acquisition_tool` must be provided.")
-        
-        acquisition_tool = ensure_acquisition_tool_interface(acquisition_tool)
+        if run_line_scan_checker and isinstance(acquisition_tool, MCPRPCWrapper):
+            raise ValueError(
+                "`run_line_scan_checker=True` requires an agent-visible acquisition tool. "
+                "Set `run_line_scan_checker=False` when using `MCPRPCWrapper`."
+            )
         self.acquisition_tool = acquisition_tool
         if optimization_tool is None:
             self.optimization_tool = self.create_bo_tool(parameter_ranges)

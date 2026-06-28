@@ -5,14 +5,22 @@ instead of being added directly to EAA. This keeps EAA focused on orchestration
 while each facility owns its instrument-control dependencies, deployment model,
 and safety policy.
 
-The standard design is a small Python package with separate modules for the
-command protocol, ZMQ client, blocking worker, FastMCP frontend, and launcher.
-External MCP servers should not depend on EAA packages. They should expose a
-standard MCP interface that any MCP client can consume; EAA-specific
-compatibility is limited to tool names, schemas, and return payloads needed by
-adapter proxies.
+The recommended server design is a small Python package with separate modules
+for the command protocol, ZMQ client, blocking worker, FastMCP frontend, and
+launcher. External MCP servers should not depend on EAA packages. They should
+expose normal MCP tools whose names, arguments, schemas, and descriptions match
+the facility's real operations.
 
-## Pattern
+EAA compatibility is deliberately narrow:
+
+- Operational tools should be normal MCP tools with facility-specific names and
+  schemas.
+- Tool argument names should match the facility API and should not be shaped
+  around EAA task-manager internals.
+- The only EAA-specific support tool that a stateful server should expose is
+  `get_attribute_payload(name: str)`.
+
+## Process Pattern
 
 Use a three-layer process boundary:
 
@@ -80,99 +88,68 @@ facility-suite-mcp \
 ```
 
 The exact package and script names should be facility-specific, but the option
-names and behavior should stay consistent. The MCP endpoint is then consumed by
-EAA with a normal FastMCP-compatible client configuration:
+names and behavior should stay consistent.
+
+## Tool Naming and Argument Naming
+
+Do not name remote tools or arguments for EAA's internal classes. Name them for
+the facility operation they actually perform. For example, an endstation might
+choose names such as `collect_fly_scan`, `move_zone_plate`,
+`set_mirror_voltages`, or `measure_probe_profile`. Another facility might
+choose completely different names for equivalent operations.
+
+The same rule applies to arguments. Use the names that are natural for the
+instrument API and clear to users of that facility's MCP server. EAA should not
+force names such as image coordinates, scan sizes, scan steps, parameter
+vectors, or line-scan fields at the remote MCP boundary.
+
+The server should not duplicate tools or aliases solely to match a particular
+client's local terminology.
+
+## State Sync Contract
+
+The only standardized EAA support tool for stateful logic-driven workflows is:
 
 ```python
-from eaa_core.tool.mcp_client import MCPTool
-
-tools = MCPTool(
-    {
-        "mcpServers": {
-            "facility_tools": {
-                "url": "http://127.0.0.1:8050/mcp",
-                "transport": "http",
-            }
-        }
-    }
-)
+def get_attribute_payload(name: str) -> object:
+    ...
 ```
 
-## General EAA Contract
+This tool returns the current value of a server-side attribute identified by
+`name`. The `name` values are server-defined attribute identifiers, not EAA
+attribute names.
 
-For chat interactions and agent-driven processes, EAA should not require an
-external MCP server to obey EAA-specific tool names, attribute names, or special
-handling rules. The server should expose clear tool names, schemas, and
-descriptions that match the facility's real operations. The agent-facing EAA
-loop registers those tools through `MCPTool` and lets the model choose them by
-schema.
+The support tool name should be exactly `get_attribute_payload` or a dotted
+tool name ending with `.get_attribute_payload`. Attribute names are
+facility-defined; examples include `detector.last_frame`,
+`detector.last_metadata`, `stage.last_position`, or any other stable names
+that fit the server's state model.
 
-Logic-driven task managers are different. Some task managers call methods and
-attributes from Python code instead of asking the model to choose tools. For
-MCP-backed tools, EAA bridges that gap with adapter proxies:
+## Payload Format
 
-- `packages/eaa-core/src/eaa_core/tool/mcp_adapter.py`
-- `packages/eaa-imaging/src/eaa_imaging/tool/imaging/mcp_acquisition.py`
-
-Only MCP servers intended for these logic-driven task managers need the
-contracts below.
-
-## Parameter-Setting Contract
-
-`BaseParameterTuningTaskManager` wraps an `MCPTool` with
-`MCPParameterSettingProxy`. The remote MCP server must expose:
-
-`set_parameters(parameters: list[float])`
-
-: Set the controlled parameters in the same order as the task manager's
-  `initial_parameters` keys. Return a string or a JSON-serializable object. The
-  proxy records local parameter history after the remote call succeeds.
-
-The task manager supplies `parameter_names` and `parameter_ranges` locally; the
-MCP server does not need to expose those attributes. The proxy provides the
-local `get_current_parameters` behavior from EAA's `SetParameters` base class.
-
-## Imaging Acquisition Contract
-
-Imaging task managers wrap an `MCPTool` with `MCPAcquireImageProxy`. For
-analytical focusing workflows, the remote MCP server should expose:
-
-`acquire_image(...)`
-
-: Acquire a 2D image, update the server-side acquisition buffers, and return a
-  JSON object. Include pixel-size metadata with one of `psize`, `pixel_size`,
-  `scan_step`, or `stepsize_x`. Include `img_path` when a displayable image
-  should be shown in the chat or WebUI.
-
-`get_image_array_payload(buffer_name: str)`
-
-: Return a JSON-serializable payload for one buffered image. `buffer_name` must
-  accept `"current"`, `"previous"`, and `"initial"`. EAA decodes this payload
-  through `MCPAcquireImageProxy.get_image_array(...)` so built-in and
-  MCP-backed acquisition tools have the same task-manager API. External servers
-  should expose this as a normal FastMCP tool. EAA's MCP client treats this name
-  as an adapter-only method: analytical task-manager code can call it over MCP,
-  but it is omitted from model-facing tool schemas. The payload must use this
-  shape:
+`get_attribute_payload` may return any JSON-serializable scalar, list, or
+dictionary directly. For NumPy arrays or other dense numerical arrays, return a
+portable array payload:
 
 ```json
 {
   "encoding": "numpy_base64",
   "dtype": "float32",
   "shape": [256, 256],
-  "data": "base64-encoded array bytes"
+  "data": "base64-encoded contiguous array bytes"
 }
 ```
 
-External MCP servers do not need to depend on EAA to produce this payload:
+EAA decodes this payload with `BaseTool.decode_array_payload`. External MCP
+servers do not need to depend on EAA to produce it:
 
 ```python
 import base64
 import numpy as np
 
 
-def encode_image_array_payload(image: np.ndarray) -> dict:
-    contiguous = np.ascontiguousarray(image)
+def encode_array_payload(array: np.ndarray) -> dict:
+    contiguous = np.ascontiguousarray(array)
     return {
         "encoding": "numpy_base64",
         "dtype": str(contiguous.dtype),
@@ -181,65 +158,49 @@ def encode_image_array_payload(image: np.ndarray) -> dict:
     }
 ```
 
-`acquire_line_scan(...)`
+Use JSON literals for metadata, histories, counters, configuration flags, and
+small structured records. Use the array payload only for dense arrays.
 
-: Acquire a line scan and return a JSON object. Analytical focusing expects a
-  numeric `fwhm` value. `img_path` is recommended for line-scan validation and
-  user-visible reporting. Gaussian-fit metadata such as `a`, `mu`, `sigma`,
-  `c`, `normalized_residual`, `x_min`, and `x_max` is useful when available.
+## Server-Side State
 
-`set_attribute(name: str, value: object)` or `set_config(name: str, value: object)`
+State that a logic-driven task manager will read later should be owned by the
+instrument worker or by the MCP frontend. The owner is a facility decision. The
+only requirement is that the MCP frontend can return the selected server-side
+attributes through `get_attribute_payload`.
 
-: Optional. If present, the proxy uses it to set
-  `line_scan_return_gaussian_fit=True` when an analytical focusing manager
-  starts. Servers may also always include the fit metadata needed by the
-  workflow.
+Typical state includes:
 
-Default analytical focusing argument names are:
+- the latest measurement array or image;
+- previous or initial arrays needed for registration or comparison;
+- pixel sizes, timestamps, file paths, or scan metadata;
+- acquisition histories or parameter histories;
+- status flags or configuration values needed by a later local decision.
 
-- line scan coordinates: `x_center` and `y_center`
-- image acquisition coordinates: `x_center` and `y_center`
-- image size: `size_x` and `size_y`; `width` and `height` are also recognized
-  for local history recording
-- scan step: `scan_step` or `stepsize_x`
-- line scan length: `length`
-- line scan angle: `angle`
+Do not build EAA-specific state names into the server. Keep facility state names
+stable.
 
-Task managers can be configured with alternate coordinate argument names, but
-external servers should prefer the defaults when possible.
+## Artifacts and Large Data
 
-## Image Artifacts
+Tool results should remain JSON-serializable. Use file paths for artifacts that
+humans or downstream tools need to inspect, such as display PNGs, logs, or raw
+data files. The field names for those paths are part of the facility API or the
+facility workflow; they are not standardized by this server contract.
 
-`img_path` should point to a displayable image file such as PNG when the result
-should appear in chat or the WebUI. Numerical image arrays must be transferred
-through `get_image_array_payload`.
-
-The MCP server should keep at least three image buffers:
-
-- `initial`: the first 2D image acquired in the current run
-- `previous`: the image immediately before the current image
-- `current`: the most recent 2D image
-
-These buffers may live in the instrument worker or the MCP frontend, but the
-frontend must be able to return them through `get_image_array_payload`.
-
-LLM-visible image registration uses path-based tools. EAA acquisition tools and
-`MCPAcquireImageProxy` expose `dump_array(buffer_name: str)` to save a buffered
-image array and return `{"array_path": "..."}`. An agent can dump the `current`
-and `previous` or `initial` buffers, then call the registration tool's
-`get_offset_from_paths` method with those paths. External MCP image acquisition
-servers provide the buffers through `get_image_array_payload`; the EAA proxy
-provides the dumping helper on the EAA side.
+Dense numerical arrays that EAA must keep in memory should be exposed through
+`get_attribute_payload` rather than embedded directly in ordinary tool results.
+Very large arrays may still be written to disk and returned as paths when the
+downstream workflow is path-based.
 
 ## Worker Protocol
 
-Use this ZMQ command envelope:
+Use a small JSON command envelope between the FastMCP frontend and the
+instrument worker:
 
 ```json
 {
   "id": "uuid",
-  "method": "acquire_image",
-  "params": {"x_center": 1.0}
+  "method": "facility_specific_operation",
+  "params": {"facility_argument": 1.0}
 }
 ```
 
@@ -263,8 +224,67 @@ Failed responses contain:
 }
 ```
 
-Keep the command boundary JSON-serializable. Large numerical arrays should be
-written as artifacts and returned by path rather than embedded in the response.
+Keep the worker boundary JSON-serializable. Large numerical arrays should be
+kept in worker/frontend state and returned through `get_attribute_payload` or
+written as artifacts and returned by path.
+
+## Safety and Concurrency
+
+Instrument-control operations should be serialized unless the facility control
+stack explicitly supports concurrent calls. The worker process is the right
+place to enforce serialization, hardware interlocks, argument bounds, timeout
+policy, and recovery behavior.
+
+The MCP frontend should treat worker timeouts and worker-side exceptions as
+ordinary tool failures with clear error messages. It should not leave requests
+running indefinitely in the MCP event loop.
+
+## Minimal Example
+
+This example shows the EAA-specific support surface only. The operational tool
+names remain facility-specific.
+
+```python
+import base64
+import numpy as np
+from fastmcp import FastMCP
+
+app = FastMCP("Example Facility Server")
+state = {
+    "detector.last_frame": None,
+    "detector.last_metadata": {},
+}
+
+
+def encode_array_payload(array: np.ndarray) -> dict:
+    contiguous = np.ascontiguousarray(array)
+    return {
+        "encoding": "numpy_base64",
+        "dtype": str(contiguous.dtype),
+        "shape": list(contiguous.shape),
+        "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+    }
+
+
+@app.tool()
+def collect_detector_frame(exposure_ms: float, roi_width: int, roi_height: int) -> dict:
+    frame = np.zeros((roi_height, roi_width), dtype=np.float32)
+    state["detector.last_frame"] = frame
+    state["detector.last_metadata"] = {
+        "exposure_ms": exposure_ms,
+        "roi_width": roi_width,
+        "roi_height": roi_height,
+    }
+    return {"status": "ok"}
+
+
+@app.tool()
+def get_attribute_payload(name: str) -> object:
+    value = state[name]
+    if isinstance(value, np.ndarray):
+        return encode_array_payload(value)
+    return value
+```
 
 ## Agent Skill
 

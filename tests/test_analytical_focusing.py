@@ -3,8 +3,11 @@ import os
 import shutil
 
 import numpy as np
+import pytest
 import tifffile
 
+from eaa_core.tool.base import ExposedToolSpec
+from eaa_core.tool.mcp_adapter import MCPRPCWrapper
 from eaa_imaging.task_manager.tuning.analytical_focusing import (
     AnalyticalScanningMicroscopeFocusingTaskManager,
 )
@@ -22,6 +25,20 @@ class DummyRegistrationTool:
 
     def get_offset(self, target="previous"):
         return self.offset.tolist()
+
+
+class FakeRemoteTool:
+    def __init__(self, functions):
+        self.functions = functions
+        self.exposed_tools = [
+            ExposedToolSpec(name=name, function=function)
+            for name, function in functions.items()
+        ]
+
+    def __getattr__(self, name):
+        if name in self.functions:
+            return self.functions[name]
+        raise AttributeError(name)
 
 
 class TestAnalyticalFocusing(tutils.BaseTester):
@@ -120,6 +137,22 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             == n_initial_points + n_bo_iterations + 1
         )
         assert acquisition_tool.counter_acquire_image == 0
+
+    def test_mcp_rpc_wrapper_requires_line_scan_checker_disabled(self):
+        acquisition_tool = MCPRPCWrapper(
+            mcp_tool_client=FakeRemoteTool({"acquire_image": lambda **kwargs: {}}),
+            mappings={"acquire_image": {"remote": "acquire_image"}},
+        )
+
+        with pytest.raises(ValueError, match="run_line_scan_checker=False"):
+            AnalyticalScanningMicroscopeFocusingTaskManager(
+                param_setting_tool=object(),
+                acquisition_tool=acquisition_tool,
+                initial_parameters={"z": 10.0},
+                parameter_ranges=[(0.0,), (10.0,)],
+                registration_tools=[DummyRegistrationTool("dummy")],
+                checkpoint_db_path=None,
+            )
 
     def test_select_drift_uses_linear_model_after_priming(self):
         registration_tools = [
