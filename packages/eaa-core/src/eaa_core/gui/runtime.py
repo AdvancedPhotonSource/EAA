@@ -9,7 +9,7 @@ import os
 import queue
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
 from typing import Any
 
@@ -88,9 +88,11 @@ class WebUIRuntimeController:
         task_manager: Any,
         *,
         upload_dir: str = ".tmp",
+        approval_timeout_seconds: float = 120.0,
     ) -> None:
         self.task_manager = task_manager
         self.upload_dir = upload_dir
+        self.approval_timeout_seconds = approval_timeout_seconds
         self.input_queue: queue.Queue[str] = queue.Queue()
         self.approval_queue: queue.Queue[bool] = queue.Queue()
         self.approval_queues: dict[str, queue.Queue[bool]] = {
@@ -104,6 +106,7 @@ class WebUIRuntimeController:
         self.max_log_entries = 500
         self.message_event_counter = 0
         self.log_event_counter = 0
+        self.approval_event_counter = 0
         self.subagent_counter = 0
         self.status = "idle"
         self.input_requested = False
@@ -402,10 +405,18 @@ class WebUIRuntimeController:
                 ),
             )
             previous_status = conversation.status
+            self.approval_event_counter += 1
+            approval_id = f"approval-{self.approval_event_counter}"
+            requested_at = datetime.now(timezone.utc)
+            expires_at = requested_at + timedelta(seconds=self.approval_timeout_seconds)
             pending_approval = {
+                "id": approval_id,
                 "conversation_id": conversation_id,
                 "tool_name": tool_name,
                 "arguments": tool_kwargs,
+                "requested_at": requested_at.isoformat().replace("+00:00", "Z"),
+                "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+                "timeout_seconds": self.approval_timeout_seconds,
             }
             conversation.pending_approval = dict(pending_approval)
             if conversation_id == "primary":
@@ -413,7 +424,10 @@ class WebUIRuntimeController:
             approval_queue = self.approval_queues.setdefault(conversation_id, queue.Queue())
         self.publish("approval.requested", pending_approval)
         self.set_status("waiting_for_approval", input_requested=True, conversation_id=conversation_id)
-        approved = approval_queue.get()
+        try:
+            approved = approval_queue.get(timeout=self.approval_timeout_seconds)
+        except queue.Empty:
+            approved = False
         with self.lock:
             conversation = self.conversations[conversation_id]
             conversation.pending_approval = None
@@ -422,11 +436,27 @@ class WebUIRuntimeController:
         self.set_status(previous_status, input_requested=False, conversation_id=conversation_id)
         return approved
 
-    def submit_approval(self, approved: bool, conversation_id: str = "primary") -> None:
+    def submit_approval(
+        self,
+        approved: bool,
+        conversation_id: str = "primary",
+        approval_id: str | None = None,
+        *,
+        require_pending: bool = False,
+    ) -> bool:
         """Queue a tool approval decision."""
         with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            pending_approval = conversation.pending_approval if conversation else None
+            if require_pending and pending_approval is None:
+                return False
+            if approval_id is not None and (
+                pending_approval is None or pending_approval.get("id") != approval_id
+            ):
+                return False
             approval_queue = self.approval_queues.setdefault(conversation_id, queue.Queue())
         approval_queue.put(approved)
+        return True
 
     def has_pending_approval(self) -> bool:
         """Return whether a tool approval request is waiting for a response."""
@@ -595,10 +625,21 @@ class WebUIRuntimeServer:
             return {"ok": True}
 
         @app.post("/api/approval")
-        async def approval(payload: dict[str, Any]) -> dict[str, bool]:
+        async def approval(payload: dict[str, Any]) -> JSONResponse:
             conversation_id = str(payload.get("conversation_id") or "primary")
-            self.controller.submit_approval(bool(payload.get("approved")), conversation_id)
-            return {"ok": True}
+            approval_id = payload.get("approval_id")
+            accepted = self.controller.submit_approval(
+                bool(payload.get("approved")),
+                conversation_id,
+                str(approval_id) if approval_id is not None else None,
+                require_pending=True,
+            )
+            if not accepted:
+                return JSONResponse(
+                    {"ok": False, "error": "No matching approval request is pending"},
+                    status_code=409,
+                )
+            return JSONResponse({"ok": True})
 
         @app.get("/api/skill-catalog")
         async def skill_catalog() -> dict[str, list[dict[str, str]]]:

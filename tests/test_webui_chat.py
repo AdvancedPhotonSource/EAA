@@ -349,9 +349,15 @@ def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
     assert interrupt_response.status_code == 200
     assert controller.interrupt_event.is_set()
 
-    approval_response = client.post("/api/approval", json={"approved": True})
-    assert approval_response.status_code == 200
-    assert controller.approval_queue.get_nowait() is True
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(controller.request_approval, "tool", {}, "primary")
+        for _ in range(50):
+            if controller.has_pending_approval_for_conversation("primary"):
+                break
+            time.sleep(0.01)
+        approval_response = client.post("/api/approval", json={"approved": True})
+        assert approval_response.status_code == 200
+        assert future.result(timeout=1) is True
 
     catalog_response = client.get("/api/skill-catalog")
     assert catalog_response.status_code == 200
@@ -493,6 +499,49 @@ def test_runtime_input_and_approval_restore_previous_status():
     controller.submit_approval(True)
     assert controller.request_approval("tool", {}) is True
     assert controller.snapshot()["status"] == "running"
+
+
+def test_runtime_approval_times_out_and_rejects():
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager, approval_timeout_seconds=0.05)
+
+    controller.set_status("running", input_requested=False)
+    started_at = time.monotonic()
+    assert controller.request_approval("tool", {}) is False
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed >= 0.05
+    assert controller.snapshot()["status"] == "running"
+    assert controller.snapshot()["pending_approval"] is None
+
+
+def test_runtime_approval_route_rejects_stale_approval_id(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    controller = WebUIRuntimeController(task_manager, approval_timeout_seconds=0.05)
+    server = WebUIRuntimeServer(controller)
+    client = TestClient(server.build_app())
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(controller.request_approval, "tool", {}, "primary")
+        for _ in range(50):
+            snapshot = controller.snapshot()
+            pending = snapshot["pending_approval"]
+            if pending:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("approval did not become pending")
+        assert future.result(timeout=1) is False
+
+    response = client.post(
+        "/api/approval",
+        json={"approved": True, "approval_id": pending["id"]},
+    )
+
+    assert response.status_code == 409
 
 
 def test_html_webui_base_uses_runtime_url():
