@@ -198,13 +198,27 @@ class TestCodingTool(tutils.BaseTester):
     ):
         venv_bin = tmp_path / ".venv" / "bin"
         runtime_bin = tmp_path / "runtime" / "bin"
+        site_dir = tmp_path / ".venv" / "lib" / "python3.14" / "site-packages"
+        source_dir = tmp_path / "src" / "pkg"
         venv_bin.mkdir(parents=True)
         runtime_bin.mkdir(parents=True)
+        site_dir.mkdir(parents=True)
+        source_dir.mkdir(parents=True)
         runtime_python = runtime_bin / "python3.14"
         runtime_python.write_text("")
+        (site_dir / "__editable__.example.pth").write_text(f"{source_dir}\n")
         venv_python = venv_bin / "python"
         venv_python.symlink_to(runtime_python)
         monkeypatch.setattr("eaa_core.tool.coding.sys.executable", str(venv_python))
+        monkeypatch.setattr(
+            "eaa_core.tool.coding.site.getsitepackages",
+            lambda: [str(site_dir)],
+        )
+        monkeypatch.setattr(
+            "eaa_core.tool.coding.site.getusersitepackages",
+            lambda: str(tmp_path / "missing-user-site"),
+        )
+        monkeypatch.setattr("eaa_core.tool.coding.sys.path", [str(site_dir)])
         captured = {}
 
         def fake_which(name, path=None):
@@ -214,6 +228,7 @@ class TestCodingTool(tutils.BaseTester):
 
         def fake_run(command, **kwargs):
             captured["command"] = command
+            captured["env"] = kwargs["env"]
             return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
 
         monkeypatch.setattr("eaa_core.tool.coding.shutil.which", fake_which)
@@ -228,6 +243,9 @@ class TestCodingTool(tutils.BaseTester):
         chdir_index = captured["command"].index("--chdir")
         python_command = captured["command"][chdir_index + 2]
         assert python_command == str(runtime_python)
+        pythonpath = captured["env"]["PYTHONPATH"].split(os.pathsep)
+        assert str(site_dir) in pythonpath
+        assert str(source_dir) in pythonpath
 
 
 if __name__ == "__main__":
