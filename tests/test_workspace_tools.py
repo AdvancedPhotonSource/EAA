@@ -92,30 +92,89 @@ def test_approval_rule_errors_return_tool_error(tmp_path):
     assert parse_tool_content(result)["error"] == "Path must not be empty."
 
 
-def test_filesystem_write_always_requires_approval(tmp_path):
+def test_filesystem_write_approval_rules_for_workspace_paths(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "source.txt").write_text("source")
+    skill_dir = tmp_path / "skills" / "example"
+    skill_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
     approvals = []
 
     def approval_handler(tool_name, arguments):
-        approvals.append(tool_name)
+        approvals.append((tool_name, arguments))
         return False
 
     executor = SerialToolExecutor(approval_handler=approval_handler)
-    executor.register_tools(FileSystemTool(workspace_path=str(workspace)))
+    executor.register_tools(
+        FileSystemTool(
+            workspace_path=str(workspace),
+            read_whitelist_paths=[str(tmp_path / "skills")],
+        )
+    )
 
-    result = executor.execute_tool_call(
+    inside_result = executor.execute_tool_call(
         build_tool_call(
             "file_system_tool.write_file",
             {"file_path": "created.txt", "content": "created"},
         )
     )
+    assert parse_tool_content(inside_result)["ok"] is True
+    assert (workspace / "created.txt").read_text() == "created"
+    assert approvals == []
+
+    skill_result = executor.execute_tool_call(
+        build_tool_call(
+            "file_system_tool.write_file",
+            {"file_path": str(skill_dir / "generated.txt"), "content": "generated"},
+        )
+    )
+    assert parse_tool_content(skill_result)["ok"] is True
+    assert (skill_dir / "generated.txt").read_text() == "generated"
+    assert approvals == []
+
+    result = executor.execute_tool_call(
+        build_tool_call(
+            "file_system_tool.write_file",
+            {"file_path": str(outside), "content": "outside"},
+        )
+    )
     assert parse_tool_content(result)["error"] == "Tool execution was denied by the user."
 
-    assert approvals == ["file_system_tool.write_file"]
-    assert not (workspace / "created.txt").exists()
+    assert approvals == [("file_system_tool.write_file", {"file_path": str(outside), "content": "outside"})]
+    assert not outside.exists()
     assert (workspace / "source.txt").exists()
+
+
+def test_filesystem_edit_tools_do_not_require_approval_in_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "source.txt"
+    target.write_text("first\nsecond\nthird\n")
+    approvals = []
+
+    executor = SerialToolExecutor(
+        approval_handler=lambda tool_name, arguments: approvals.append((tool_name, arguments)) or False
+    )
+    executor.register_tools(FileSystemTool(workspace_path=str(workspace)))
+
+    edit_result = executor.execute_tool_call(
+        build_tool_call(
+            "file_system_tool.edit_file",
+            {"file_path": "source.txt", "old_string": "second", "new_string": "updated"},
+        )
+    )
+    assert parse_tool_content(edit_result)["ok"] is True
+
+    replace_result = executor.execute_tool_call(
+        build_tool_call(
+            "file_system_tool.replace_file_lines",
+            {"file_path": "source.txt", "start_line": 3, "end_line": 3, "new_text": "done\n"},
+        )
+    )
+    assert parse_tool_content(replace_result)["ok"] is True
+    assert target.read_text() == "first\nupdated\ndone\n"
+    assert approvals == []
 
 
 def test_filesystem_tool_surface_excludes_shell_redundant_tools(tmp_path):

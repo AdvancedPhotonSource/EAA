@@ -283,7 +283,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             return format_lines_with_numbers(selected_lines, start_line=offset + 1)
         return "\n".join(selected_lines)
 
-    @tool(name="file_system_tool.write_file", require_approval=True)
+    @tool(name="file_system_tool.write_file", require_approval="requires_approval_for_file_path")
     def write_file(
         self,
         file_path: Annotated[str, "File path to create or overwrite. Relative paths are resolved from the workspace."],
@@ -299,7 +299,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             "bytes_written": len(content.encode("utf-8")),
         }
 
-    @tool(name="file_system_tool.edit_file", require_approval=True)
+    @tool(name="file_system_tool.edit_file", require_approval="requires_approval_for_file_path")
     def edit_file(
         self,
         file_path: Annotated[str, "Text file path to edit. Relative paths are resolved from the workspace."],
@@ -327,7 +327,7 @@ class FileSystemTool(WorkspacePathMixin, BaseTool):
             "occurrences": occurrences if replace_all else 1,
         }
 
-    @tool(name="file_system_tool.replace_file_lines", require_approval=True)
+    @tool(name="file_system_tool.replace_file_lines", require_approval="requires_approval_for_file_path")
     def replace_file_lines(
         self,
         file_path: Annotated[str, "Text file path to edit. Relative paths are resolved from the workspace."],
