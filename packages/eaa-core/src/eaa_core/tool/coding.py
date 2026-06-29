@@ -508,7 +508,7 @@ class PythonCodingTool(CodingTool):
             elif self.sandbox_type == "bubblewrap":
                 result = self._execute_in_bubblewrap(
                     [os.path.realpath(sys.executable), "-c", prepared_code],
-                    env=env,
+                    env=self._build_bubblewrap_python_env(env),
                     timeout=exec_timeout,
                     input_text=input_text,
                     workdir=exec_cwd,
@@ -572,6 +572,20 @@ class PythonCodingTool(CodingTool):
     def _default_python_image() -> str:
         """Return the default Python container image name."""
         return f"python:{sys.version_info.major}.{sys.version_info.minor}"
+
+    def _build_bubblewrap_python_env(self, env: Dict[str, str]) -> Dict[str, str]:
+        """Preserve host import paths when running the resolved interpreter."""
+        bubblewrap_env = env.copy()
+        paths = self._bubblewrap_python_import_bind_paths()
+        paths.extend((env.get("PYTHONPATH") or "").split(os.pathsep))
+        resolved: list[str] = []
+        for path in paths:
+            if not path or path in resolved:
+                continue
+            resolved.append(path)
+        if resolved:
+            bubblewrap_env["PYTHONPATH"] = os.pathsep.join(resolved)
+        return bubblewrap_env
 
 
 class BashCodingTool(CodingTool):
