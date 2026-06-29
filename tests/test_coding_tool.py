@@ -191,6 +191,44 @@ class TestCodingTool(tutils.BaseTester):
         ]
         assert captured["env"]["PATH"] == captured["which_path"]
 
+    def test_python_bubblewrap_executes_resolved_interpreter(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        venv_bin = tmp_path / ".venv" / "bin"
+        runtime_bin = tmp_path / "runtime" / "bin"
+        venv_bin.mkdir(parents=True)
+        runtime_bin.mkdir(parents=True)
+        runtime_python = runtime_bin / "python3.14"
+        runtime_python.write_text("")
+        venv_python = venv_bin / "python"
+        venv_python.symlink_to(runtime_python)
+        monkeypatch.setattr("eaa_core.tool.coding.sys.executable", str(venv_python))
+        captured = {}
+
+        def fake_which(name, path=None):
+            if name == "bwrap":
+                return "/usr/bin/bwrap"
+            return None
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+        monkeypatch.setattr("eaa_core.tool.coding.shutil.which", fake_which)
+        monkeypatch.setattr("eaa_core.tool.coding.subprocess.run", fake_run)
+
+        result = PythonCodingTool(sandbox_type="bubblewrap").execute_code(
+            "print('ok')",
+            cwd=str(tmp_path),
+        )
+
+        assert result["returncode"] == 0
+        chdir_index = captured["command"].index("--chdir")
+        python_command = captured["command"][chdir_index + 2]
+        assert python_command == str(runtime_python)
+
 
 if __name__ == "__main__":
     tester = TestCodingTool()
