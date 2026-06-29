@@ -507,7 +507,7 @@ class PythonCodingTool(CodingTool):
                 )
             elif self.sandbox_type == "bubblewrap":
                 result = self._execute_in_bubblewrap(
-                    [sys.executable, "-c", prepared_code],
+                    [os.path.realpath(sys.executable), "-c", prepared_code],
                     env=env,
                     timeout=exec_timeout,
                     input_text=input_text,
