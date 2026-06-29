@@ -26,6 +26,10 @@ export type WebUIMessage = {
   images?: string[];
   tool_calls?: unknown;
   pending?: boolean;
+  approval_id?: string;
+  approval_requested_at?: string;
+  approval_expires_at?: string;
+  approval_timeout_seconds?: number;
 };
 
 export type RuntimeLogEntry = {
@@ -50,9 +54,13 @@ export type RuntimeSnapshot = {
 };
 
 export type PendingApproval = {
+  id?: string;
   conversation_id?: string;
   tool_name?: string;
   arguments?: Record<string, unknown>;
+  requested_at?: string;
+  expires_at?: string;
+  timeout_seconds?: number;
 };
 
 export type RuntimeConversation = {

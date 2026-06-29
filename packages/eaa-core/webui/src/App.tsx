@@ -165,6 +165,13 @@ const currentImageTimeTitle = () => new Date().toLocaleTimeString([], { hour: "2
 const isApprovalMessage = (message: WebUIMessage) =>
   String(message.role ?? "") === "system" && /Approve\?\s*\[y\/N\]:/i.test(String(message.content ?? ""));
 
+const formatRemainingTime = (milliseconds: number) => {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+};
+
 const formatApproval = (content: unknown) => {
   const text = String(content ?? "");
   const argsMatch = text.match(/Arguments:\s*([\s\S]*?)\nApprove\?\s*\[y\/N\]:/i);
@@ -270,11 +277,19 @@ function MessageView({
   index: number;
   message: WebUIMessage;
   onImage: (src: string) => void;
-  onApproval: (approved: boolean) => Promise<void>;
+  onApproval: (approved: boolean, approvalId?: string) => Promise<void>;
 }) {
   const [approvalSubmitted, setApprovalSubmitted] = useState(false);
+  const [approvalRemainingMs, setApprovalRemainingMs] = useState<number | null>(null);
   const role = String(message.role ?? "message");
   const content = String(message.content ?? "").trim();
+  const approvalExpiresAt = useMemo(() => {
+    if (message.approval_expires_at) return Date.parse(message.approval_expires_at);
+    if (!message.approval_timeout_seconds) return NaN;
+    const requestedAt = message.approval_requested_at ? Date.parse(message.approval_requested_at) : Date.now();
+    return requestedAt + message.approval_timeout_seconds * 1000;
+  }, [message.approval_expires_at, message.approval_requested_at, message.approval_timeout_seconds]);
+  const approvalExpired = approvalRemainingMs !== null && approvalRemainingMs <= 0;
   const imageSources = useMemo(() => {
     const sources: string[] = [];
     const seen = new Set<string>();
@@ -298,9 +313,21 @@ function MessageView({
     return sources;
   }, [message, role]);
 
+  useEffect(() => {
+    if (!isApprovalMessage(message) || Number.isNaN(approvalExpiresAt)) {
+      setApprovalRemainingMs(null);
+      return;
+    }
+    const updateRemaining = () => setApprovalRemainingMs(Math.max(0, approvalExpiresAt - Date.now()));
+    updateRemaining();
+    const interval = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(interval);
+  }, [approvalExpiresAt, message]);
+
   const submitApproval = async (approved: boolean) => {
+    if (approvalSubmitted || approvalExpired) return;
     setApprovalSubmitted(true);
-    await onApproval(approved);
+    await onApproval(approved, message.approval_id);
   };
 
   return (
@@ -335,14 +362,31 @@ function MessageView({
           </div>
         ) : null}
         {isApprovalMessage(message) ? (
-          <div className="eaa-approval-actions">
-            <button className="eaa-approval-button eaa-approval-yes" disabled={approvalSubmitted} type="button" onClick={() => submitApproval(true)}>
-              Yes
-            </button>
-            <button className="eaa-approval-button eaa-approval-no" disabled={approvalSubmitted} type="button" onClick={() => submitApproval(false)}>
-              No
-            </button>
-          </div>
+          <>
+            {approvalRemainingMs !== null ? (
+              <div className={`eaa-approval-timer${approvalExpired ? " eaa-approval-timer-expired" : ""}`}>
+                {approvalExpired ? "Approval timed out and was rejected." : `Auto-rejects in ${formatRemainingTime(approvalRemainingMs)}`}
+              </div>
+            ) : null}
+            <div className="eaa-approval-actions">
+              <button
+                className="eaa-approval-button eaa-approval-yes"
+                disabled={approvalSubmitted || approvalExpired}
+                type="button"
+                onClick={() => submitApproval(true)}
+              >
+                Yes
+              </button>
+              <button
+                className="eaa-approval-button eaa-approval-no"
+                disabled={approvalSubmitted || approvalExpired}
+                type="button"
+                onClick={() => submitApproval(false)}
+              >
+                No
+              </button>
+            </div>
+          </>
         ) : null}
       </div>
     </article>
@@ -696,7 +740,17 @@ function App() {
         2,
       )}\nApprove? [y/N]: `;
       mergeMessages(
-        [{ id: `approval-${conversationId}-${payload.tool_name || "tool"}-${stringHash(approvalContent)}`, role: "system", content: approvalContent }],
+        [
+          {
+            id: payload.id || `approval-${conversationId}-${payload.tool_name || "tool"}-${stringHash(approvalContent)}`,
+            role: "system",
+            content: approvalContent,
+            approval_id: payload.id,
+            approval_requested_at: payload.requested_at,
+            approval_expires_at: payload.expires_at,
+            approval_timeout_seconds: payload.timeout_seconds,
+          },
+        ],
         conversationId,
       );
     },
@@ -774,11 +828,11 @@ function App() {
     return () => source.close();
   }, [applyStatus, mergeMessages, renderApprovalRequest, upsertConversation]);
 
-  const submitApproval = async (approved: boolean, conversationId = activeConversationId) => {
+  const submitApproval = async (approved: boolean, conversationId = activeConversationId, approvalId?: string) => {
     await fetch(config.routes.approval, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: conversationId, approved }),
+      body: JSON.stringify({ conversation_id: conversationId, approved, approval_id: approvalId }),
     });
   };
 
@@ -1080,7 +1134,7 @@ function App() {
                     key={messageKey(message, index)}
                     message={message}
                     onImage={setPreviewImage}
-                    onApproval={(approved) => submitApproval(approved, activeConversationId)}
+                    onApproval={(approved, approvalId) => submitApproval(approved, activeConversationId, approvalId)}
                   />
                 ))}
                 {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}

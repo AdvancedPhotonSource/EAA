@@ -509,6 +509,17 @@ button {
   margin-top: 4px;
 }
 
+.eaa-approval-timer {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 650;
+  margin-top: 8px;
+}
+
+.eaa-approval-timer-expired {
+  color: #b42318;
+}
+
 .eaa-approval-button {
   background: #ffffff;
   border: 1px solid #cbd5e1;
@@ -516,6 +527,11 @@ button {
   cursor: pointer;
   min-width: 72px;
   padding: 7px 12px;
+}
+
+.eaa-approval-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .eaa-message-images {
