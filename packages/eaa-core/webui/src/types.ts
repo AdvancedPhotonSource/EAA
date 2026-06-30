@@ -8,6 +8,7 @@ export type WebUIRoutes = {
   upload: string;
   skillCatalog: string;
   toolSchemas: string;
+  mcpReconnect: string;
   mathjax: string;
 };
 
@@ -80,6 +81,11 @@ export type Skill = {
 
 export type ToolSchema = {
   type?: string;
+  mcp?: {
+    server_id?: string;
+    server_name?: string;
+    tool_name?: string;
+  };
   function?: {
     name?: string;
     description?: string;

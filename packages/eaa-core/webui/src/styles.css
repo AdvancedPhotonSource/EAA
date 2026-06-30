@@ -882,14 +882,77 @@ button {
   padding: 18px;
 }
 
+.eaa-tool-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
 .eaa-tool-card h3 {
   font-size: 17px;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 
 .eaa-tool-card p {
   color: #4b5563;
   margin: 0 0 14px;
+}
+
+.eaa-tool-source {
+  color: #315cff;
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.eaa-tool-action {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f172a;
+  cursor: pointer;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+}
+
+.eaa-tool-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.eaa-tool-action svg {
+  flex: 0 0 auto;
+}
+
+.eaa-tool-action-busy svg {
+  animation: eaa-spin 0.9s linear infinite;
+}
+
+.eaa-tool-status {
+  border-radius: 6px;
+  font-size: 13px;
+  margin: -4px 0 14px;
+  padding: 8px 10px;
+}
+
+.eaa-tool-status-success {
+  background: #ecfdf3;
+  color: #05603a;
+}
+
+.eaa-tool-status-error {
+  background: #fff1f0;
+  color: #b42318;
+}
+
+@keyframes eaa-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .eaa-argument-table {
@@ -1162,6 +1225,15 @@ button {
   .eaa-message-user,
   .eaa-message-user_webui {
     max-width: 100%;
+  }
+
+  .eaa-tool-card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .eaa-tool-action {
+    width: 100%;
   }
 
   .eaa-argument-row,

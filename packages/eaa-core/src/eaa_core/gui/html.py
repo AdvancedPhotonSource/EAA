@@ -39,6 +39,7 @@ class HTMLWebUIBase:
     upload_route = "/api/upload-image"
     skill_catalog_route = "/api/skill-catalog"
     tool_schema_route = "/api/tool-schemas"
+    mcp_reconnect_route = "/api/mcp/reconnect"
     mathjax_route = "/static/mathjax"
     webui_static_route = "/static/webui"
     markdown_extras = ["fenced-code-blocks", "tables", "code-friendly", "break-on-newline"]
@@ -242,6 +243,7 @@ class HTMLWebUIBase:
                 "upload": self.upload_route,
                 "skillCatalog": self.skill_catalog_route,
                 "toolSchemas": self.tool_schema_route,
+                "mcpReconnect": self.mcp_reconnect_route,
                 "mathjax": self.mathjax_route,
             },
         }

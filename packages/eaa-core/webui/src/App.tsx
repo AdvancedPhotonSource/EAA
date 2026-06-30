@@ -7,6 +7,7 @@ import {
   Maximize2,
   MessageCircle,
   Paperclip,
+  RefreshCw,
   Send,
   Settings,
   TerminalSquare,
@@ -40,6 +41,10 @@ type ImageItem = {
   title: string;
   messageDomId: string;
 };
+type MCPReconnectStatus = {
+  state: "success" | "error";
+  message: string;
+};
 
 const defaultConfig: WebUIConfig = {
   title: "EAA Control Center",
@@ -55,6 +60,7 @@ const defaultConfig: WebUIConfig = {
     upload: "/api/upload-image",
     skillCatalog: "/api/skill-catalog",
     toolSchemas: "/api/tool-schemas",
+    mcpReconnect: "/api/mcp/reconnect",
     mathjax: "/static/mathjax",
   },
 };
@@ -393,7 +399,17 @@ function MessageView({
   );
 }
 
-function ToolsView({ tools }: { tools: ToolSchema[] }) {
+function ToolsView({
+  tools,
+  reconnectingMcpServers,
+  mcpReconnectStatuses,
+  onReconnectMcp,
+}: {
+  tools: ToolSchema[];
+  reconnectingMcpServers: Set<string>;
+  mcpReconnectStatuses: Record<string, MCPReconnectStatus>;
+  onReconnectMcp: (serverId: string) => void;
+}) {
   return (
     <section className="eaa-view eaa-tools-view" aria-label="Registered tools">
       <div className="eaa-view-header">
@@ -406,12 +422,37 @@ function ToolsView({ tools }: { tools: ToolSchema[] }) {
           const parameters = fn.parameters ?? {};
           const properties = parameters.properties ?? {};
           const required = new Set(parameters.required ?? []);
+          const mcpServerId = tool.mcp?.server_id?.trim();
+          const mcpServerName = tool.mcp?.server_name || mcpServerId || "MCP server";
+          const mcpReconnectStatus = mcpServerId ? mcpReconnectStatuses[mcpServerId] : undefined;
+          const mcpReconnectInProgress = mcpServerId ? reconnectingMcpServers.has(mcpServerId) : false;
           return (
             <article className="eaa-tool-card" key={`${fn.name ?? "tool"}-${index}`}>
-              <div>
-                <h3>{fn.name || `Tool ${index + 1}`}</h3>
-                <p>{fn.description || "No description provided."}</p>
+              <div className="eaa-tool-card-header">
+                <div>
+                  <h3>{fn.name || `Tool ${index + 1}`}</h3>
+                  {tool.mcp?.server_name ? <span className="eaa-tool-source">MCP: {tool.mcp.server_name}</span> : null}
+                </div>
+                {mcpServerId ? (
+                  <button
+                    className={`eaa-tool-action${mcpReconnectInProgress ? " eaa-tool-action-busy" : ""}`}
+                    type="button"
+                    disabled={mcpReconnectInProgress}
+                    title={`Reconnect ${mcpServerName}`}
+                    aria-label={`Reconnect ${mcpServerName}`}
+                    onClick={() => onReconnectMcp(mcpServerId)}
+                  >
+                    <RefreshCw size={15} aria-hidden="true" />
+                    <span>{mcpReconnectInProgress ? "Reconnecting" : "Reconnect"}</span>
+                  </button>
+                ) : null}
               </div>
+              <p>{fn.description || "No description provided."}</p>
+              {mcpReconnectStatus ? (
+                <div className={`eaa-tool-status eaa-tool-status-${mcpReconnectStatus.state}`}>
+                  {mcpReconnectStatus.message}
+                </div>
+              ) : null}
               <div className="eaa-argument-table">
                 {Object.keys(properties).length ? (
                   Object.entries(properties).map(([name, schema]) => (
@@ -527,6 +568,8 @@ function App() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [toolSchemas, setToolSchemas] = useState<ToolSchema[]>([]);
+  const [reconnectingMcpServers, setReconnectingMcpServers] = useState<Set<string>>(new Set());
+  const [mcpReconnectStatuses, setMcpReconnectStatuses] = useState<Record<string, MCPReconnectStatus>>({});
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [sidebarImages, setSidebarImages] = useState<ImageItem[]>([]);
@@ -763,6 +806,52 @@ function App() {
     const payload = (await response.json()) as { tools?: ToolSchema[] };
     setToolSchemas(Array.isArray(payload.tools) ? payload.tools : []);
   }, []);
+
+  const reconnectMcpServer = useCallback(
+    async (serverId: string) => {
+      if (!serverId || reconnectingMcpServers.has(serverId)) return;
+      setReconnectingMcpServers((previous) => {
+        const next = new Set(previous);
+        next.add(serverId);
+        return next;
+      });
+      setMcpReconnectStatuses((previous) => {
+        const next = { ...previous };
+        delete next[serverId];
+        return next;
+      });
+      try {
+        const response = await fetch(config.routes.mcpReconnect, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ server_id: serverId }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as { error?: string; mcp?: { server_name?: string } };
+        if (!response.ok) throw new Error(payload.error || "Reconnect failed");
+        const serverName = payload.mcp?.server_name || "MCP server";
+        setMcpReconnectStatuses((previous) => ({
+          ...previous,
+          [serverId]: { state: "success", message: `${serverName} reconnected.` },
+        }));
+        void loadToolSchemas();
+      } catch (error) {
+        setMcpReconnectStatuses((previous) => ({
+          ...previous,
+          [serverId]: {
+            state: "error",
+            message: error instanceof Error ? error.message : "Reconnect failed",
+          },
+        }));
+      } finally {
+        setReconnectingMcpServers((previous) => {
+          const next = new Set(previous);
+          next.delete(serverId);
+          return next;
+        });
+      }
+    },
+    [loadToolSchemas, reconnectingMcpServers],
+  );
 
   const loadState = useCallback(async () => {
     try {
@@ -1231,7 +1320,12 @@ function App() {
             </aside>
           </main>
         ) : activeView === "tools" ? (
-          <ToolsView tools={toolSchemas} />
+          <ToolsView
+            tools={toolSchemas}
+            reconnectingMcpServers={reconnectingMcpServers}
+            mcpReconnectStatuses={mcpReconnectStatuses}
+            onReconnectMcp={reconnectMcpServer}
+          />
         ) : (
           <SettingsView title={uiTitle} onTitleChange={setUiTitle} />
         )}

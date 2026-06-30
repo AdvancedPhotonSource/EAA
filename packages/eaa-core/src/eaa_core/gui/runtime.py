@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import queue
 import threading
@@ -18,6 +19,16 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from eaa_core.task_manager.skills import skill_catalog_to_dicts
+
+logger = logging.getLogger(__name__)
+
+
+class MCPReconnectInProgressError(RuntimeError):
+    """Raised when an MCP reconnect is already running."""
+
+
+class MCPReconnectTargetNotFoundError(LookupError):
+    """Raised when no registered MCP server matches a reconnect request."""
 
 
 @dataclass
@@ -104,6 +115,7 @@ class WebUIRuntimeController:
         self.messages: list[dict[str, Any]] = []
         self.logs: list[RuntimeLogEntry] = []
         self.max_log_entries = 500
+        self.mcp_reconnects: set[str] = set()
         self.message_event_counter = 0
         self.log_event_counter = 0
         self.approval_event_counter = 0
@@ -248,10 +260,80 @@ class WebUIRuntimeController:
     def tool_schema_snapshot(self) -> list[dict[str, Any]]:
         """Return tool schemas registered with the task manager."""
         tool_executor = getattr(self.task_manager, "tool_executor", None)
+        list_tool_ui_schemas = getattr(tool_executor, "list_tool_ui_schemas", None)
+        if callable(list_tool_ui_schemas):
+            return list_tool_ui_schemas()
         list_tool_schemas = getattr(tool_executor, "list_tool_schemas", None)
         if not callable(list_tool_schemas):
             return []
         return list_tool_schemas()
+
+    def resolve_mcp_reconnect_target(
+        self,
+        server_id: str,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Return the reconnectable MCP tool and metadata for a server id."""
+        tool_executor = getattr(self.task_manager, "tool_executor", None)
+        tool_specs = getattr(tool_executor, "tool_specs", {})
+        tool_spec_owners = getattr(tool_executor, "tool_spec_owners", {})
+        for name, spec in tool_specs.items():
+            if not getattr(spec, "model_visible", True):
+                continue
+            owner = tool_spec_owners.get(name)
+            metadata_getter = getattr(owner, "get_mcp_tool_metadata", None)
+            reconnect = getattr(owner, "reconnect", None)
+            if not callable(metadata_getter) or not callable(reconnect):
+                continue
+            metadata = dict(metadata_getter(name))
+            if metadata.get("server_id") == server_id:
+                return owner, metadata
+        raise MCPReconnectTargetNotFoundError(server_id)
+
+    def begin_mcp_reconnect(self, server_id: str) -> bool:
+        """Mark an MCP server reconnect as running."""
+        with self.lock:
+            if server_id in self.mcp_reconnects:
+                return False
+            self.mcp_reconnects.add(server_id)
+            return True
+
+    def finish_mcp_reconnect(self, server_id: str) -> None:
+        """Clear the running marker for an MCP server reconnect."""
+        with self.lock:
+            self.mcp_reconnects.discard(server_id)
+
+    async def reconnect_mcp_server(self, server_id: str) -> dict[str, Any]:
+        """Reconnect one registered MCP server from the WebUI runtime API."""
+        normalized_server_id = str(server_id or "").strip()
+        if not normalized_server_id:
+            raise ValueError("No MCP server id provided.")
+        mcp_tool, metadata = self.resolve_mcp_reconnect_target(normalized_server_id)
+        if not self.begin_mcp_reconnect(normalized_server_id):
+            raise MCPReconnectInProgressError(normalized_server_id)
+        server_name = metadata.get("server_name") or normalized_server_id
+        try:
+            self.publish_log(
+                f"Reconnecting MCP server {server_name}.",
+                source="runtime",
+                level="info",
+            )
+            await asyncio.to_thread(mcp_tool.reconnect)
+            self.publish_log(
+                f"Reconnected MCP server {server_name}.",
+                source="runtime",
+                level="info",
+            )
+            return {"ok": True, "mcp": metadata}
+        except Exception as exc:
+            logger.exception("MCP reconnect failed for %s", normalized_server_id)
+            self.publish_log(
+                f"Failed to reconnect MCP server {server_name}: {exc}",
+                source="runtime",
+                level="error",
+            )
+            raise
+        finally:
+            self.finish_mcp_reconnect(normalized_server_id)
 
     def publish_message(self, message: dict[str, Any], conversation_id: str = "primary") -> None:
         """Publish one message to live WebUI clients."""
@@ -652,6 +734,28 @@ class WebUIRuntimeServer:
         @app.get("/api/tool-schemas")
         async def tool_schemas() -> dict[str, list[dict[str, Any]]]:
             return {"tools": self.controller.tool_schema_snapshot()}
+
+        @app.post("/api/mcp/reconnect")
+        async def reconnect_mcp(payload: dict[str, Any]) -> JSONResponse:
+            try:
+                result = await self.controller.reconnect_mcp_server(
+                    str(payload.get("server_id") or "")
+                )
+            except ValueError as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+            except MCPReconnectTargetNotFoundError:
+                return JSONResponse(
+                    {"ok": False, "error": "MCP server is not registered."},
+                    status_code=404,
+                )
+            except MCPReconnectInProgressError:
+                return JSONResponse(
+                    {"ok": False, "error": "MCP reconnect is already in progress."},
+                    status_code=409,
+                )
+            except Exception as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+            return JSONResponse(result)
 
         @app.get("/api/image")
         def image(path: str) -> Any:

@@ -376,6 +376,66 @@ def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
     assert image_response.status_code == 200
 
 
+def test_runtime_reconnects_registered_mcp_server_from_tool_schema(tmp_path):
+    class ReconnectableMCPTool(BaseTool):
+        def build(self):
+            self.reconnect_calls = 0
+
+        def get_mcp_tool_metadata(self, tool_name):
+            return {
+                "server_id": "toy-server",
+                "server_name": "toy_logging",
+                "tool_name": tool_name,
+            }
+
+        def reconnect(self):
+            self.reconnect_calls += 1
+
+        @tool(name="toy.scan")
+        def scan(self) -> str:
+            return "scan"
+
+        @tool(name="toy.warn")
+        def warn(self) -> str:
+            return "warn"
+
+    reconnectable_tool = ReconnectableMCPTool()
+    task_manager = BaseTaskManager(
+        build=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.register_tools(reconnectable_tool)
+    controller = WebUIRuntimeController(task_manager)
+    client = TestClient(WebUIRuntimeServer(controller).build_app())
+
+    schemas_response = client.get("/api/tool-schemas")
+    assert schemas_response.status_code == 200
+    schemas = {
+        item["function"]["name"]: item
+        for item in schemas_response.json()["tools"]
+    }
+
+    assert schemas["toy.scan"]["mcp"]["server_id"] == "toy-server"
+    assert schemas["toy.warn"]["mcp"]["server_id"] == "toy-server"
+    assert "mcp" not in task_manager.tool_executor.list_tool_schemas()[0]
+
+    reconnect_response = client.post(
+        "/api/mcp/reconnect",
+        json={"server_id": "toy-server"},
+    )
+
+    assert reconnect_response.status_code == 200
+    assert reconnect_response.json()["mcp"]["server_name"] == "toy_logging"
+    assert reconnectable_tool.reconnect_calls == 1
+    assert [
+        log["message"]
+        for log in controller.snapshot()["logs"]
+    ] == [
+        "Reconnecting MCP server toy_logging.",
+        "Reconnected MCP server toy_logging.",
+    ]
+
+
 def test_runtime_state_uses_live_messages_not_transcript_db(tmp_path):
     task_manager = BaseTaskManager(
         build=False,

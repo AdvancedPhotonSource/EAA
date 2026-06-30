@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
@@ -26,7 +27,11 @@ class ToolExecutionResult:
 
 
 class SerialToolExecutor:
-    """Serial, thread-free tool execution for task managers."""
+    """Serial, thread-free tool execution for task managers.
+
+    This executor is also the source of truth for WebUI tool schemas and
+    tool-to-owner metadata.
+    """
 
     def __init__(
         self,
@@ -37,6 +42,7 @@ class SerialToolExecutor:
         self.approval_handler = approval_handler
         self.tools: list[BaseTool] = tools if tools is not None else []
         self.tool_specs: dict[str, ExposedToolSpec] = {}
+        self.tool_spec_owners: dict[str, BaseTool] = {}
         self.tool_execution_history: list[dict[str, Any]] = []
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
@@ -61,6 +67,7 @@ class SerialToolExecutor:
                     model_visible=exposed.model_visible,
                 )
                 self.tool_specs[spec.name] = spec
+                self.tool_spec_owners[spec.name] = tool
 
     def unregister_tool(self, tool: BaseTool) -> None:
         """Unregister one tool object and its exposed model-visible specs."""
@@ -75,6 +82,7 @@ class SerialToolExecutor:
         for exposed in exposed_tools:
             if exposed.model_visible:
                 self.tool_specs.pop(exposed.name, None)
+                self.tool_spec_owners.pop(exposed.name, None)
 
     def list_tool_schemas(self) -> list[dict[str, Any]]:
         """Return model-facing OpenAI tool schemas."""
@@ -83,6 +91,22 @@ class SerialToolExecutor:
             for name, spec in self.tool_specs.items()
             if spec.model_visible
         ]
+
+    def list_tool_ui_schemas(self) -> list[dict[str, Any]]:
+        """Return WebUI tool schemas with display-only metadata."""
+        schemas = []
+        for name, spec in self.tool_specs.items():
+            if not spec.model_visible:
+                continue
+            schema = copy.deepcopy(
+                spec.schema or generate_openai_tool_schema(tool_name=name, func=spec.function)
+            )
+            owner = self.tool_spec_owners.get(name)
+            metadata_getter = getattr(owner, "get_mcp_tool_metadata", None)
+            if callable(metadata_getter):
+                schema["mcp"] = metadata_getter(name)
+            schemas.append(schema)
+        return schemas
 
     def execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[ToolExecutionResult]:
         """Execute assistant-requested tool calls serially."""

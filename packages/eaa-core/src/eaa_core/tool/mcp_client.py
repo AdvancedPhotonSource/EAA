@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import logging
+import threading
 import time
 from typing import Annotated, Any
 
@@ -50,6 +51,7 @@ class MCPTool(BaseTool):
         self._client = None
         self._connected = False
         self._loop = asyncio.new_event_loop()
+        self._loop_lock = threading.RLock()
         self.runtime_log_handler = None
         self._active_tool_name: str | None = None
         self._last_log_text: str | None = None
@@ -85,7 +87,60 @@ class MCPTool(BaseTool):
         Any
             Coroutine result.
         """
-        return self._loop.run_until_complete(coroutine)
+        with self._loop_lock:
+            return self._loop.run_until_complete(coroutine)
+
+    def reconnect(self) -> None:
+        """Reconnect the configured MCP client on its dedicated event loop.
+
+        Returns
+        -------
+        None
+        """
+        self._run_coroutine(self.connect())
+
+    def get_mcp_tool_metadata(self, tool_name: str) -> dict[str, str]:
+        """Return WebUI metadata for one remote MCP tool.
+
+        Parameters
+        ----------
+        tool_name : str
+            Model-visible remote tool name.
+
+        Returns
+        -------
+        dict[str, str]
+            UI-only metadata identifying the owning MCP client/server.
+        """
+        server_name = self._resolve_configured_server_name(tool_name)
+        return {
+            "server_id": f"mcp-tool-{id(self)}",
+            "server_name": server_name,
+            "tool_name": tool_name,
+        }
+
+    def _resolve_configured_server_name(self, tool_name: str) -> str:
+        """Resolve the configured MCP server name for display."""
+        server_names = self._configured_server_names()
+        if len(server_names) == 1:
+            return server_names[0]
+        for server_name in sorted(server_names, key=len, reverse=True):
+            if tool_name.startswith(f"{server_name}_"):
+                return server_name
+        if server_names:
+            return ", ".join(server_names)
+        return self.name
+
+    def _configured_server_names(self) -> list[str]:
+        """Return MCP server names from a FastMCP-compatible config."""
+        if isinstance(self.config, dict):
+            servers = self.config.get("mcpServers")
+            if isinstance(servers, dict):
+                return [str(name) for name in servers]
+        servers = getattr(self.config, "mcpServers", None)
+        if isinstance(servers, dict):
+            return [str(name) for name in servers]
+        return []
 
     async def _ensure_connected(self) -> None:
         """Ensure the MCP client is connected.
@@ -192,10 +247,12 @@ class MCPTool(BaseTool):
         -------
         None
         """
-        if self._client is not None and self._connected:
-            await self._client.__aexit__(None, None, None)
-            self._connected = False
-            self._client = None
+        client = self._client
+        connected = self._connected
+        self._client = None
+        self._connected = False
+        if client is not None and connected:
+            await client.__aexit__(None, None, None)
 
     async def list_tools(self):
         """List the remote MCP tools.
