@@ -273,4 +273,4 @@ uv run --extra docs mkdocs build --strict
 ```
 
 The generated site will be in `site/`. The GitHub Actions workflow in
-`.github/workflows/docs.yml` publishes it to `https://mdw771.github.io/eaa/`.
+`.github/workflows/docs.yml` publishes it to `https://advancedphotonsource.github.io/EAA/`.

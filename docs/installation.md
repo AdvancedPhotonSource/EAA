@@ -61,7 +61,7 @@ This repository includes `mkdocs.yml` and
 publish it with GitHub Pages at:
 
 ```text
-https://mdw771.github.io/eaa/
+https://advancedphotonsource.github.io/EAA/
 ```
 
 In the repository settings, configure GitHub Pages to use **GitHub Actions** as
