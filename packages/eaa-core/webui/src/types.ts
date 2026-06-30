@@ -25,6 +25,7 @@ export type WebUIMessage = {
   content?: string;
   image?: string;
   images?: string[];
+  timestamp?: string;
   tool_calls?: unknown;
   pending?: boolean;
   approval_id?: string;

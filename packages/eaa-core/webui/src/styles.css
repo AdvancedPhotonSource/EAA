@@ -363,6 +363,13 @@ button {
   font-weight: 750;
 }
 
+.eaa-message-time {
+  color: #7b8494;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
 .eaa-message-body {
   background: #f8fafc;
   border: 1px solid #dfe6f0;

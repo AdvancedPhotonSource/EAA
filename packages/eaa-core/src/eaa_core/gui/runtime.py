@@ -350,10 +350,17 @@ class WebUIRuntimeController:
             if "id" not in payload:
                 self.message_event_counter += 1
                 payload["id"] = f"runtime-{self.message_event_counter}"
+            if "timestamp" not in payload:
+                payload["timestamp"] = self.runtime_timestamp()
             conversation.messages.append(payload)
             if conversation_id == "primary":
                 self.messages.append(payload)
         self.publish("message.created", {"conversation_id": conversation_id, "message": payload})
+
+    @staticmethod
+    def runtime_timestamp() -> str:
+        """Return an ISO timestamp for runtime-owned display events."""
+        return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     def publish_log(
         self,

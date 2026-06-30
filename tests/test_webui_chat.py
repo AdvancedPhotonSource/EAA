@@ -1,6 +1,7 @@
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from fastapi.testclient import TestClient
 from fastapi.responses import Response
 
@@ -15,6 +16,11 @@ from eaa_core.gui.html import (
 from eaa_core.gui.runtime import WebUIRuntimeController
 from eaa_core.gui.runtime import WebUIRuntimeServer
 from eaa_core.tool.base import BaseTool, tool
+
+
+def assert_runtime_timestamp(timestamp):
+    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None
 
 
 def test_parse_images_field_single_data_url():
@@ -112,6 +118,24 @@ def test_runtime_controller_publishes_display_logs(tmp_path):
     assert first_event.payload["log"]["message"] == "first"
     assert second_event.payload["log"]["message"] == "second"
     assert snapshot["logs"] == [second_event.payload["log"]]
+
+
+def test_runtime_controller_stores_message_timestamp(tmp_path):
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager)
+    subscriber = controller.subscribe()
+
+    controller.publish_message(
+        {
+            "role": "assistant",
+            "content": "Text result",
+        }
+    )
+
+    event_message = subscriber.get_nowait().payload["message"]
+    snapshot_message = controller.snapshot()["messages"][0]
+    assert_runtime_timestamp(event_message["timestamp"])
+    assert snapshot_message["timestamp"] == event_message["timestamp"]
 
 
 def test_task_manager_registers_tools_with_runtime(tmp_path):
@@ -452,7 +476,10 @@ def test_runtime_state_uses_live_messages_not_transcript_db(tmp_path):
 
     controller.publish_message({"role": "system", "content": "live only"})
 
-    assert client.get("/api/state").json()["messages"] == [
+    messages = client.get("/api/state").json()["messages"]
+    timestamp = messages[0].pop("timestamp")
+    assert_runtime_timestamp(timestamp)
+    assert messages == [
         {"role": "system", "content": "live only", "id": "runtime-1"}
     ]
 
@@ -480,6 +507,8 @@ def test_runtime_publish_normalizes_structured_content_for_display(tmp_path):
 
     assert task_manager.runtime_controller is not None
     messages = task_manager.runtime_controller.snapshot()["messages"]
+    timestamp = messages[0].pop("timestamp")
+    assert_runtime_timestamp(timestamp)
     assert messages == [
         {
             "role": "system",

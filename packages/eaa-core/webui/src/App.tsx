@@ -166,8 +166,6 @@ const imagePathTitle = (pathOrSource: unknown) => {
   return name || null;
 };
 
-const currentImageTimeTitle = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-
 const isApprovalMessage = (message: WebUIMessage) =>
   String(message.role ?? "") === "system" && /Approve\?\s*\[y\/N\]:/i.test(String(message.content ?? ""));
 
@@ -219,6 +217,11 @@ const formatLogTime = (timestamp: string) => {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+};
+
+const imageTimestampTitle = (message: WebUIMessage) => {
+  if (!message.timestamp) return null;
+  return formatLogTime(message.timestamp) || null;
 };
 
 function MarkdownBlock({ content, role }: { content: unknown; role: string }) {
@@ -296,6 +299,7 @@ function MessageView({
     return requestedAt + message.approval_timeout_seconds * 1000;
   }, [message.approval_expires_at, message.approval_requested_at, message.approval_timeout_seconds]);
   const approvalExpired = approvalRemainingMs !== null && approvalRemainingMs <= 0;
+  const messageTime = message.timestamp ? formatLogTime(message.timestamp) : "";
   const imageSources = useMemo(() => {
     const sources: string[] = [];
     const seen = new Set<string>();
@@ -341,6 +345,11 @@ function MessageView({
       <div className="eaa-message-meta">
         <div className={`eaa-avatar eaa-avatar-${role}`}>{roleAvatarLetter(role)}</div>
         <div className="eaa-role">{roleLabel(role)}</div>
+        {messageTime ? (
+          <time className="eaa-message-time" dateTime={message.timestamp}>
+            {messageTime}
+          </time>
+        ) : null}
       </div>
       <div className="eaa-message-body">
         {content ? (
@@ -584,7 +593,6 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const pendingMessagesRef = useRef<Map<string, string>>(new Map());
-  const imageFallbackTitlesRef = useRef<Map<string, string>>(new Map());
   const closedConversationIdsRef = useRef<Set<string>>(new Set());
   const infoTimeoutRef = useRef<number | null>(null);
 
@@ -652,12 +660,9 @@ function App() {
         if (seen.has(source)) return;
         seen.add(source);
         const pathTitle = imagePathTitle(image);
-        if (!pathTitle && !imageFallbackTitlesRef.current.has(source)) {
-          imageFallbackTitlesRef.current.set(source, currentImageTimeTitle());
-        }
         items.push({
           source,
-          title: pathTitle ?? imageFallbackTitlesRef.current.get(source) ?? currentImageTimeTitle(),
+          title: pathTitle ?? imageTimestampTitle(message) ?? "Image",
           messageDomId: messageDomId(activeConversationId, message, index),
         });
       };
