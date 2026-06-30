@@ -18,6 +18,7 @@ from eaa_core.gui.runtime import WebUIRuntimeController, WebUIRuntimeServer
 from eaa_core.message_proc import (
     complete_unresponded_tool_calls,
     convert_tagged_text_to_openai_message,
+    extract_message_text,
     generate_openai_message,
     get_message_elements_as_text,
     get_message_preview,
@@ -185,6 +186,7 @@ class BaseTaskManager:
         self.skill_catalog: list[SkillMetadata] = discover_skills(self.skill_dirs)
         self.use_webui = use_webui
         self.coding_tool_request_approval = True
+        self.auto_image_captioner_enabled = False
         self.prune_checkpoints = prune_checkpoints
         self.is_subagent = is_subagent
         self.checkpoint_db_path = checkpoint_db_path
@@ -279,6 +281,14 @@ class BaseTaskManager:
         return render_prompt_template(
             "eaa_core.task_manager.prompts",
             "subagent.md",
+            {},
+        )
+
+    def get_image_captioning_prompt(self) -> str:
+        """Return the prompt used for automatic image captioning."""
+        return render_prompt_template(
+            "eaa_core.task_manager.prompts",
+            "image_captioning.md",
             {},
         )
 
@@ -1111,6 +1121,68 @@ class BaseTaskManager:
         if context is not None:
             messages.extend(context)
         return messages
+
+    def build_image_captioning_message(
+        self,
+        image_message: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build a fresh-context user message for captioning image content.
+
+        Parameters
+        ----------
+        image_message : dict[str, Any]
+            OpenAI-style message whose content includes one or more image
+            payloads.
+
+        Returns
+        -------
+        dict[str, Any]
+            User message containing only the captioning prompt and image
+            payloads.
+        """
+        content = image_message.get("content")
+        if not isinstance(content, list):
+            raise ValueError("Image captioning requires a multimodal message.")
+        image_parts = []
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            image_url = part.get("image_url")
+            if not isinstance(image_url, dict):
+                continue
+            image_parts.append({"type": "image_url", "image_url": dict(image_url)})
+        if not image_parts:
+            raise ValueError("Image captioning requires at least one image payload.")
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": self.get_image_captioning_prompt()},
+                *image_parts,
+            ],
+        }
+
+    def invoke_image_captioning_model(self, image_message: dict[str, Any]) -> str:
+        """Caption image content with the main model and a fresh context.
+
+        Parameters
+        ----------
+        image_message : dict[str, Any]
+            OpenAI-style message whose content includes one or more image
+            payloads.
+
+        Returns
+        -------
+        str
+            Caption text returned by the model.
+        """
+        if self.model is None:
+            raise RuntimeError("No model is configured for this task manager.")
+        response = invoke_chat_model(
+            self.model,
+            messages=[self.build_image_captioning_message(image_message)],
+            tool_schemas=None,
+        )
+        return extract_message_text(response).strip()
 
     def invoke_model_raw(
         self,

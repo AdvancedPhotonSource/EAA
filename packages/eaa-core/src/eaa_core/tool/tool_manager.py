@@ -11,6 +11,7 @@ from eaa_core.tool.coding import (
     SandboxType,
     SimplePythonEvalTool,
 )
+from eaa_core.tool.image_captioning import ImageCaptioning
 from eaa_core.tool.subagent import SubagentTool
 from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
 
@@ -54,6 +55,7 @@ class ToolManager(list[BaseTool]):
         self.simple_python_eval_tool = SimplePythonEvalTool()
         self.file_system_tool = FileSystemTool(read_whitelist_paths=list(skill_dirs))
         self.image_rendering_tool = ImageRenderingTool()
+        self.image_captioning = ImageCaptioning(task_manager)
         self.python_coding_tool = PythonCodingTool(
             sandbox_type=self.coding_tool_sandbox_type,
             bubblewrap_visible_dirs=self.bubblewrap_visible_dirs,
@@ -85,6 +87,8 @@ class ToolManager(list[BaseTool]):
             tools.append(self.file_system_tool)
         if "image_rendering_tool" not in self._disabled_tool_names:
             tools.append(self.image_rendering_tool)
+        if "image_captioning" not in self._disabled_tool_names:
+            tools.append(self.image_captioning)
         if "python_coding_tool" not in self._disabled_tool_names:
             tools.append(self.python_coding_tool)
         if "bash_coding_tool" not in self._disabled_tool_names:
@@ -138,6 +142,11 @@ class ToolManager(list[BaseTool]):
         """Disable the image rendering workspace tool."""
         self._disabled_tool_names.add("image_rendering_tool")
         self.unregister_tool(self.image_rendering_tool)
+
+    def disable_image_captioning(self) -> None:
+        """Disable the image-captioning control tool."""
+        self._disabled_tool_names.add("image_captioning")
+        self.unregister_tool(self.image_captioning)
 
     def disable_python_coding_tool(self) -> None:
         """Disable the Python coding tool."""
@@ -263,6 +272,8 @@ class ToolManager(list[BaseTool]):
             self.file_system_tool = tool
         if isinstance(tool, ImageRenderingTool):
             self.image_rendering_tool = tool
+        if isinstance(tool, ImageCaptioning):
+            self.image_captioning = tool
         if isinstance(tool, PythonCodingTool):
             self.python_coding_tool = tool
         if isinstance(tool, BashCodingTool):

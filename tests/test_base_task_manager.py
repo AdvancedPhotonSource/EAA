@@ -1,3 +1,4 @@
+import json
 import httpx
 import pytest
 import sqlite3
@@ -13,6 +14,7 @@ from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.persistence import SQLiteTranscriptStore
 from eaa_core.task_manager.state import ChatGraphState, ChatRuntimeContext, TaskManagerState
 from eaa_core.tool.base import BaseTool, tool
+from eaa_core.tool.image_captioning import ImageCaptioning
 from eaa_core.tool.subagent import SubagentTool
 from eaa_core.tool.tool_manager import ToolManager
 
@@ -194,6 +196,25 @@ def test_default_tools_include_subagent_tool():
         in task_manager.tool_executor.tool_specs
     )
     assert "subagent_tool.launch_subtask_manager" in task_manager.tool_executor.tool_specs
+    assert isinstance(task_manager.tool_manager.image_captioning, ImageCaptioning)
+    assert (
+        "image_captioning.toggle_auto_image_captioner"
+        in task_manager.tool_executor.tool_specs
+    )
+
+
+def test_image_captioning_toggle_sets_task_manager_flag():
+    task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
+
+    result = task_manager.tool_manager.image_captioning.toggle_auto_image_captioner(True)
+
+    assert result == {"auto_image_captioner_enabled": True}
+    assert task_manager.auto_image_captioner_enabled is True
+
+    result = task_manager.tool_manager.image_captioning.toggle_auto_image_captioner(False)
+
+    assert result == {"auto_image_captioner_enabled": False}
+    assert task_manager.auto_image_captioner_enabled is False
 
 
 def test_task_manager_has_default_and_custom_name():
@@ -1422,6 +1443,101 @@ def test_image_followup_converts_followup_exceptions_into_messages(monkeypatch):
     assert "processing the tool follow-up output" in state.messages[-1]["content"]
     assert "missing.png" in state.messages[-1]["content"]
     assert state.full_history[-1] == state.messages[-1]
+
+
+def test_chat_image_followup_adds_auto_caption_with_fresh_context(
+    tmp_path,
+    monkeypatch,
+):
+    from PIL import Image
+
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (1, 1), color=(0, 255, 0)).save(image_path)
+    task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
+    task_manager.model = object()
+    task_manager.auto_image_captioner_enabled = True
+    captured = {}
+
+    def fake_invoke_chat_model(llm, messages, tool_schemas=None):
+        captured["llm"] = llm
+        captured["messages"] = messages
+        captured["tool_schemas"] = tool_schemas
+        return {"role": "assistant", "content": "A tiny green square."}
+
+    monkeypatch.setattr("eaa_core.task_manager.base.invoke_chat_model", fake_invoke_chat_model)
+
+    state = ChatGraphState(
+        messages=[
+            {"role": "assistant", "content": "call tool", "tool_calls": [{"id": "1"}]},
+            {
+                "role": "tool",
+                "content": json.dumps({"img_path": str(image_path)}),
+                "tool_call_id": "1",
+            },
+        ],
+        full_history=[
+            {"role": "assistant", "content": "call tool", "tool_calls": [{"id": "1"}]},
+            {
+                "role": "tool",
+                "content": json.dumps({"img_path": str(image_path)}),
+                "tool_call_id": "1",
+            },
+        ],
+    )
+
+    result = task_manager.node_factory.image_followup(state)
+
+    assert result == state.model_dump()
+    followup_message = state.messages[-1]
+    assert followup_message["role"] == "user"
+    assert followup_message["content"][0]["type"] == "text"
+    assert "Here is the image the tool returned." in followup_message["content"][0]["text"]
+    assert "Image caption:\nA tiny green square." in followup_message["content"][0]["text"]
+    assert followup_message["content"][1]["type"] == "image_url"
+    assert captured["llm"] is task_manager.model
+    assert captured["tool_schemas"] is None
+    assert len(captured["messages"]) == 1
+    caption_message = captured["messages"][0]
+    assert caption_message["role"] == "user"
+    assert caption_message["content"][0] == {
+        "type": "text",
+        "text": task_manager.get_image_captioning_prompt(),
+    }
+    assert caption_message["content"][1]["type"] == "image_url"
+
+
+def test_task_image_followup_does_not_add_auto_caption(tmp_path, monkeypatch):
+    from PIL import Image
+
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (1, 1), color=(0, 0, 255)).save(image_path)
+    task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
+    task_manager.model = object()
+    task_manager.auto_image_captioner_enabled = True
+
+    def fail_if_caption_model_is_called(*args, **kwargs):
+        raise AssertionError("Task follow-up should not invoke image captioning.")
+
+    monkeypatch.setattr(
+        task_manager,
+        "invoke_image_captioning_model",
+        fail_if_caption_model_is_called,
+    )
+
+    state = TaskManagerState(
+        messages=[
+            {"role": "assistant", "content": "call tool", "tool_calls": [{"id": "1"}]},
+            {
+                "role": "tool",
+                "content": json.dumps({"img_path": str(image_path)}),
+                "tool_call_id": "1",
+            },
+        ],
+    )
+
+    task_manager.node_factory.image_followup(state)
+
+    assert "Image caption:" not in state.messages[-1]["content"][0]["text"]
 
 
 def test_memory_llm_config_overrides_embedding_client_connection(monkeypatch):

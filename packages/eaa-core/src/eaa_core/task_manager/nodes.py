@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from langgraph.graph import END
@@ -9,6 +10,7 @@ from eaa_core.exceptions import MaxRoundsReached
 from eaa_core.message_proc import (
     complete_unresponded_tool_calls,
     generate_openai_message,
+    get_message_elements_as_text,
     has_tool_call,
     print_message,
     purge_context_images,
@@ -22,6 +24,8 @@ from eaa_core.task_manager.state import (
 
 if TYPE_CHECKING:
     from eaa_core.task_manager.base import BaseTaskManager
+
+logger = logging.getLogger(__name__)
 
 
 class NodeFactory:
@@ -630,6 +634,58 @@ class NodeFactory:
             )
         return followup_messages
 
+    @staticmethod
+    def append_caption_to_message_text(
+        message: dict[str, object],
+        caption: str,
+    ) -> None:
+        """Append an image caption to the text portion of a message."""
+        caption = caption.strip()
+        if not caption:
+            return
+        caption_text = f"Image caption:\n{caption}"
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = (
+                f"{content.rstrip()}\n\n{caption_text}" if content.strip() else caption_text
+            )
+            return
+        if not isinstance(content, list):
+            message["content"] = caption_text
+            return
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "text":
+                continue
+            existing_text = str(part.get("text") or "")
+            part["text"] = (
+                f"{existing_text.rstrip()}\n\n{caption_text}"
+                if existing_text.strip()
+                else caption_text
+            )
+            return
+        content.insert(0, {"type": "text", "text": caption_text})
+
+    def add_auto_image_captions(
+        self,
+        followup_messages: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Add automatic captions to image-bearing follow-up messages."""
+        if not self.task_manager.auto_image_captioner_enabled:
+            return followup_messages
+        for message in followup_messages:
+            if get_message_elements_as_text(message)["image"] is None:
+                continue
+            try:
+                caption = self.task_manager.invoke_image_captioning_model(message)
+            except Exception as exc:
+                logger.exception("Automatic image captioning failed.")
+                caption = (
+                    "Automatic image captioning was enabled, but caption "
+                    f"generation failed: {exc}"
+                )
+            self.append_caption_to_message_text(message, caption)
+        return followup_messages
+
     def image_followup(
         self,
         state: TaskManagerState,
@@ -680,6 +736,7 @@ class NodeFactory:
                     "Here is the image the tool returned.",
                 ),
             )
+            followup_messages = self.add_auto_image_captions(followup_messages)
             self.apply_followup_messages_for_state(
                 state,
                 followup_messages,
