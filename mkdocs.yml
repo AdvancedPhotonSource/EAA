@@ -1,0 +1,37 @@
+site_name: Experiment Automation Agents
+site_url: https://mdw771.github.io/eaa/
+docs_dir: docs
+site_dir: site
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.tracking
+    - navigation.top
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Overview: guide.md
+      - Installation: installation.md
+      - Introduction: introduction.md
+      - LLM Config: llm-config.md
+      - Task Manager: task-manager.md
+      - Tools: tools.md
+      - Creating Async-Safe MCP Servers: creating-async-safe-mcp-servers.md
+      - Skills: skills.md
+      - Memory: memory.md
+      - WebUI: webui.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences

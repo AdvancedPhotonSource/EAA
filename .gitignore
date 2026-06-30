@@ -21,6 +21,7 @@ skill_factory/
 AGENTS.md
 CLAUDE.md
 docs/_build/
+site/
 
 # Images
 **/*.png

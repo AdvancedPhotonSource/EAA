@@ -30,8 +30,7 @@ bo = [
     "botorch",
 ]
 docs = [
-    "sphinx",
-    "pydata-sphinx-theme",
+    "mkdocs-material",
 ]
 memory_chroma = [
     "chromadb",

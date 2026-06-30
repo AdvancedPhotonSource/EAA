@@ -265,14 +265,12 @@ python -m eaa_core.cli install-skills --destination ~/.eaa_skills
 
 ## Documentation
 
-Sphinx documentation lives under `docs/` and is configured for Read the Docs.
-Build it locally with:
+Documentation lives under `docs/` and is built with Material for MkDocs. Build
+it locally with:
 
 ```bash
-uv sync --extra docs
-source .venv/bin/activate
-cd docs
-make html
+uv run --extra docs mkdocs build --strict
 ```
 
-The generated site will be in `docs/_build/html/`.
+The generated site will be in `site/`. The GitHub Actions workflow in
+`.github/workflows/docs.yml` publishes it to `https://mdw771.github.io/eaa/`.

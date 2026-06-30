@@ -13,6 +13,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+docs = [
+    "mkdocs-material",
+]
 bo = [
     "eaa-core[bo]",
     "eaa-imaging[bo]",
