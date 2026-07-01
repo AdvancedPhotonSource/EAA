@@ -14,14 +14,27 @@
 Construction options that matter most in practice are:
 
 - `llm_config`
+- `name`
 - `memory_config`
 - `tools`
 - `skill_dirs`
 - `checkpoint_db_path`
+- `session_id`
+- `transcript_db_path`
+- `transcript_table_name`
 - `use_webui`
-- `use_coding_tools`
-- `run_codes_in_sandbox`
+- `webui_runtime_host`
+- `webui_runtime_port`
+- `webui_upload_dir`
 - `prune_checkpoints`
+- `build`
+- `is_subagent`
+
+`session_db_path` is no longer supported. Use `checkpoint_db_path` for
+LangGraph checkpoints and `transcript_db_path` for durable transcript display.
+Built-in coding, workspace, image-captioning, uv, and subagent tools are
+configured after construction through `task_manager.tool_manager`; they are not
+constructor flags.
 
 ## Built-in graphs
 
@@ -82,9 +95,9 @@ class CustomTaskManager(BaseTaskManager):
         self.set_active_state(CustomState.model_validate(final_state), "task_graph")
 ```
 
-**Status note:** The repository currently does not ship built-in task-manager
-subclasses that define their own `task_graph`. The custom graph hook is present
-for extension work.
+Built-in graph-based examples include `MonitoringTaskManager`,
+`ScanningMicroscopeFocusingTaskManager`, and `MultiAgentROISearchTaskManager`.
+Other task managers use the base chat graph or direct Python orchestration.
 
 ### Custom workflow without a graph
 
@@ -96,7 +109,8 @@ The relevant helpers are:
 
 - `record_system_message()` for narrative progress updates
 - `update_message_history()` for explicit transcript mutations
-- `add_webui_message_to_db()` for display-only transcript messages
+- `publish_webui_message()` for live WebUI display messages
+- `record_transcript_message()` for durable transcript writes
 - `run_conversation()` if control should fall back to free-form chat after the
   analytical workflow finishes
 
@@ -123,5 +137,7 @@ Important details:
 
 - `prune_checkpoints=True` keeps only the newest checkpoint per graph thread
 - chat and task graph each get their own checkpoint thread id
-- the WebUI reads transcript messages from `transcript_db_path` through the
-  agent runtime API
+- live WebUI messages, approvals, interrupts, and input state are owned by the
+  runtime controller
+- `transcript_db_path` is a durable transcript log written by task-manager
+  history helpers

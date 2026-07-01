@@ -26,3 +26,4 @@ site/
 # Images
 **/*.png
 **/*.tiff
+!docs/assets/*.png

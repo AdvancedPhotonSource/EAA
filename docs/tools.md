@@ -1,6 +1,6 @@
 # Tools
 
-## BaseTool
+## Tool model
 
 EAA tools are stateful Python objects derived from `BaseTool`. Tool methods are
 exposed by decorating them with `@tool(name=...)`.
@@ -8,22 +8,56 @@ exposed by decorating them with `@tool(name=...)`.
 A typical tool looks like this:
 
 ```python
+from typing import Annotated
+
 from eaa_core.tool.base import BaseTool, tool
 
 
 class ExampleTool(BaseTool):
-    @tool(name="add")
-    def add(self, a: float, b: float) -> float:
+    @tool(name="example_tool.add")
+    def add(
+        self,
+        a: Annotated[float, "The first addend."],
+        b: Annotated[float, "The second addend."],
+    ) -> float:
         return a + b
 ```
 
-Tool execution normalizes every result into a JSON object. Scalar returns are
-wrapped as `{"result": ...}`, while image-producing tools should surface the
-path through `{"img_path": "..."}`.
-
 When a `BaseTool` instance is created, it discovers decorated methods and builds
-`exposed_tools` metadata that the task manager can register with the
-model-facing tool executor.
+`exposed_tools` metadata. The task manager registers that metadata with its
+`SerialToolExecutor`.
+
+Tool execution normalizes every result into a JSON object:
+
+- dictionary returns are passed through
+- scalar returns are wrapped as `{"result": ...}`
+- string or list outputs that look like image paths are surfaced as
+  `{"img_path": ...}`
+- `image_path` and `image_paths` keys are normalized to `img_path`
+
+Image-producing tools should return `{"img_path": "/path/to/image.png"}` or a
+list of image paths under `img_path`.
+
+## Registering tools
+
+Pass tools at construction time:
+
+```python
+task_manager = BaseTaskManager(
+    llm_config=llm_config,
+    tools=[example_tool],
+)
+```
+
+Register additional tools after construction with the task-manager API:
+
+```python
+task_manager.register_tools(extra_tool)
+task_manager.register_tools([first_tool, second_tool])
+```
+
+Tool names must be unique across model-visible exposed methods. If a new tool
+would duplicate already registered exposed tool names, it is skipped.
 
 ## Thread safety and serial execution
 
@@ -41,18 +75,210 @@ model for the current codebase.
 
 ## Approval gates
 
-Each tool instance can require approval by setting `require_approval=True`. When
-a tool call needs approval, the task manager routes the decision through its
-normal input path, including the WebUI path when `use_webui=True`.
+Each tool instance can require approval by setting `require_approval=True`. A
+decorated method can also supply its own `require_approval` value or predicate.
+When a tool call needs approval, the task manager routes the decision through
+its normal input path, including the WebUI path when `use_webui=True`.
 
-## Serving built-in tools as MCP servers
+```python
+tool = ExampleTool(require_approval=True)
+task_manager.register_tools(tool)
+```
+
+## Built-in tools
+
+`BaseTaskManager` creates a `ToolManager` at `task_manager.tool_manager`. By
+default, the tool manager registers user-provided tools first, then these
+built-in tools:
+
+- `simple_python_eval_tool.evaluate_python_expression`: evaluates simple Python
+  expressions
+- `file_system_tool.read_file`, `write_file`, `edit_file`,
+  `replace_file_lines`: workspace-aware text file operations
+- `image_rendering_tool.render_image_for_agent`: renders PNG, JPEG, TIFF, and
+  first-page PDF files for model inspection
+- `image_captioning.toggle_auto_image_captioner`: toggles automatic captions
+  for images returned by tools
+- `python_coding_tool.execute`: runs Python source in a subprocess
+- `bash_coding_tool.execute`: runs Bash source in a subprocess
+- `uv_tool.uv`: runs bounded `uv` commands from a configured working directory
+- `subagent_tool.launch_subagent`, `list_registered_task_managers`,
+  `launch_subtask_manager`: launches delegated chat agents or registered
+  task-manager workflows
+
+Disable built-in tools through the tool manager:
+
+```python
+task_manager.tool_manager.disable_file_system_tool()
+task_manager.tool_manager.disable_image_rendering_tool()
+task_manager.tool_manager.disable_workspace_tool()
+task_manager.tool_manager.disable_python_coding_tool()
+task_manager.tool_manager.disable_bash_coding_tool()
+task_manager.tool_manager.disable_coding_tool()
+task_manager.tool_manager.disable_uv_tool()
+task_manager.tool_manager.disable_subagent_tool()
+task_manager.tool_manager.disable_image_captioning()
+task_manager.tool_manager.disable_simple_python_eval_tool()
+```
+
+## Workspace tools
+
+Workspace tools are provided by `eaa_core.tool.workspace`.
+
+`FileSystemTool` accepts:
+
+- `workspace_path`: root used to resolve relative paths
+- `read_whitelist_paths`: additional trusted directories that do not require
+  approval for file-path operations in the current implementation
+- `require_approval`: fallback approval setting
+
+`ImageRenderingTool` accepts:
+
+- `workspace_path`: root used to resolve relative image paths
+- `render_directory`: directory where temporary rendered PNGs are written
+- `require_approval`: fallback approval setting
+
+`UvTool` accepts:
+
+- `working_directory`: directory where `uv` commands run
+- `require_approval`: fallback setting, although the exposed `uv_tool.uv`
+  method always requires approval
+
+To replace default workspace tool handles, pass configured instances in the
+task-manager constructor:
+
+```python
+from eaa_core.tool.workspace import FileSystemTool, ImageRenderingTool, UvTool
+
+workspace_tool = FileSystemTool(
+    workspace_path="/data/beamtime/run-42",
+    read_whitelist_paths=[
+        "/data/beamtime/run-42/skills",
+        "/data/shared/reference-docs",
+    ],
+)
+image_tool = ImageRenderingTool(
+    workspace_path="/data/beamtime/run-42",
+    render_directory="/data/beamtime/run-42/.tmp/rendered_images",
+)
+uv_tool = UvTool(working_directory="/data/beamtime/run-42")
+
+task_manager = BaseTaskManager(
+    llm_config=llm_config,
+    tools=[workspace_tool, image_tool, uv_tool],
+    skill_dirs=["/data/beamtime/run-42/skills"],
+)
+```
+
+You can also disable a default tool and register a replacement after
+construction:
+
+```python
+task_manager.tool_manager.disable_file_system_tool()
+task_manager.register_tools(
+    FileSystemTool(
+        workspace_path="/data/beamtime/run-42",
+        read_whitelist_paths=["/data/shared/reference-docs"],
+    )
+)
+```
+
+## Coding tools
+
+The Python and Bash coding tools are enabled by default and require approval by
+default. Configure approval through `ToolManager`:
+
+```python
+task_manager.tool_manager.set_coding_tool_request_approval(False)
+```
+
+The same setting is available inside chat:
+
+```text
+/setcodingtoolapproval false
+```
+
+Configure sandboxing for both coding tools:
+
+```python
+task_manager.tool_manager.set_coding_tool_sandbox_type(
+    "bubblewrap",
+    visible_dirs=["/data/shared", "/data/beamtime/run-42"],
+)
+```
+
+Supported sandbox values are `None`, `"bubblewrap"`, and `"container"`. The
+chat command equivalent is:
+
+```text
+/setcodingtoolsandboxtype bubblewrap /data/shared /data/beamtime/run-42
+```
+
+Use `none` in the chat command to execute directly on the host:
+
+```text
+/setcodingtoolsandboxtype none
+```
+
+## Subagent tool
+
+The default subagent tool exposes two patterns.
+
+`subagent_tool.launch_subagent` creates a fresh `BaseTaskManager` that inherits
+the parent LLM config, memory config, registered tools except the subagent tool,
+and skill directories. It runs one delegated chat task and returns the final
+assistant response.
+
+`subagent_tool.launch_subtask_manager` runs a pre-registered task manager's
+`run()` method. Register those managers through the tool handle:
+
+```python
+analysis_manager = MyAnalysisTaskManager(
+    name="analysis",
+    llm_config=llm_config,
+    tools=[analysis_tool],
+)
+
+task_manager.tool_manager.subagent_tool.add_task_managers(analysis_manager)
+```
+
+Registered task managers must have a non-empty unique `name` and a callable
+`run` method. The model can inspect the registry with
+`subagent_tool.list_registered_task_managers` and launch one with:
+
+```json
+{
+  "task_manager_name": "analysis",
+  "task_manager_kwargs": {
+    "sample_id": "sample-17"
+  }
+}
+```
+
+Subagents created by `launch_subagent` are marked with `is_subagent=True`, so
+they do not receive another subagent-launching tool.
+
+## Image captioning
+
+`image_captioning.toggle_auto_image_captioner` updates
+`task_manager.auto_image_captioner_enabled`. When enabled, image-bearing tool
+results are followed by an automatic image-captioning step using the task
+manager's main chat model.
+
+Disable the control tool if you do not want the model to toggle this behavior:
+
+```python
+task_manager.tool_manager.disable_image_captioning()
+```
+
+## Serving tools as MCP servers
 
 EAA can expose any `BaseTool` instance as an MCP server by wrapping it with the
 helpers in `eaa_core.tool.mcp_server`.
 
 ```python
-from eaa_core.tool.mcp_server import run_mcp_server_from_tools
 from eaa_core.tool.example_calculator import CalculatorTool
+from eaa_core.tool.mcp_server import run_mcp_server_from_tools
 
 run_mcp_server_from_tools(
     tools=CalculatorTool(),
@@ -114,8 +340,8 @@ mcp_tool = MCPTool(
 The server side should be started with HTTP transport enabled, for example:
 
 ```python
-from eaa_core.tool.mcp_server import run_mcp_server_from_tools
 from eaa_core.tool.example_calculator import CalculatorTool
+from eaa_core.tool.mcp_server import run_mcp_server_from_tools
 
 run_mcp_server_from_tools(
     tools=CalculatorTool(),
@@ -131,13 +357,110 @@ Do not pass only `{"url": ..., "transport": "http"}` to `MCPTool`. The FastMCP
 client expects a full config object with one or more named servers inside
 `mcpServers`.
 
+## Calling MCP tools from logic-driven task managers
+
+`MCPTool` is a `BaseTool` wrapper for model-visible tool calls. Logic-driven
+task managers sometimes need the opposite shape: fixed Python method calls such
+as `acquire_image(y=..., x=...)` or `set_parameters([...])`, while the remote
+MCP server exposes facility-specific names and argument names.
+
+Use `MCPRPCWrapper` from `eaa_core.tool.mcp_adapter` for that case. It is not
+itself a model-visible `BaseTool`; it is a small RPC-style adapter around an
+`MCPTool` client for direct Python calls.
+
+```python
+from eaa_core.tool.mcp_adapter import MCPRPCWrapper
+from eaa_core.tool.mcp_client import MCPTool
+
+mcp_client = MCPTool(
+    {
+        "mcpServers": {
+            "beamline": {
+                "url": "http://BEAMLINE_HOST:8050/mcp",
+                "transport": "http",
+            }
+        }
+    }
+)
+
+acquisition = MCPRPCWrapper(
+    mcp_tool_client=mcp_client,
+    mappings={
+        "acquire_image": {
+            "remote": "collect_detector_frame",
+            "arguments": {
+                "position_y": "stage_y",
+                "position_x": "stage_x",
+                "fov_size": "field_of_view_um",
+            },
+            "sync": {
+                "last_image": "detector.last_frame",
+                "last_metadata": "detector.last_metadata",
+            },
+        }
+    },
+)
+
+result = acquisition.acquire_image(
+    position_y=10.0,
+    position_x=20.0,
+    fov_size=5.0,
+)
+image = acquisition.last_image
+metadata = acquisition.last_metadata
+```
+
+Each mapping key is the local method name used by the task manager. The
+`remote` value is the MCP tool to call. `MCPRPCWrapper` accepts either the exact
+remote name or a uniquely matching dotted suffix, so `get_attribute_payload`
+can match a remote tool named `detector.get_attribute_payload` if that suffix is
+unique.
+
+The optional `arguments` dictionary maps local argument names to remote MCP
+argument names. Arguments not listed there are forwarded with their local name.
+NumPy arrays and NumPy scalars are converted to JSON-serializable values before
+the MCP call.
+
+The optional `sync` dictionary maps local wrapper attribute names to remote
+server-side attribute names. After a successful call, the wrapper calls the
+remote `get_attribute_payload(name=...)` support tool and stores decoded values
+on the wrapper. Array payloads encoded with `BaseTool.encode_array_payload()` or
+the compatible format in
+[Creating Async-Safe MCP Servers](creating-async-safe-mcp-servers.md) are
+decoded back to NumPy arrays.
+
+For parameter-tuning style workflows, `MCPRPCWrapper` also has local helper
+methods for `parameter_history`, and the module provides
+`set_parameters_with_local_history`:
+
+```python
+from eaa_core.tool.mcp_adapter import MCPRPCWrapper, set_parameters_with_local_history
+
+parameter_tool = MCPRPCWrapper(
+    mcp_tool_client=mcp_client,
+    mappings={
+        "set_parameters": {
+            "remote": "set_mirror_voltages",
+            "arguments": {"parameters": "voltages"},
+        }
+    },
+    initial_attributes={
+        "parameter_names": ["m1", "m2"],
+        "parameter_history": {"m1": [], "m2": []},
+    },
+    local_methods={"set_parameters": set_parameters_with_local_history},
+)
+
+parameter_tool.set_parameters([0.1, 0.2])
+latest = parameter_tool.get_parameter_at_iteration(-1)
+```
+
 Notes:
 
 - EAA normalizes tool results to JSON for tools served through the EAA MCP
-  server helper
-- arbitrary third-party MCP servers may still return non-EAA payloads, so the
-  agent loop only treats results as image-bearing when an `img_path` is present
-- chat interactions and agent-selected tool calls do not require external MCP
-  servers to use EAA-specific tool names; only logic-driven task managers that
-  call tool methods directly need the adapter contracts documented in
-  [Creating Async-Safe MCP Servers](creating-async-safe-mcp-servers.md)
+  server helper.
+- Arbitrary third-party MCP servers may still return non-EAA payloads, so the
+  agent loop only treats results as image-bearing when an `img_path` is present.
+- Chat interactions and agent-selected tool calls can use facility-specific MCP
+  tool names directly. Logic-driven task managers with fixed Python calls should
+  use `MCPRPCWrapper` when they need local-to-remote tool and argument mapping.

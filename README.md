@@ -1,141 +1,189 @@
 # Experiment Automation Agents (EAA)
 
-EAA is a Python toolkit for building experiment-facing agents around a shared set
-of task-manager, tool, memory, and WebUI primitives. The repository is organized
-as a workspace with multiple installable packages, currently `eaa-core` and
-`eaa-imaging`.
+EAA is a Python toolkit for building experiment-facing agents around shared
+task-manager, tool, memory, skill, and WebUI primitives. The repository is a
+`uv` workspace with three installable packages:
 
-## Current Status
-
-- Core agent runtime: `packages/eaa-core/src/eaa_core/task_manager/base.py`
-- Reusable built-in graph: chat
-- Concrete workflows: ROI search, feature tracking, parameter tuning, Bayesian
-  optimization, and analytical task managers under
-  `packages/eaa-*/src/eaa_*/task_manager/`
-- Tool system: `BaseTool`, serialized execution, optional approval gates, MCP
-  server/client helpers
-- Long-term memory: optional chat-memory layer configured through
-  `MemoryManagerConfig`
-- WebUI: HTML/JavaScript frontend, connected to the agent through a shared
-  SQLite database
+- `eaa-core`: shared runtime, generic tools, memory, WebUI, MCP helpers, and
+  reusable task-manager infrastructure
+- `eaa-imaging`: microscopy and imaging task managers, tools, prompts, and
+  skills
+- `eaa-spectroscopy`: spectroscopy tools, acquisition functions, and XANES
+  workflows
 
 ## Installation
 
 ### Option 1: `uv` Workspace Sync (recommended)
 
+From the repository root:
+
 ```bash
-uv sync
+uv sync --all-extras
 source .venv/bin/activate
 which python
 ```
 
 `which python` should resolve to `.venv/bin/python`.
 
-This installs the workspace members `eaa-core` and `eaa-imaging` into the
-repository-local environment as editable packages.
+This installs the workspace members into the repository-local environment as
+editable packages. Use `--all-extras` for local development so optional
+dependencies needed by docs, memory, and workflow examples are not removed.
 
 ### Option 2: `pip`
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e packages/eaa-core -e packages/eaa-imaging
+pip install -e packages/eaa-core -e packages/eaa-imaging -e packages/eaa-spectroscopy
 ```
 
-For published packages, users would typically install:
+## Quick Start
 
-```bash
-pip install eaa-core eaa-imaging
-```
+The smallest useful chat agent is a `BaseTaskManager` with an LLM config and at
+least one domain tool. The driver below also shows how to add skills, configure
+long-term memory, customize the workspace file tool, launch the WebUI, and run
+an interactive chat.
 
-## Quickstart
-
-The smallest useful setup is a task manager, an LLM config, and one or more
-tools. This example starts a free-form chat with a simulated image-acquisition
-tool:
+Save this as a script in the repository root and set `OPENAI_API_KEY` before
+running it. Memory requires the `memory_chroma` extra, which is included by
+`uv sync --all-extras`.
 
 ```python
+import os
+from pathlib import Path
+
 from skimage import data
 
 from eaa_core.api.llm_config import OpenAIConfig
+from eaa_core.api.memory import MemoryManagerConfig
+from eaa_core.gui.html import launch_html_webui_subprocess
 from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.tool.workspace import FileSystemTool
 from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
 
-llm_config = OpenAIConfig(
-    model="your-model-name",
-    base_url="https://api.openai.com/v1",
-    api_key="your-api-key",
-)
 
-acquisition_tool = SimulatedAcquireImage(
-    whole_image=data.camera(),
-    add_axis_ticks=True,
-    show_image_in_real_time=False,
-)
+PROJECT_ROOT = Path(__file__).resolve().parent
+RUNTIME_URL = "http://127.0.0.1:8010"
 
-task_manager = BaseTaskManager(
-    llm_config=llm_config,
-    tools=[acquisition_tool],
-    session_db_path="session.sqlite",
-    use_webui=False,
-)
 
-task_manager.run_conversation()
+def main() -> None:
+    llm_config = OpenAIConfig(
+        model="gpt-4o-mini",
+        base_url="https://api.openai.com/v1",
+        api_key=os.environ["OPENAI_API_KEY"],
+    )
+    memory_config = MemoryManagerConfig(
+        enabled=True,
+        persist_directory=str(PROJECT_ROOT / ".eaa_memory"),
+        namespace="quick-start",
+    )
+    skill_dirs = [
+        str(PROJECT_ROOT / "packages/eaa-core/src/eaa_core/skills"),
+        str(PROJECT_ROOT / "packages/eaa-imaging/src/eaa_imaging/skills"),
+    ]
+    acquisition_tool = SimulatedAcquireImage(
+        whole_image=data.camera(),
+        add_axis_ticks=True,
+    )
+    workspace_tool = FileSystemTool(
+        workspace_path=str(PROJECT_ROOT),
+        read_whitelist_paths=skill_dirs,
+    )
+
+    task_manager = BaseTaskManager(
+        llm_config=llm_config,
+        memory_config=memory_config,
+        tools=[acquisition_tool, workspace_tool],
+        skill_dirs=skill_dirs,
+        checkpoint_db_path=str(PROJECT_ROOT / "checkpoint.sqlite"),
+        transcript_db_path=str(PROJECT_ROOT / "transcript.sqlite"),
+        use_webui=True,
+        webui_runtime_host="127.0.0.1",
+        webui_runtime_port=8010,
+    )
+    task_manager.tool_manager.set_coding_tool_request_approval(True)
+
+    task_manager.start_webui_runtime()
+    webui_process = launch_html_webui_subprocess(
+        RUNTIME_URL,
+        host="127.0.0.1",
+        port=8008,
+        title="EAA Quick Start",
+    )
+    print("WebUI: http://127.0.0.1:8008")
+    try:
+        task_manager.run_conversation()
+    finally:
+        webui_process.terminate()
+        task_manager.stop_webui_runtime()
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-For a workflow-oriented manager, see `examples/roi_search.py`.
+For terminal-only use, set `use_webui=False` and remove the
+`start_webui_runtime()` and `launch_html_webui_subprocess()` calls.
+
+In chat, useful commands include:
+
+- `/skill` to list discovered skills
+- `/skill <name>` to load one skill's `SKILL.md` into context
+- `/setcodingtoolapproval true|false` to toggle approval for Python and Bash
+  coding tools
+- `/setcodingtoolsandboxtype none|bubblewrap|container [visible_dir ...]` to
+  configure coding-tool sandboxing
 
 ## Architecture
 
 - `LLMConfig` objects describe how the chat model is constructed. The shipped
   config classes are `OpenAIConfig`, `AskSageConfig`, and `ArgoConfig`.
 - `BaseTaskManager` owns model invocation, tool registration, memory,
-  persistence, and graph execution.
+  persistence, WebUI runtime state, and graph execution.
 - `SerialToolExecutor` runs tool calls one at a time. This is intentional:
-  many experiment tools are stateful, should not be driven concurrently, or not thread-safe.
-- `MemoryManager` adds optional long-term memory retrieval/saving on chat turns.
-- The WebUI is a separate FastAPI process. It communicates with the agent
-  through the same SQLite database used for WebUI relay state and checkpointing.
+  many experiment tools are stateful, mutate instrument state, or are not
+  thread-safe.
+- `MemoryManager` adds optional long-term memory retrieval and saving on chat
+  turns.
+- The WebUI server proxies browser requests to the task-manager-owned runtime
+  API. Checkpoints and durable transcript display are stored in separate
+  SQLite databases by default.
 
 ## Built-In Graphs and Workflows
 
 The base runtime ships `chat_graph` for interactive conversation.
 
 `build_task_graph()` is available as a subclass hook for custom LangGraph
-workflows, but the task managers currently in this repository mostly either:
-
-- reuse `run_conversation()`, or
-- implement an analytical workflow directly in Python while still updating
-  message history and WebUI state through task-manager helpers
+workflows. Many task managers in this repository either reuse
+`run_conversation()` or orchestrate analytical workflows directly in Python
+while still updating message history and WebUI state through task-manager
+helpers.
 
 ## WebUI and Checkpointing
 
-Set `use_webui=True` on the task manager and give it a `session_db_path`. Then
-launch the standalone WebUI process against the same SQLite file:
+The WebUI provides a browser chat interface for agent runs, including image
+display, logs, and tool inspection.
 
-```python
-from eaa_core.gui.html import run_html_webui
+![EAA WebUI chat view](docs/assets/webui-chat.png)
 
-run_html_webui("session.sqlite", host="127.0.0.1", port=8008)
-```
-
-You can also launch the WebUI from the same run script as the task manager. The
-subprocess launcher returns immediately, so the main agent workflow can continue
-in the parent process:
+Set `use_webui=True`, configure checkpoint and transcript paths, then start the
+agent-side runtime server. Launch the browser-facing WebUI against the runtime
+URL:
 
 ```python
 from eaa_core.gui.html import launch_html_webui_subprocess
 
-session_db_path = "session.sqlite"
-
 task_manager = BaseTaskManager(
     ...,
-    session_db_path=session_db_path,
+    checkpoint_db_path="checkpoint.sqlite",
+    transcript_db_path="transcript.sqlite",
     use_webui=True,
+    webui_runtime_port=8010,
 )
 
+task_manager.start_webui_runtime()
 webui_process = launch_html_webui_subprocess(
-    session_db_path,
+    "http://127.0.0.1:8010",
     host="127.0.0.1",
     port=8008,
 )
@@ -144,14 +192,16 @@ try:
     task_manager.run_conversation()
 finally:
     webui_process.terminate()
+    task_manager.stop_webui_runtime()
 ```
 
-Checkpointing and the WebUI relay share the same SQLite database by default.
-Each resume entrypoint also accepts ``checkpoint_db_path`` if you need to load
-checkpoints from a different SQLite file. The base task manager exposes:
+The base task manager exposes:
 
-- `run_conversation_from_checkpoint()`
+- `run_conversation_from_checkpoint()` for the chat graph
 - `run_from_checkpoint()` for subclasses that implement `task_graph`
+
+`checkpoint_db_path` stores LangGraph checkpoints. `transcript_db_path` stores
+durable transcript display messages. `session_db_path` is no longer supported.
 
 ## Long-Term Memory
 
@@ -164,8 +214,8 @@ can:
 - save new memories when a user message contains trigger phrases such as
   `"remember this"` or `"keep in mind"`
 
-The `postgresql_vector_store` extra is present in `pyproject.toml`, but the
-built-in `MemoryManager` path in this repository currently wires up Chroma.
+Install the `memory_chroma` extra, or use `uv sync --all-extras`, before using
+the built-in Chroma memory path.
 
 ## MCP Integration
 
@@ -174,8 +224,8 @@ EAA supports both directions of MCP integration.
 Expose EAA tools as an MCP server:
 
 ```python
-from eaa_core.tool.mcp_server import run_mcp_server_from_tools
 from eaa_core.tool.example_calculator import CalculatorTool
+from eaa_core.tool.mcp_server import run_mcp_server_from_tools
 
 run_mcp_server_from_tools(
     tools=CalculatorTool(),
@@ -218,9 +268,9 @@ mcp_tool = MCPTool(
 ```
 
 For this remote HTTP setup, the server side must be started with
-``run_mcp_server_from_tools(..., transport="http", host="0.0.0.0", port=8050, path="/mcp")``.
-The client config must keep the server definition under ``mcpServers``; passing
-only ``{"url": ..., "transport": "http"}`` is not enough.
+`run_mcp_server_from_tools(..., transport="http", host="0.0.0.0", port=8050, path="/mcp")`.
+The client config must keep the server definition under `mcpServers`; passing
+only `{"url": ..., "transport": "http"}` is not enough.
 
 ## Skills
 
@@ -229,8 +279,8 @@ load at runtime. Each skill is a directory with at least a `SKILL.md` file.
 Additional files can live alongside it for the agent to inspect with filesystem
 tools when needed.
 
-Bundled skills live under `packages/eaa-core/src/eaa/skills/` and
-`packages/eaa-imaging/src/eaa/skills/`. A typical layout looks like:
+Bundled skills live under `packages/eaa-core/src/eaa_core/skills/` and
+`packages/eaa-imaging/src/eaa_imaging/skills/`. A typical layout looks like:
 
 ```text
 my-skill/
@@ -246,22 +296,19 @@ To use skills, point a task manager at one or more skill directories:
 task_manager = BaseTaskManager(
     llm_config=llm_config,
     tools=[acquisition_tool],
-    skill_dirs=["./packages/eaa-imaging/src/eaa/skills", "~/.eaa_skills"],
+    skill_dirs=[
+        "./packages/eaa-core/src/eaa_core/skills",
+        "./packages/eaa-imaging/src/eaa_imaging/skills",
+        "~/.eaa_skills",
+    ],
 )
 ```
 
 At build time, EAA scans the configured directories for `SKILL.md` files and
 injects skill names, descriptions, and `SKILL.md` paths into the system prompt.
-In an interactive chat session you can:
 
-- run `/skill` to list the loaded skills
-- run `/skill <name>` to inject that skill's `SKILL.md` into the model context
-
-If you want to copy the bundled skills out of the package tree, use:
-
-```bash
-python -m eaa_core.cli install-skills --destination ~/.eaa_skills
-```
+You can also create your own skill directory, such as `~/.eaa_skills`, and add
+it to `skill_dirs` alongside the bundled package directories.
 
 ## Documentation
 
@@ -272,5 +319,6 @@ it locally with:
 uv run --extra docs mkdocs build --strict
 ```
 
-The generated site will be in `site/`. The GitHub Actions workflow in
-`.github/workflows/docs.yml` publishes it to `https://advancedphotonsource.github.io/EAA/`.
+The generated site is written to `site/`. The GitHub Actions workflow in
+`.github/workflows/docs.yml` publishes it to
+`https://advancedphotonsource.github.io/EAA/`.

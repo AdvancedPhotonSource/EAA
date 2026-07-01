@@ -1,7 +1,11 @@
 # eaa-imaging
 
-Phase-1 imaging package split for EAA.
+`eaa-imaging` contains microscopy- and imaging-specific functionality:
 
-This package contains the microscopy- and imaging-specific task managers and
-imaging tools. The old focusing imports under `eaa_imaging.task_manager.tuning`
-are still shipped here as compatibility shims.
+- imaging task managers for ROI search, feature tracking, focusing, and optics
+  tuning
+- imaging acquisition, registration, line-scan, and parameter-tuning tools
+- imaging prompts, bundled skills, private skills, and supporting assets
+
+The package depends on `eaa-core` for the base task-manager, tool, memory, and
+WebUI infrastructure.

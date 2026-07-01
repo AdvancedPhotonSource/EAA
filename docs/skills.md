@@ -73,13 +73,15 @@ Once loaded, the base chat loop supports:
 Skills are currently best understood as documented agent playbooks that can be
 loaded on demand through explicit user selection.
 
-## Installing bundled skills elsewhere
+## Adding user skills
 
-If you want to copy the packaged skills to a user-controlled directory, use the
-CLI helper:
+Create a user-controlled directory such as `~/.eaa_skills`, put one or more
+skill directories below it, and add that path to `skill_dirs`:
 
-```bash
-python -m eaa_core.cli install-skills --destination ~/.eaa_skills
+```text
+~/.eaa_skills/
+  my-skill/
+    SKILL.md
 ```
 
-You can then add that directory to `skill_dirs`.
+EAA will discover those skills the same way it discovers bundled skills.

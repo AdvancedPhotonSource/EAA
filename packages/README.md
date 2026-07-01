@@ -1,16 +1,20 @@
-# Package Split
+# Packages
 
-This repository now has an incremental multi-package layout under `packages/`.
+This repository is a `uv` workspace with package-local source trees under
+`packages/`.
 
-- `packages/eaa-core`: shared runtime, generic tools, generic BO task manager.
-- `packages/eaa-imaging`: imaging and microscopy task managers and imaging
-  tools.
+- `packages/eaa-core`: shared runtime, generic tools, memory, WebUI, MCP
+  helpers, and reusable task-manager infrastructure.
+- `packages/eaa-imaging`: imaging and microscopy task managers, imaging tools,
+  prompts, and skills.
+- `packages/eaa-spectroscopy`: spectroscopy tools, acquisition functions, and
+  spectroscopy task managers.
 
-Source now lives only under package-local trees:
+Source lives under package-local Python namespaces:
 
-- `packages/eaa-core/src/eaa`
-- `packages/eaa-imaging/src/eaa`
+- `packages/eaa-core/src/eaa_core`
+- `packages/eaa-imaging/src/eaa_imaging`
+- `packages/eaa-spectroscopy/src/eaa_spectroscopy`
 
-The root `pyproject.toml` aggregates both package-local source roots for the
-full-framework install, while each sub-package also has its own installable
-manifest.
+The root `pyproject.toml` aggregates all workspace members for local
+development.

@@ -18,7 +18,9 @@ Optional extras are declared in `pyproject.toml`. The most relevant ones are:
 - `bo` for Bayesian optimization dependencies
 - `memory_chroma` for the built-in Chroma-backed memory stack
 
-Install a targeted extra set with:
+For normal repository development, keep using `uv sync --all-extras`. If you
+intentionally want a reduced environment for a narrow task, install a targeted
+extra set with:
 
 ```bash
 uv sync --extra docs

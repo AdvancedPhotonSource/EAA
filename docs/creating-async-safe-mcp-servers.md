@@ -179,6 +179,22 @@ Typical state includes:
 Do not build EAA-specific state names into the server. Keep facility state names
 stable.
 
+## Client-Side Mapping
+
+EAA clients that use the LLM chat loop can call facility-specific MCP tool
+names directly through `MCPTool`. Logic-driven task managers are different:
+they often call fixed Python methods such as `acquire_image(...)` or
+`set_parameters(...)`.
+
+For those workflows, wrap the `MCPTool` client with
+`eaa_core.tool.mcp_adapter.MCPRPCWrapper`. The wrapper maps local method names
+and local argument names to the facility-specific MCP tool and argument names.
+It can also sync local wrapper attributes from server-side state by calling the
+`get_attribute_payload(name=...)` support tool described above.
+
+See [Tools](tools.md#calling-mcp-tools-from-logic-driven-task-managers) for the
+client-side mapping example.
+
 ## Artifacts and Large Data
 
 Tool results should remain JSON-serializable. Use file paths for artifacts that

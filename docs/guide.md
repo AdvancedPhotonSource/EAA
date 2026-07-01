@@ -4,6 +4,7 @@ This guide contains the current user-facing documentation for EAA's runtime,
 configuration surface, and extension points.
 
 - [Installation](installation.md)
+- [Quick Start](quick-start.md)
 - [Introduction](introduction.md)
 - [LLM Config](llm-config.md)
 - [Task Manager](task-manager.md)

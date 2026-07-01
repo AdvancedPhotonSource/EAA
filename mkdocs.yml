@@ -17,6 +17,7 @@ nav:
   - Guide:
       - Overview: guide.md
       - Installation: installation.md
+      - Quick Start: quick-start.md
       - Introduction: introduction.md
       - LLM Config: llm-config.md
       - Task Manager: task-manager.md

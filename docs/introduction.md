@@ -28,9 +28,8 @@ BaseTaskManager
      +--> MemoryManager --> vector store (Chroma in the current built-in path)
      |
      +--> checkpoint SQLite DB + transcript SQLite DB
-                                   |
-                                   v
-                      WebUI runtime API + FastAPI WebUI
+     |
+     +--> WebUI runtime API <--> FastAPI WebUI
 ```
 
 ## Key components
@@ -43,15 +42,16 @@ BaseTaskManager
   become model-callable tools.
 - `MemoryManager`: adds optional retrieval and saving of user memories on chat
   turns.
-- `WebUI`: runs as a separate process. It reads from and writes to the same
-  SQLite file used by the task manager.
+- `WebUI`: runs as a separate browser-facing process that proxies API calls to
+  the task-manager-owned WebUI runtime server. Checkpoints and durable
+  transcript display use separate SQLite paths by default.
 
 ## Current workflow boundary
 
 The base runtime ships the reusable chat graph.
 
-The repository currently does not ship task-manager subclasses with their own
-custom `task_graph` implementation. Instead, concrete managers mostly either
-reuse the base chat graph or implement analytical workflows directly in Python
-while still updating the shared transcript and WebUI state through task-manager
-helpers.
+Some concrete managers define custom `task_graph` implementations, such as the
+monitoring loop, graph-based focusing workflow, and multi-agent ROI-search
+workflow. Other managers reuse the base chat graph or implement analytical
+workflows directly in Python while still updating the shared transcript and
+WebUI state through task-manager helpers.
