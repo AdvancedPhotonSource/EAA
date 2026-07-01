@@ -8,13 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-    permissions:
-      contents: read
-      id-token: write
 
     steps:
       - name: Checkout
@@ -31,5 +26,74 @@ jobs:
       - name: Build distributions
         run: uv build --all-packages --no-sources --out-dir dist
 
-      - name: Publish distributions
-        run: uv publish --trusted-publishing always dist/*
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist
+
+  publish-core:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-eaa-core
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+
+      - name: Publish eaa-core
+        run: uv publish --trusted-publishing always dist/eaa_core-*
+
+  publish-imaging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-eaa-imaging
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+
+      - name: Publish eaa-imaging
+        run: uv publish --trusted-publishing always dist/eaa_imaging-*
+
+  publish-spectroscopy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-eaa-spectroscopy
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+
+      - name: Publish eaa-spectroscopy
+        run: uv publish --trusted-publishing always dist/eaa_spectroscopy-*
