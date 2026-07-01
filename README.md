@@ -13,7 +13,21 @@ task-manager, tool, memory, skill, and WebUI primitives. The repository is a
 
 ## Installation
 
-### Option 1: `uv` Workspace Sync (recommended)
+### Option 1: PyPI
+
+Install the core runtime:
+
+```bash
+pip install eaa-core
+```
+
+Install the core runtime plus the domain packages:
+
+```bash
+pip install eaa-core eaa-imaging eaa-spectroscopy
+```
+
+### Option 2: `uv` Workspace Sync
 
 From the repository root:
 
@@ -29,7 +43,7 @@ This installs the workspace members into the repository-local environment as
 editable packages. Use `--all-extras` for local development so optional
 dependencies needed by docs, memory, and workflow examples are not removed.
 
-### Option 2: `pip`
+### Option 3: Editable Source Install
 
 ```bash
 python -m venv .venv

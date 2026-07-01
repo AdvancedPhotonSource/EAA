@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eaa-core"
-version = "0.1.0"
+version = "1.0.0"
 description = "Core runtime, shared tooling, and generic task managers for EAA."
 requires-python = ">=3.11"
 dependencies = [

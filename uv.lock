@@ -693,7 +693,7 @@ wheels = [
 
 [[package]]
 name = "eaa-core"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/eaa-core" }
 dependencies = [
     { name = "fastapi" },
@@ -755,7 +755,7 @@ provides-extras = ["asksage", "bo", "docs", "memory-chroma", "dev"]
 
 [[package]]
 name = "eaa-imaging"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/eaa-imaging" }
 dependencies = [
     { name = "eaa-core" },
@@ -793,7 +793,7 @@ provides-extras = ["bo", "dev"]
 
 [[package]]
 name = "eaa-spectroscopy"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/eaa-spectroscopy" }
 dependencies = [
     { name = "eaa-core" },

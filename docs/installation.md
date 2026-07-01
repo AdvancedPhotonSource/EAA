@@ -1,6 +1,20 @@
 # Installation
 
-## Recommended: `uv`
+## PyPI
+
+Install the core runtime:
+
+```bash
+pip install eaa-core
+```
+
+Install the core runtime plus the domain packages:
+
+```bash
+pip install eaa-core eaa-imaging eaa-spectroscopy
+```
+
+## Source development with `uv`
 
 At the repository root:
 
@@ -11,6 +25,24 @@ which python
 ```
 
 After activation, `which python` should resolve to `.venv/bin/python`.
+
+To sync a smaller source-development environment, select a workspace package.
+Domain packages depend on `eaa-core`, so selecting one domain package also
+installs the core runtime:
+
+```bash
+# Core runtime only
+uv sync --package eaa-core
+
+# Core runtime plus imaging
+uv sync --package eaa-imaging
+
+# Core runtime plus spectroscopy
+uv sync --package eaa-spectroscopy
+
+# Core runtime plus both domain packages
+uv sync --all-packages
+```
 
 Optional extras are declared in `pyproject.toml`. The most relevant ones are:
 
@@ -26,7 +58,7 @@ extra set with:
 uv sync --extra docs
 ```
 
-## Editable install with `pip`
+## Editable source install with `pip`
 
 ```bash
 python -m venv .venv
