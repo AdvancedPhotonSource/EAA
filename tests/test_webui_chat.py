@@ -2,6 +2,10 @@ import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 from fastapi.responses import Response
 
@@ -136,6 +140,117 @@ def test_runtime_controller_stores_message_timestamp(tmp_path):
     snapshot_message = controller.snapshot()["messages"][0]
     assert_runtime_timestamp(event_message["timestamp"])
     assert snapshot_message["timestamp"] == event_message["timestamp"]
+
+
+def test_runtime_controller_manages_visualization_tiles(tmp_path):
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager, upload_dir=str(tmp_path))
+    subscriber = controller.subscribe()
+
+    tile_id = controller.add_visualization_tile(320, 180, conversation_id="subagent-1")
+
+    created_event = subscriber.get_nowait()
+    snapshot = controller.snapshot()
+    subagent = next(
+        conversation
+        for conversation in snapshot["conversations"]
+        if conversation["id"] == "subagent-1"
+    )
+    assert created_event.type == "visualization.tile.created"
+    assert created_event.payload["conversation_id"] == "subagent-1"
+    assert created_event.payload["tile"]["id"] == tile_id
+    assert subagent["visualization_tiles"][0]["id"] == tile_id
+    assert subagent["visualization_tiles"][0]["width"] == 320
+    assert subagent["visualization_tiles"][0]["height"] == 180
+
+    image_path = tmp_path / "plot.png"
+    image_path.write_bytes(b"png-data")
+    controller.update_visualization_tile(
+        tile_id,
+        image_path=str(image_path),
+        conversation_id="subagent-1",
+    )
+
+    updated_event = subscriber.get_nowait()
+    updated_tile = updated_event.payload["tile"]
+    assert updated_event.type == "visualization.tile.updated"
+    assert updated_tile["content"] == {
+        "type": "image",
+        "image_path": str(image_path),
+    }
+
+    controller.remove_visualization_tile(tile_id, conversation_id="subagent-1")
+
+    removed_event = subscriber.get_nowait()
+    snapshot = controller.snapshot()
+    subagent = next(
+        conversation
+        for conversation in snapshot["conversations"]
+        if conversation["id"] == "subagent-1"
+    )
+    assert removed_event.type == "visualization.tile.removed"
+    assert removed_event.payload == {
+        "conversation_id": "subagent-1",
+        "tile_id": tile_id,
+    }
+    assert subagent["visualization_tiles"] == []
+
+
+def test_runtime_visualization_tile_renders_supported_objects(tmp_path):
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager, upload_dir=str(tmp_path))
+    tile_1d = controller.add_visualization_tile(300, 200)
+    tile_2d = controller.add_visualization_tile(300, 200)
+    tile_figure = controller.add_visualization_tile(300, 200)
+
+    controller.update_visualization_tile(tile_1d, array=np.array([1, 3, 2]))
+    controller.update_visualization_tile(tile_2d, array=np.arange(9).reshape(3, 3))
+    fig, ax = plt.subplots(1, 1)
+    ax.plot([0, 1], [1, 0])
+    controller.update_visualization_tile(tile_figure, figure=fig)
+    plt.close(fig)
+
+    tiles = controller.snapshot()["conversations"][0]["visualization_tiles"]
+    image_paths = [
+        tile["content"]["image_path"]
+        for tile in tiles
+    ]
+    assert len(set(image_paths)) == 3
+    assert all(path.endswith(".png") for path in image_paths)
+    assert all((tmp_path / path.split("/")[-1]).exists() for path in image_paths)
+
+
+def test_runtime_visualization_tile_rejects_invalid_content(tmp_path):
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager, upload_dir=str(tmp_path))
+    tile_id = controller.add_visualization_tile(300, 200)
+
+    with pytest.raises(ValueError, match="Exactly one"):
+        controller.update_visualization_tile(tile_id)
+
+    with pytest.raises(ValueError, match="Exactly one"):
+        controller.update_visualization_tile(
+            tile_id,
+            image_path=str(tmp_path / "plot.png"),
+            array=np.array([1]),
+        )
+
+    with pytest.raises(ValueError, match="1D or 2D"):
+        controller.update_visualization_tile(tile_id, array=np.zeros((2, 2, 2)))
+
+    with pytest.raises(KeyError):
+        controller.remove_visualization_tile("missing")
+
+    with pytest.raises(KeyError):
+        controller.update_visualization_tile(
+            tile_id,
+            image_path=str(tmp_path / "plot.png"),
+            conversation_id="missing-conversation",
+        )
+    assert [
+        conversation["id"]
+        for conversation in controller.snapshot()["conversations"]
+    ] == ["primary"]
 
 
 def test_task_manager_registers_tools_with_runtime(tmp_path):

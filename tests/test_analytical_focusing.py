@@ -7,6 +7,7 @@ import pytest
 import tifffile
 
 from eaa_core.tool.base import ExposedToolSpec
+from eaa_core.gui.runtime import WebUIRuntimeController
 from eaa_core.tool.mcp_adapter import MCPRPCWrapper
 from eaa_imaging.task_manager.tuning.analytical_focusing import (
     AnalyticalScanningMicroscopeFocusingTaskManager,
@@ -212,6 +213,49 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         )
 
         assert np.allclose(predicted_drift, np.array([9.0, -1.0], dtype=float))
+
+    def test_update_optimization_model_publishes_bo_plot_visualization_tile(self, tmp_path):
+        task_manager, _ = self._build_task_manager()
+        task_manager.runtime_controller = WebUIRuntimeController(
+            task_manager,
+            upload_dir=str(tmp_path),
+        )
+        task_manager.runtime_conversation_id = "subagent-1"
+        task_manager.param_setting_tool.set_parameters(np.array([1.0], dtype=float))
+
+        task_manager.update_optimization_model(2.5)
+
+        snapshot = task_manager.runtime_controller.snapshot()
+        conversation = next(
+            item
+            for item in snapshot["conversations"]
+            if item["id"] == "subagent-1"
+        )
+        assert conversation["messages"][0]["content"] == "Optimization status updated.\n<image>"
+        assert len(conversation["visualization_tiles"]) == 1
+        tile = conversation["visualization_tiles"][0]
+        assert tile["width"] == 640
+        assert tile["height"] == 420
+        assert tile["content"]["type"] == "image"
+        assert tile["content"]["image_path"].startswith(".tmp/optimization_status_")
+        assert os.path.exists(tile["content"]["image_path"])
+        assert conversation["messages"][0]["image"].startswith("data:image/png;base64,")
+
+        first_tile_id = tile["id"]
+        first_image_path = tile["content"]["image_path"]
+        task_manager.param_setting_tool.set_parameters(np.array([2.0], dtype=float))
+        task_manager.update_optimization_model(1.5)
+
+        snapshot = task_manager.runtime_controller.snapshot()
+        conversation = next(
+            item
+            for item in snapshot["conversations"]
+            if item["id"] == "subagent-1"
+        )
+        assert len(conversation["visualization_tiles"]) == 1
+        updated_tile = conversation["visualization_tiles"][0]
+        assert updated_tile["id"] == first_tile_id
+        assert updated_tile["content"]["image_path"] != first_image_path
 
     def test_run_iteration_applies_registration_offset_and_updates_model(self, monkeypatch):
         task_manager, acquisition_tool = self._build_task_manager()

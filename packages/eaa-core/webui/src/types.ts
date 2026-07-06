@@ -45,6 +45,17 @@ export type RuntimeLogEntry = {
   total?: number | null;
 };
 
+export type RuntimeVisualizationTile = {
+  id: string;
+  width: number;
+  height: number;
+  content?: {
+    type?: string;
+    image_path?: string;
+  } | null;
+  updated_at?: string | null;
+};
+
 export type RuntimeSnapshot = {
   conversations?: RuntimeConversation[];
   messages?: WebUIMessage[];
@@ -72,6 +83,7 @@ export type RuntimeConversation = {
   status?: string;
   terminated?: boolean;
   messages?: WebUIMessage[];
+  visualization_tiles?: RuntimeVisualizationTile[];
   pending_approval?: PendingApproval | null;
 };
 

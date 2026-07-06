@@ -9,14 +9,19 @@ import logging
 import os
 import queue
 import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
 from typing import Any
 
+import eaa_core.matplotlib_setup  # noqa: F401
+import matplotlib.pyplot as plt
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from matplotlib.figure import Figure
 
 from eaa_core.task_manager.skills import skill_catalog_to_dicts
 
@@ -40,6 +45,27 @@ class RuntimeEvent:
 
 
 @dataclass
+class RuntimeVisualizationTile:
+    """Server-owned visualization tile state."""
+
+    id: str
+    width: int
+    height: int
+    content: dict[str, Any] | None = None
+    updated_at: str | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serializable tile snapshot."""
+        return {
+            "id": self.id,
+            "width": self.width,
+            "height": self.height,
+            "content": self.content,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
 class RuntimeConversation:
     """Server-owned display state for one agent conversation."""
 
@@ -49,6 +75,7 @@ class RuntimeConversation:
     status: str = "idle"
     terminated: bool = False
     messages: list[dict[str, Any]] = field(default_factory=list)
+    visualization_tiles: list[RuntimeVisualizationTile] = field(default_factory=list)
     pending_approval: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -60,6 +87,10 @@ class RuntimeConversation:
             "status": self.status,
             "terminated": self.terminated,
             "messages": list(self.messages),
+            "visualization_tiles": [
+                tile.snapshot()
+                for tile in self.visualization_tiles
+            ],
             "pending_approval": self.pending_approval,
         }
 
@@ -117,6 +148,7 @@ class WebUIRuntimeController:
         self.max_log_entries = 500
         self.mcp_reconnects: set[str] = set()
         self.message_event_counter = 0
+        self.visualization_tile_counter = 0
         self.log_event_counter = 0
         self.approval_event_counter = 0
         self.subagent_counter = 0
@@ -201,6 +233,12 @@ class WebUIRuntimeController:
 
         - ``message.created``: a live display message was added.
           Payload: ``{"message": <message dict>}``.
+        - ``visualization.tile.created``: a visualization tile was added.
+          Payload: ``{"conversation_id": str, "tile": <tile dict>}``.
+        - ``visualization.tile.updated``: a visualization tile was updated.
+          Payload: ``{"conversation_id": str, "tile": <tile dict>}``.
+        - ``visualization.tile.removed``: a visualization tile was removed.
+          Payload: ``{"conversation_id": str, "tile_id": str}``.
         - ``status.changed``: runtime status or input/interrupt flags changed.
           Payload: ``{"status": str, "input_requested": bool,
           "interrupt_requested": bool}``.
@@ -356,6 +394,178 @@ class WebUIRuntimeController:
             if conversation_id == "primary":
                 self.messages.append(payload)
         self.publish("message.created", {"conversation_id": conversation_id, "message": payload})
+
+    def add_visualization_tile(
+        self,
+        width: int,
+        height: int,
+        conversation_id: str = "primary",
+    ) -> str:
+        """Add an empty visualization tile and return its runtime id."""
+        normalized_width = int(width)
+        normalized_height = int(height)
+        if normalized_width <= 0 or normalized_height <= 0:
+            raise ValueError("Visualization tile width and height must be positive.")
+        timestamp = self.runtime_timestamp()
+        with self.lock:
+            conversation = self.conversations.setdefault(
+                conversation_id,
+                RuntimeConversation(
+                    id=conversation_id,
+                    label=conversation_id.replace("-", " ").title(),
+                    kind="subagent" if conversation_id != "primary" else "primary",
+                ),
+            )
+            self.approval_queues.setdefault(conversation_id, queue.Queue())
+            self.visualization_tile_counter += 1
+            tile = RuntimeVisualizationTile(
+                id=f"visualization-{self.visualization_tile_counter}",
+                width=normalized_width,
+                height=normalized_height,
+                updated_at=timestamp,
+            )
+            conversation.visualization_tiles.append(tile)
+            payload = {
+                "conversation_id": conversation_id,
+                "tile": tile.snapshot(),
+            }
+        self.publish("visualization.tile.created", payload)
+        return tile.id
+
+    def update_visualization_tile(
+        self,
+        tile_id: str,
+        *,
+        image_path: str | None = None,
+        array: np.ndarray | None = None,
+        figure: Figure | None = None,
+        conversation_id: str = "primary",
+    ) -> None:
+        """Update one visualization tile with image content.
+
+        Exactly one of ``image_path``, ``array``, or ``figure`` must be
+        provided. Arrays are rendered as runtime PNGs: 1D arrays become line
+        plots and 2D arrays become images.
+        """
+        with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            if conversation is None:
+                raise KeyError(f"Conversation {conversation_id!r} was not found.")
+            self.find_visualization_tile(conversation, tile_id)
+        content = self.normalize_visualization_content(
+            image_path=image_path,
+            array=array,
+            figure=figure,
+        )
+        timestamp = self.runtime_timestamp()
+        with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            if conversation is None:
+                raise KeyError(f"Conversation {conversation_id!r} was not found.")
+            tile = self.find_visualization_tile(conversation, tile_id)
+            tile.content = content
+            tile.updated_at = timestamp
+            payload = {
+                "conversation_id": conversation_id,
+                "tile": tile.snapshot(),
+            }
+        self.publish("visualization.tile.updated", payload)
+
+    def remove_visualization_tile(
+        self,
+        tile_id: str,
+        conversation_id: str = "primary",
+    ) -> None:
+        """Remove one visualization tile."""
+        with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            if conversation is None:
+                raise KeyError(f"Conversation {conversation_id!r} was not found.")
+            for index, tile in enumerate(conversation.visualization_tiles):
+                if tile.id == tile_id:
+                    del conversation.visualization_tiles[index]
+                    payload = {
+                        "conversation_id": conversation_id,
+                        "tile_id": tile_id,
+                    }
+                    break
+            else:
+                raise KeyError(
+                    f"Visualization tile {tile_id!r} was not found in conversation "
+                    f"{conversation_id!r}."
+                )
+        self.publish("visualization.tile.removed", payload)
+
+    @staticmethod
+    def find_visualization_tile(
+        conversation: RuntimeConversation,
+        tile_id: str,
+    ) -> RuntimeVisualizationTile:
+        """Return a visualization tile from a conversation."""
+        for tile in conversation.visualization_tiles:
+            if tile.id == tile_id:
+                return tile
+        raise KeyError(
+            f"Visualization tile {tile_id!r} was not found in conversation "
+            f"{conversation.id!r}."
+        )
+
+    def normalize_visualization_content(
+        self,
+        *,
+        image_path: str | None = None,
+        array: np.ndarray | None = None,
+        figure: Figure | None = None,
+    ) -> dict[str, Any]:
+        """Return normalized visualization content for a tile update."""
+        provided_count = sum(
+            value is not None
+            for value in (image_path, array, figure)
+        )
+        if provided_count != 1:
+            raise ValueError("Exactly one visualization content source must be provided.")
+        if image_path is not None:
+            return {"type": "image", "image_path": str(image_path)}
+        if array is not None:
+            return {
+                "type": "image",
+                "image_path": self.save_visualization_array(np.asarray(array)),
+            }
+        if not isinstance(figure, Figure):
+            raise ValueError("`figure` must be a matplotlib.figure.Figure instance.")
+        return {
+            "type": "image",
+            "image_path": self.save_visualization_figure(figure, close=False),
+        }
+
+    def build_visualization_image_path(self) -> str:
+        """Return a unique path for a runtime-generated visualization image."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        filename = f"visualization_{timestamp}_{uuid.uuid4().hex[:8]}.png"
+        return os.path.join(self.ensure_upload_dir(), filename)
+
+    def save_visualization_array(self, array: np.ndarray) -> str:
+        """Render a 1D or 2D NumPy array to a runtime PNG file."""
+        if array.ndim == 1:
+            fig, ax = plt.subplots(1, 1)
+            ax.plot(array)
+            ax.set_xlabel("Index")
+            ax.set_ylabel("Value")
+        elif array.ndim == 2:
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(array, cmap="gray")
+            ax.axis("off")
+        else:
+            raise ValueError("Visualization arrays must be 1D or 2D.")
+        return self.save_visualization_figure(fig, close=True)
+
+    def save_visualization_figure(self, figure: Figure, *, close: bool) -> str:
+        """Save a Matplotlib figure to a runtime PNG file."""
+        path = self.build_visualization_image_path()
+        figure.savefig(path, bbox_inches="tight", pad_inches=0)
+        if close:
+            plt.close(figure)
+        return path
 
     @staticmethod
     def runtime_timestamp() -> str:

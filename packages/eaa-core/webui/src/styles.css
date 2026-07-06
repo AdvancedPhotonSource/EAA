@@ -196,6 +196,7 @@ button {
 }
 
 .eaa-chat,
+.eaa-visualizations,
 .eaa-sidebar,
 .eaa-view {
   background: #ffffff;
@@ -209,6 +210,78 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.eaa-visualization-main {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
+
+.eaa-visualizations {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.eaa-visualization-canvas {
+  align-content: flex-start;
+  background: #f8fafc;
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.eaa-visualization-tile {
+  background: #ffffff;
+  border: 1px solid #dce3ef;
+  border-radius: 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.eaa-visualization-image-button {
+  align-items: center;
+  background: #ffffff;
+  border: 0;
+  cursor: zoom-in;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  padding: 0;
+  width: 100%;
+}
+
+.eaa-visualization-image {
+  display: block;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.eaa-visualization-placeholder {
+  align-items: center;
+  color: #667085;
+  display: flex;
+  flex: 1;
+  font-size: 14px;
+  justify-content: center;
+  min-width: 0;
+  padding: 16px;
+  text-align: center;
 }
 
 .eaa-tabs {
@@ -1201,6 +1274,11 @@ button {
 
   .eaa-nav-links {
     flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .eaa-nav-links button {
+    flex: 0 0 auto;
   }
 
   .eaa-connection-card {

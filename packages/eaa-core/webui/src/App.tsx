@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
+  ChartNoAxesCombined,
   CircleStop,
   HelpCircle,
   Image as ImageIcon,
@@ -21,6 +22,7 @@ import type {
   RuntimeConversation,
   RuntimeLogEntry,
   RuntimeSnapshot,
+  RuntimeVisualizationTile,
   Skill,
   ToolSchema,
   WebUIConfig,
@@ -29,7 +31,7 @@ import type {
 import "./styles.css";
 
 type ConnectionState = "Connecting..." | "Connected" | "Reconnecting..." | "Interrupt requested";
-type ViewName = "chat" | "tools" | "settings";
+type ViewName = "chat" | "visualizations" | "tools" | "settings";
 type SlashSuggestion = {
   key: string;
   name: string;
@@ -408,6 +410,105 @@ function MessageView({
   );
 }
 
+function ConversationTabs({
+  conversations,
+  activeConversationId,
+  onSelect,
+  onClose,
+}: {
+  conversations: RuntimeConversation[];
+  activeConversationId: string;
+  onSelect: (conversationId: string) => void;
+  onClose: (conversationId: string) => void;
+}) {
+  return (
+    <div className="eaa-tabs" role="tablist" aria-label="Conversations">
+      {conversations.map((conversation) => {
+        const hasApproval = Boolean(conversation.pending_approval);
+        const active = conversation.id === activeConversationId;
+        const closable = conversation.id !== "primary" && conversation.kind !== "primary";
+        return (
+          <div
+            className={`eaa-tab${active ? " eaa-tab-active" : ""}${hasApproval ? " eaa-tab-alert" : ""}`}
+            key={conversation.id}
+            role="tab"
+            aria-selected={active}
+          >
+            <button className="eaa-tab-select" type="button" onClick={() => onSelect(conversation.id)}>
+              <span>{conversation.kind === "primary" ? "Main Agent" : conversation.label || conversation.id}</span>
+            </button>
+            {hasApproval ? <span className="eaa-tab-badge">Approval</span> : null}
+            {closable ? (
+              <button
+                className="eaa-tab-close"
+                type="button"
+                aria-label={`Close ${conversation.label || conversation.id}`}
+                onClick={() => onClose(conversation.id)}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function VisualizationTileView({ tile, onImage }: { tile: RuntimeVisualizationTile; onImage: (src: string) => void }) {
+  const imagePath = tile.content?.type === "image" ? tile.content.image_path : undefined;
+  const source = imagePath ? imageSource(imagePath) : null;
+  const width = Math.max(180, Math.round(Number(tile.width) || 0));
+  const height = Math.max(140, Math.round(Number(tile.height) || 0));
+  return (
+    <article className="eaa-visualization-tile" style={{ width, height }}>
+      {source ? (
+        <button className="eaa-visualization-image-button" type="button" onClick={() => onImage(source)}>
+          <img className="eaa-visualization-image" src={source} loading="lazy" decoding="async" alt="" />
+        </button>
+      ) : (
+        <div className="eaa-visualization-placeholder">Waiting for plot</div>
+      )}
+    </article>
+  );
+}
+
+function VisualizationsView({
+  conversations,
+  activeConversationId,
+  activeConversation,
+  onSelectConversation,
+  onCloseConversation,
+  onImage,
+}: {
+  conversations: RuntimeConversation[];
+  activeConversationId: string;
+  activeConversation?: RuntimeConversation;
+  onSelectConversation: (conversationId: string) => void;
+  onCloseConversation: (conversationId: string) => void;
+  onImage: (src: string) => void;
+}) {
+  const tiles = activeConversation?.visualization_tiles ?? [];
+  return (
+    <main className="eaa-visualization-main">
+      <section className="eaa-visualizations" aria-label="Visualizations">
+        <ConversationTabs
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onSelect={onSelectConversation}
+          onClose={onCloseConversation}
+        />
+        <div className="eaa-visualization-canvas">
+          {tiles.map((tile) => (
+            <VisualizationTileView key={tile.id} tile={tile} onImage={onImage} />
+          ))}
+          {!tiles.length ? <div className="eaa-empty-state">No visualization tiles yet.</div> : null}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function ToolsView({
   tools,
   reconnectingMcpServers,
@@ -563,7 +664,7 @@ function ImageGalleryDialog({
 
 function App() {
   const [conversations, setConversations] = useState<RuntimeConversation[]>([
-    { id: "primary", label: "Primary", kind: "primary", status: "idle", terminated: false, messages: [] },
+    { id: "primary", label: "Primary", kind: "primary", status: "idle", terminated: false, messages: [], visualization_tiles: [] },
   ]);
   const [activeConversationId, setActiveConversationId] = useState("primary");
   const [activeView, setActiveView] = useState<ViewName>("chat");
@@ -676,7 +777,16 @@ function App() {
     if (conversation.id !== "primary" && closedConversationIdsRef.current.has(conversation.id)) return;
     setConversations((previous) => {
       const index = previous.findIndex((item) => item.id === conversation.id);
-      if (index === -1) return [...previous, { ...conversation, messages: conversation.messages ?? [] }];
+      if (index === -1) {
+        return [
+          ...previous,
+          {
+            ...conversation,
+            messages: conversation.messages ?? [],
+            visualization_tiles: conversation.visualization_tiles ?? [],
+          },
+        ];
+      }
       const next = [...previous];
       const existingMessages = next[index].messages ?? [];
       const mergedMessages = [...existingMessages];
@@ -703,6 +813,7 @@ function App() {
         ...next[index],
         ...conversation,
         messages: mergedMessages,
+        visualization_tiles: conversation.visualization_tiles ?? next[index].visualization_tiles ?? [],
       };
       return next;
     });
@@ -753,6 +864,7 @@ function App() {
                 label: conversationId.replace(/-/g, " "),
                 kind: conversationId === "primary" ? "primary" : "subagent",
                 messages: toRender,
+                visualization_tiles: [],
               },
             ];
           }
@@ -804,6 +916,44 @@ function App() {
     },
     [mergeMessages],
   );
+
+  const upsertVisualizationTile = useCallback((tile: RuntimeVisualizationTile, conversationId = "primary") => {
+    if (conversationId !== "primary" && closedConversationIdsRef.current.has(conversationId)) return;
+    setConversations((previous) => {
+      const updateConversation = (conversation: RuntimeConversation) => {
+        const tiles = conversation.visualization_tiles ?? [];
+        const index = tiles.findIndex((item) => item.id === tile.id);
+        const nextTiles = index === -1 ? [...tiles, tile] : tiles.map((item) => (item.id === tile.id ? tile : item));
+        return { ...conversation, visualization_tiles: nextTiles };
+      };
+      if (!previous.some((conversation) => conversation.id === conversationId)) {
+        return [
+          ...previous,
+          {
+            id: conversationId,
+            label: conversationId.replace(/-/g, " "),
+            kind: conversationId === "primary" ? "primary" : "subagent",
+            messages: [],
+            visualization_tiles: [tile],
+          },
+        ];
+      }
+      return previous.map((conversation) => (conversation.id === conversationId ? updateConversation(conversation) : conversation));
+    });
+  }, []);
+
+  const removeVisualizationTile = useCallback((tileId: string, conversationId = "primary") => {
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === conversationId
+          ? {
+              ...conversation,
+              visualization_tiles: (conversation.visualization_tiles ?? []).filter((tile) => tile.id !== tileId),
+            }
+          : conversation,
+      ),
+    );
+  }, []);
 
   const loadToolSchemas = useCallback(async () => {
     const response = await fetch(config.routes.toolSchemas);
@@ -867,7 +1017,13 @@ function App() {
         const visibleConversations = payload.conversations.filter(
           (conversation) => conversation.id === "primary" || !closedConversationIdsRef.current.has(conversation.id),
         );
-        setConversations(visibleConversations.map((conversation) => ({ ...conversation, messages: conversation.messages ?? [] })));
+        setConversations(
+          visibleConversations.map((conversation) => ({
+            ...conversation,
+            messages: conversation.messages ?? [],
+            visualization_tiles: conversation.visualization_tiles ?? [],
+          })),
+        );
         if (!visibleConversations.some((conversation) => conversation.id === activeConversationId)) {
           setActiveConversationId(visibleConversations[0]?.id ?? "primary");
         }
@@ -907,6 +1063,18 @@ function App() {
       const payload = JSON.parse(event.data || "{}") as { conversation?: RuntimeConversation };
       if (payload.conversation) upsertConversation(payload.conversation);
     });
+    source.addEventListener("visualization.tile.created", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; tile?: RuntimeVisualizationTile };
+      if (payload.tile) upsertVisualizationTile(payload.tile, payload.conversation_id || "primary");
+    });
+    source.addEventListener("visualization.tile.updated", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; tile?: RuntimeVisualizationTile };
+      if (payload.tile) upsertVisualizationTile(payload.tile, payload.conversation_id || "primary");
+    });
+    source.addEventListener("visualization.tile.removed", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; tile_id?: string };
+      if (payload.tile_id) removeVisualizationTile(payload.tile_id, payload.conversation_id || "primary");
+    });
     source.addEventListener("status.changed", (event) => applyStatus(JSON.parse(event.data || "{}") as RuntimeSnapshot));
     source.addEventListener("interrupt.requested", (event) => applyStatus(JSON.parse(event.data || "{}") as RuntimeSnapshot));
     source.addEventListener("interrupt.cleared", (event) => applyStatus(JSON.parse(event.data || "{}") as RuntimeSnapshot));
@@ -920,7 +1088,7 @@ function App() {
       if (payload.log) setLogs((previous) => [...previous, payload.log as RuntimeLogEntry].slice(-500));
     });
     return () => source.close();
-  }, [applyStatus, mergeMessages, renderApprovalRequest, upsertConversation]);
+  }, [applyStatus, mergeMessages, removeVisualizationTile, renderApprovalRequest, upsertConversation, upsertVisualizationTile]);
 
   const submitApproval = async (approved: boolean, conversationId = activeConversationId, approvalId?: string) => {
     await fetch(config.routes.approval, {
@@ -1157,6 +1325,10 @@ function App() {
             <MessageCircle size={22} aria-hidden="true" />
             <span>Chat</span>
           </button>
+          <button className={activeView === "visualizations" ? "active" : ""} type="button" onClick={() => setActiveView("visualizations")}>
+            <ChartNoAxesCombined size={22} aria-hidden="true" />
+            <span>Visualizations</span>
+          </button>
           <button className={activeView === "tools" ? "active" : ""} type="button" onClick={() => setActiveView("tools")}>
             <Wrench size={22} aria-hidden="true" />
             <span>Tools</span>
@@ -1190,36 +1362,12 @@ function App() {
         {activeView === "chat" ? (
           <main className="eaa-main">
             <section className="eaa-chat" aria-label="Chat transcript">
-              <div className="eaa-tabs" role="tablist" aria-label="Conversations">
-                {conversations.map((conversation) => {
-                  const hasApproval = Boolean(conversation.pending_approval);
-                  const active = conversation.id === activeConversationId;
-                  const closable = conversation.id !== "primary" && conversation.kind !== "primary";
-                  return (
-                    <div
-                      className={`eaa-tab${active ? " eaa-tab-active" : ""}${hasApproval ? " eaa-tab-alert" : ""}`}
-                      key={conversation.id}
-                      role="tab"
-                      aria-selected={active}
-                    >
-                      <button className="eaa-tab-select" type="button" onClick={() => setActiveConversationId(conversation.id)}>
-                        <span>{conversation.kind === "primary" ? "Main Agent" : conversation.label || conversation.id}</span>
-                      </button>
-                      {hasApproval ? <span className="eaa-tab-badge">Approval</span> : null}
-                      {closable ? (
-                        <button
-                          className="eaa-tab-close"
-                          type="button"
-                          aria-label={`Close ${conversation.label || conversation.id}`}
-                          onClick={() => closeConversation(conversation.id)}
-                        >
-                          <X size={14} aria-hidden="true" />
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
+              <ConversationTabs
+                conversations={conversations}
+                activeConversationId={activeConversationId}
+                onSelect={setActiveConversationId}
+                onClose={closeConversation}
+              />
               <div className="eaa-messages" ref={messagesRef} onScroll={registerScrollIntent}>
                 {activeMessages.map((message, index) => (
                   <MessageView
@@ -1324,6 +1472,15 @@ function App() {
               </div>
             </aside>
           </main>
+        ) : activeView === "visualizations" ? (
+          <VisualizationsView
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            activeConversation={activeConversation}
+            onSelectConversation={setActiveConversationId}
+            onCloseConversation={closeConversation}
+            onImage={setPreviewImage}
+          />
         ) : activeView === "tools" ? (
           <ToolsView
             tools={toolSchemas}

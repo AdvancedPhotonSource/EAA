@@ -185,6 +185,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
         
         self.last_acquisition_count_registered = 0
         self.last_acquisition_count_stitched = 0
+        self.optimization_status_visualization_tile_id: str | None = None
 
         self.line_scan_tool_x_coordinate_args = line_scan_tool_x_coordinate_args
         self.line_scan_tool_y_coordinate_args = line_scan_tool_y_coordinate_args
@@ -766,6 +767,35 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 image_path=fig_path,
                 update_context=False,
             )
+            runtime_controller = getattr(self, "runtime_controller", None)
+            if (
+                runtime_controller is not None
+                and isinstance(self.optimization_tool, BayesianOptimizationTool)
+            ):
+                try:
+                    conversation_id = getattr(
+                        self,
+                        "runtime_conversation_id",
+                        "primary",
+                    )
+                    if self.optimization_status_visualization_tile_id is None:
+                        self.optimization_status_visualization_tile_id = (
+                            runtime_controller.add_visualization_tile(
+                                640,
+                                420,
+                                conversation_id=conversation_id,
+                            )
+                        )
+                    runtime_controller.update_visualization_tile(
+                        self.optimization_status_visualization_tile_id,
+                        image_path=fig_path,
+                        conversation_id=conversation_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to publish optimization status visualization tile: %s",
+                        exc,
+                    )
         except Exception as exc:
             logger.warning("Failed to visualize optimization status: %s", exc)
         
