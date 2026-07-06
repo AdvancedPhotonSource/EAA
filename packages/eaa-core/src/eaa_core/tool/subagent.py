@@ -193,7 +193,6 @@ class SubagentTool(BaseTool):
         """
         if not isinstance(task_manager_kwargs, dict):
             raise ValueError("`task_manager_kwargs` must be a dictionary.")
-        task_manager_kwargs["termination_behavior"] = "return"
         task_manager_name = str(task_manager_name).strip()
         matched_task_manager = self.registered_task_managers.get(task_manager_name)
         if matched_task_manager is None:
@@ -202,6 +201,10 @@ class SubagentTool(BaseTool):
                 f"No registered task manager named {task_manager_name!r}. "
                 f"Available task managers: {available_names}."
             )
+        task_manager_kwargs = dict(task_manager_kwargs)
+        run_method = getattr(matched_task_manager, "run")
+        if "termination_behavior" in inspect.signature(run_method).parameters:
+            task_manager_kwargs["termination_behavior"] = "return"
 
         runtime_controller = getattr(self.task_manager, "runtime_controller", None)
         conversation_id = self._get_task_manager_name(matched_task_manager)

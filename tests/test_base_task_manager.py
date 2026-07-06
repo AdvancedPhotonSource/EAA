@@ -446,6 +446,39 @@ def test_launch_subtask_manager_uses_registered_manager_runtime(tmp_path):
         SubagentTool.registered_task_managers.update(previous_task_managers)
 
 
+def test_launch_subtask_manager_sets_supported_termination_behavior(tmp_path):
+    class TerminatingSubtaskManager(RecordingSubtaskManager):
+        def run(self, value, termination_behavior="ask"):
+            self.recorded_value = value
+            self.recorded_termination_behavior = termination_behavior
+            return "subtask complete"
+
+    previous_task_managers = preserve_registered_task_managers()
+    SubagentTool.registered_task_managers.clear()
+    try:
+        parent = BaseTaskManager(
+            build=False,
+            transcript_db_path=str(tmp_path / "transcript.sqlite"),
+            use_webui=True,
+        )
+        parent.build_db()
+        subagent_tool = SubagentTool(parent)
+        task_manager = TerminatingSubtaskManager(build=False, name="terminating")
+
+        SubagentTool.add_task_managers(task_manager)
+        result = subagent_tool.launch_subtask_manager(
+            task_manager_name="terminating",
+            task_manager_kwargs={"value": 3},
+        )
+
+        assert result == {"result": "subtask complete"}
+        assert task_manager.recorded_value == 3
+        assert task_manager.recorded_termination_behavior == "return"
+    finally:
+        SubagentTool.registered_task_managers.clear()
+        SubagentTool.registered_task_managers.update(previous_task_managers)
+
+
 def test_task_graph_can_own_task_manager_state(monkeypatch):
     task_manager = TaskWorkflowStateTaskManager(
         build=False,
