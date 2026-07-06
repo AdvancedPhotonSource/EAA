@@ -193,6 +193,7 @@ class SubagentTool(BaseTool):
         """
         if not isinstance(task_manager_kwargs, dict):
             raise ValueError("`task_manager_kwargs` must be a dictionary.")
+        task_manager_kwargs["termination_behavior"] = "return"
         task_manager_name = str(task_manager_name).strip()
         matched_task_manager = self.registered_task_managers.get(task_manager_name)
         if matched_task_manager is None:

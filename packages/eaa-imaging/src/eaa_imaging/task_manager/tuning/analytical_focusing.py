@@ -373,7 +373,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
             logger.info("Entering chat mode...")
             self.run_conversation()
         elif termination_behavior == "return":
-            return
+            return final_report_message
         else:
             raise ValueError(
                 f"Invalid termination behavior: {termination_behavior}. "
