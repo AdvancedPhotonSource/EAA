@@ -1,76 +1,158 @@
 ---
 name: create-eaa-compatible-mcp-servers
-description: Create or review facility-specific MCP server repositories that are compatible with EAA and safe for instrument-control libraries.
+description: Create or review external MCP server repositories for EAA-compatible instrument-control tools, including image artifact payloads, get_attribute_payload, and safe execution patterns such as Bluesky Queue Server gateways, existing execution-server gateways, or MCP-gateway/ZMQ-worker separation.
 ---
 
 # Create EAA-Compatible MCP Servers
 
 Use this skill when creating, reviewing, or refactoring an external MCP server
-for EAA.
+that exposes facility, beamline, endstation, or instrument-control tools for
+use by EAA or another MCP client.
 
-## Goals
+## Background
 
-- Keep facility and endstation-specific control logic outside EAA.
-- The MCP server should not depend on EAA, and should be able to work with
-  more MCP clients than EAA.
-- However, it should observe a collection of contracts with EAA in order to
-  exploit EAA's full capability.
-- Use the process pattern `MCP frontend -> ZMQ -> instrument worker`.
-- Keep instrument worker functions synchronous and blocking unless the facility
-  control library requires an internal runtime.
-- Make chat-facing MCP tools clear and self-describing.
-- Document MCP tool methods in a way compatible with FastMCP tool schema
-  generation.
+EAA (Experiment Automation Agents) is a Python toolkit for building
+experiment-facing agents around task-manager, tool, memory, skill, WebUI, and
+MCP integration primitives. It is published at
+<https://github.com/AdvancedPhotonSource/EAA>.
 
-## Repository Shape
+Treat EAA as an MCP client that can call external MCP tools. Implement
+compatibility through the small payload contracts below, not by importing EAA
+or modifying EAA.
 
-Create a normal Python package managed with `uv`. The repository should include
-`pyproject.toml`, `uv.lock`, a `src/<package_name>/` layout, and console scripts
-declared under `[project.scripts]`.
+## Scope
 
-The runtime dependencies should include MCP, ZMQ, and the facility control
-library dependencies. Do not depend on EAA packages. The server should be usable
-by any MCP client; EAA compatibility should come from tool schemas and payloads,
-not from importing EAA.
+- Implement or review the external MCP server only. Do not modify EAA.
+- Keep facility-specific control logic outside EAA.
+- Do not make the MCP server depend on EAA packages.
+- Build a normal MCP server that can work with generic MCP clients. EAA
+  compatibility should come from clear tool schemas and payload contracts.
+- Use the safest execution pattern that matches the facility control stack.
 
-The server should consist of an MCP frontend and a backend instrument worker.
-At runtime, the frontend and worker are launched in different processes and
-communicate through ZMQ. All calls of instrument control libraries, such as
-Bluesky and EPICS, should only happen in the worker process. The worker process
-should listen to ZMQ messages and execute instrument control functions using
-blocking and synchronous routines. Avoiding async and multithreading is essential
-to ensure that
-- The tool server is thread- and async-safe with the instrument control libraries;
-- All instrument movements are sequential and deterministic.
+## First Step: Ask for the Execution Pattern
 
-Tool and launcher settings must be configurable through a YAML file. Include a
-`configs/` directory in each server repository with at least one example YAML
-configuration that users can copy and edit. The YAML should cover shared
-launcher settings, worker connection settings, MCP HTTP settings, artifact
-paths, simulation or hardware safety flags, and server-specific tool defaults.
-Use clear field names and keep units in the field name where practical, such as
-`request_timeout_ms` or `worker_startup_timeout_s`.
+Before implementing anything, ask the user which execution pattern they want:
 
-Use these modules or equivalents:
+1. **Bluesky Queue Server gateway**: the MCP server exposes tools and sends
+   requests to an existing Bluesky Queue Server.
+2. **Existing execution-server gateway**: the MCP server exposes tools and
+   sends requests to another already-separated server that owns instrument
+   command execution.
+3. **MCP gateway plus local worker backend**: the MCP server gateway talks to a
+   separate local worker process, typically through ZMQ, because instrument
+   control would otherwise run inside the MCP server process.
+
+Also ask for the endpoint, transport, authentication requirements, artifact
+directory, simulation or hardware-safety mode, expected tool list, and any
+server-side attributes or buffers that `get_attribute_payload` should expose.
+
+Apply these pattern-specific gates before writing code:
+
+- If the user selects **Bluesky Queue Server gateway**, read the current
+  Bluesky Queue Server documentation at
+  <https://blueskyproject.io/bluesky-queueserver/>. Then generate an
+  implementation plan and discuss it with the user until they confirm the
+  plan. Do not implement before the plan is finalized.
+- If the user selects **Existing execution-server gateway**, ask for the
+  connection and API details of that server before planning or implementing.
+  At minimum, collect the endpoint, protocol or client library, authentication,
+  command/request schema, response schema, status or progress API, result and
+  artifact handling, timeout behavior, error semantics, concurrency guarantees,
+  and any safety constraints.
+
+If the user has already specified the pattern and required connection details,
+state that assumption briefly and continue through the relevant
+pattern-specific gate. If not, wait for the answer before writing code.
+
+## Execution Patterns
+
+### Bluesky Queue Server Gateway
+
+Use this when the beamline already runs a Bluesky Queue Server and the queue
+server owns RunEngine execution and device state.
+
+Before implementing this pattern, read the current Bluesky Queue Server
+documentation at <https://blueskyproject.io/bluesky-queueserver/> and produce
+a plan for user review. The plan should cover the selected communication route
+such as the Queue Server ZMQ API or Bluesky HTTP Server, environment handling,
+queue item submission, queue start/stop behavior, status polling, result
+retrieval, artifact handling, authentication or permissions, locking, timeouts,
+and safety constraints. Implement only after the user confirms the plan.
+
+The MCP server should:
+
+- expose FastMCP tools for the agent or workflow;
+- query, enqueue, monitor, or otherwise interact with the Queue Server;
+- avoid importing or running a local RunEngine in the MCP process;
+- convert queue results into JSON-serializable MCP tool returns;
+- handle job completion, timeouts, and queue-side failures with clear messages.
+
+### Existing Execution-Server Gateway
+
+Use this when the facility already has a separate server that executes
+instrument commands, serializes hardware access, and owns control-library
+state.
+
+Before implementing this pattern, ask the user how to connect to the execution
+server and how its API behaves. Collect endpoint details, protocol or client
+library, authentication, request and response examples, command names,
+status/progress/result flow, artifact path conventions, timeout and error
+semantics, concurrency guarantees, and safety constraints. Generate a plan from
+those details and confirm it with the user if important behavior is still
+ambiguous.
+
+The MCP server should:
+
+- expose FastMCP tools as a gateway;
+- call the existing execution server through its supported API;
+- avoid executing instrument-control commands locally;
+- preserve the execution server's safety, serialization, and timeout behavior;
+- translate execution-server responses into clean MCP payloads.
+
+### MCP Gateway Plus Local Worker Backend
+
+Use this when the MCP server would otherwise need to call instrument-control
+libraries directly, such as a local Bluesky RunEngine or EPICS control logic.
+
+Separate the system into two OS processes:
+
+```text
+MCP client
+  -> MCP over HTTP
+  -> FastMCP gateway process
+  -> ZMQ request/reply, or equivalent local RPC
+  -> synchronous instrument worker process
+```
+
+This separation ensures the event loops in the MCP gateway and the instrument
+control library (such as Bluesky) do not clash with each other.
+
+The gateway should own MCP and HTTP request handling. The worker should own
+the instrument-control library, device state, blocking control logic, and any
+runtime required by the control stack.
+
+For this pattern, include or adapt these modules:
 
 - `protocol.py`: JSON-serializable command and response envelopes.
-- `zmq_client.py`: request/reply client used only by the MCP frontend.
-- `worker.py`: blocking instrument worker process that owns control-library
-  state.
-- `mcp_server.py`: FastMCP frontend that forwards tools to the worker.
+- `zmq_client.py`: request/reply client used by the MCP gateway.
+- `worker.py`: blocking instrument worker process.
+- `mcp_server.py`: FastMCP gateway that forwards tool calls.
 - `launcher.py`: supervisor that starts the worker, waits for health, then
-  starts the MCP frontend.
+  starts the MCP gateway.
 
-## Launch Interface
+Recommended console scripts:
 
-Expose three console scripts:
+```text
+<facility-suite>
+<facility-suite>-worker
+<facility-suite>-mcp
+```
 
-- `<facility-suite>`: a script that launches both the worker process and the 
-  MCP frontend process
-- `<facility-suite>-worker`: a script that launches the worker process
-- `<facility-suite>-mcp`: a script that launches the MCP frontend process
+The combined launcher should start the worker first, poll a health command,
+then start the MCP gateway. It should terminate both children on shutdown or
+when one child exits unexpectedly.
 
-Example, and recommended argument naming for the combined launch script:
+Recommended option names:
 
 ```bash
 <facility-suite> \
@@ -82,23 +164,6 @@ Example, and recommended argument naming for the combined launch script:
   --mcp-port 8050 \
   --mcp-path /mcp
 ```
-
-All console scripts should accept `--config PATH` for loading the YAML file.
-Explicit CLI flags should override YAML values so operators can make temporary
-runtime changes without editing the file.
-
-The combined launcher command should:
-
-- resolve the worker and MCP frontend console scripts from `PATH`;
-- start the worker subprocess first;
-- poll a `health` command through the ZMQ client until the worker is ready;
-- start the MCP frontend subprocess after worker readiness;
-- monitor both subprocesses and return a nonzero exit code if either child
-  fails;
-- handle `SIGINT` and `SIGTERM` by terminating both child processes, then
-  killing them after a short timeout if needed.
-
-For the seperate worker/frontend launching scripts, here are the examples:
 
 ```bash
 <facility-suite>-worker \
@@ -116,61 +181,126 @@ For the seperate worker/frontend launching scripts, here are the examples:
   --path /mcp
 ```
 
-## Worker Pattern
+## Repository Shape
 
-The worker should:
+Create a Python package managed with `uv`, with `pyproject.toml`, `uv.lock`, a
+`src/<package_name>/` layout, and console scripts under `[project.scripts]`.
 
-- own the instrument-control library and instrument state;
-- serve a blocking ZMQ `REP` loop;
-- expose a `health` command returning `{"status": "ok"}`;
-- dispatch `method` and `params` to synchronous handler functions;
-- return `{"status": "ok", "result": ...}` or
-  `{"status": "error", "error": ...}`;
-- write display artifacts such as plots and preview images to files and return
-  paths.
+Runtime dependencies should match the chosen pattern:
 
-The MCP frontend should:
+- MCP/FastMCP for all patterns.
+- Queue Server or facility API client libraries for gateway-only patterns.
+- ZMQ only when using the local worker pattern.
+- Facility control-library dependencies only in the process that actually
+  executes instrument commands.
 
-- own FastMCP and HTTP transport;
-- not import or initialize the control library unless it absolutely 
-  won't cause any thread- or async-safety issue;
-- forward each MCP tool call to the worker through the ZMQ client;
-- use `asyncio.to_thread(...)` if an async MCP handler calls a blocking ZMQ
-  client.
+Include a `configs/` directory with at least one example YAML configuration.
+Use clear field names and include units where useful, such as
+`request_timeout_ms` or `worker_startup_timeout_s`. Explicit CLI flags should
+override YAML values.
 
-### Tool returns
+## Tool Design
 
-Tools and getters must return serialized Python objects such as `str`, `int`,
-`float`, `bool`, `list`, `dict`, or `None`. Non-literal objects need to
-be handled properly:
-- If a tool is supposed to yield an image, the image should be rendered
-to PNG, saved to hard drive, and the tool should return the path in the
-`img_path` field of a JSON obejct.
-- If a tool is supposed to return a NumPy array, use the 
-`get_attribute_payload` contract below.
+MCP tools should be clear, JSON-oriented, and useful to both LLM agents and
+logic-driven clients.
 
-MCP tool methods must be documented so FastMCP can generate useful tool
-schemas. Each tool function should:
+Each tool function should:
 
-- annotate every argument as `Annotated[type, "description"]`;
+- use descriptive facility-specific names; EAA users can map names on the
+  client side when a logic-driven workflow expects a different local name;
+- annotate every argument, preferably with `Annotated[type, "description"]`;
 - annotate the return type;
-- include a docstring that describes the behavior, units, coordinate order,
-  safety implications, and returned payload fields when applicable.
+- include a docstring that states behavior, units, coordinate order, safety
+  implications, blocking behavior, and returned payload fields when applicable;
+- return only JSON-serializable values: `str`, `int`, `float`, `bool`, `list`,
+  `dict`, or `None`.
+
+## Artifact and Payload Contracts
+
+### Images
+
+Any tool that yields an image for the agent to inspect should:
+
+- render the display image as a PNG file;
+- save it to a path readable by the agent or EAA process;
+- return the absolute path in the `img_path` field of the JSON payload.
+
+Example:
+
+```json
+{
+  "img_path": "/path/to/image.png"
+}
+```
+
+Do not return images as base64 in ordinary tool payloads. File paths are more
+portable across MCP clients and avoid sending large opaque strings to the LLM.
+
+### Numerical Data and Buffers
+
+When a tool needs to expose large arrays for analysis, prefer one of these:
+
+- save the array to a data file such as `.npy` or TIFF and return the path; or
+- expose the value through `get_attribute_payload` when a logic-driven client
+  needs attribute-style access.
+
+Avoid embedding large arrays directly in model-visible tool responses.
+
+### `get_attribute_payload`
+
+Every EAA-compatible MCP server should expose this normal MCP tool:
+
+```python
+get_attribute_payload(name: str) -> object
+```
+
+Use it to fetch server-side attributes, buffers, or cached results by name.
+The server controls which names are supported.
+
+Return JSON-serializable scalar, list, dictionary, or `None` values directly.
+For NumPy arrays or other dense numerical arrays, return this portable array
+payload:
+
+```json
+{
+  "encoded_data": {
+    "type": "array",
+    "dtype": "float32",
+    "shape": [1024, 1024],
+    "data": "<base64-encoded-data>"
+  }
+}
+```
+
+When implementing this in Python, use standard `base64` plus NumPy byte buffers;
+do not import EAA to encode or decode the payload.
+
+## Safety and Concurrency
+
+Instrument operations should be serialized unless the facility control stack
+explicitly supports concurrent calls. Put serialization, hardware interlocks,
+argument bounds, timeout policy, and recovery behavior in the execution owner:
+the Queue Server, existing execution server, or local worker.
+
+The MCP gateway should treat execution timeouts and execution-side exceptions
+as ordinary tool failures with clear error messages. It should not leave
+requests running indefinitely in the MCP event loop.
 
 ## README Requirements
 
-Write a `README.md` for every server repository. It should be useful to users
-of any MCP client and should not assume EAA.
+Write a `README.md` for every server repository. It should not assume EAA.
 
 Include:
 
-- a short description of the server and the instrument or facility it controls;
+- a short description of the server and controlled instrument or facility;
 - setup instructions using `uv sync`;
-- the one-command launcher example that starts both the worker and MCP frontend;
-- separate worker and MCP frontend launch commands for debugging;
-- how to copy and edit the example YAML configuration under `configs/`;
+- the selected execution pattern and why it is used;
+- launch commands for the MCP gateway and any worker or supervisor process;
+- how to copy and edit the example YAML under `configs/`;
 - the precedence rule for config files and CLI overrides;
 - the MCP endpoint URL produced by the examples;
+- artifact directory requirements and path visibility expectations;
+- important safety flags, timeout settings, and instrument-specific options;
 - a generic MCP client JSON configuration, for example:
 
 ```json
@@ -184,164 +314,36 @@ Include:
 }
 ```
 
-Also document important server-specific options such as host, port, ZMQ
-endpoint, timeout, hardware safety flags, output directory,
-artifact path requirements, and instrument-specific parameters 
-(such as exposure time) configured in YAML.
-
-## EAA Contracts
-
-EAA can use MCP tools in two workflow styles:
-
-- **LLM-driven workflows**: an agent chooses and calls tools from the
-  model-facing tool schema.
-- **Logic-driven workflows**: task-manager code calls tools explicitly through
-  EAA adapter proxies.
-
-Tools should ideally support both workflow styles. LLM-driven workflows mostly
-need clear schemas and file-based artifacts that the model can reason about.
-Logic-driven workflows require slightly more contract surface because analytical
-code often needs numerical arrays or other non-JSON-native data from the
-server's internal state.
-
-Do not force EAA-specific names on every general chat tool. Add these contracts
-when a server is intended to participate in EAA acquisition, tuning, or
-analysis workflows.
-
-### LLM-Driven Workflow Contracts
-
-LLM-driven workflows call visible MCP tools and operate on JSON responses plus
-filesystem artifacts.
-
-#### General Return Rules
-
-- Tools must return serialized Python objects such as `str`, `int`, `float`,
-  `bool`, `list`, `dict`, or `None`.
-- Images must be rendered to PNG, saved to disk, and returned in the `img_path`
-  field of a JSON object.
-- NumPy arrays must be saved to disk as `.npy` files, and the tool must return
-  the array path in JSON.
-- Artifact paths returned to EAA must be readable from the EAA process.
-
-The subsequent sub-sections present the contracts used for some specific tool types.
-Not all tools should follow these API requirements; they apply only to tools with
-matching functions. For example, the requirements for "Image Acquisition Tools" only
-apply to tools for acquiring images.
-
-#### Image Acquisition Tools
-
-Expose an image acquisition tool:
-
-```python
-acquire_image(...) -> dict
-```
-
-For `acquire_image`, return:
-
-- `img_path`: path to a PNG display image;
-- one pixel-size key: `psize`, `pixel_size`, `scan_step`, or `stepsize_x`.
-
-`acquire_image` must update server-side image buffers. The server must keep at
-least:
-
-- `image_0`: first 2D image acquired in the current run;
-- `image_km1`: image immediately before the current image;
-- `image_k`: most recent 2D image.
-
-Expose an array dump tool in the image acquisition contract:
-
-```python
-dump_array(buffer_name: str) -> dict
-```
-
-`dump_array` must:
-
-- accept native `buffer_name` values `image_k`, `image_km1`, and `image_0`;
-- save the selected buffer as a `.npy` file;
-- return the path to the saved array in JSON;
-- avoid embedding large array values directly in the model-visible response.
-
-Optionally, expose a line-scan acquisition tool when the instrument supports focusing or
-line-profile analysis:
-
-```python
-acquire_line_scan(...) -> dict
-```
-
-For `acquire_line_scan`, return:
-
-- `fwhm`: numeric Gaussian-fit FWHM for analytical focusing;
-- `img_path`: path to a PNG image of the scanned line profile plot, optionally with the Gaussian fit;
-- optional fit metadata: `a`, `mu`, `sigma`, `c`, `normalized_residual`,
-  `x_min`, `x_max`.
-
-Prefer default argument names:
-
-- image and line coordinates: `x_center`, `y_center`;
-- image size: `size_x`, `size_y`;
-- scan step: `scan_step`;
-- line scan length: `length`;
-- line scan direction (0 degree is horizontal; position angles rotate counter-clockwise): `angle`.
-
-#### Instrument Parameter Setting Tools
-
-Expose a setter for setting instrument parameters (motor positions, exposure time, etc.).
-For example:
-
-```python
-set_zp_z_position(parameters: list[float]) -> str | dict
-```
-
-The input can be a list if the parameter is multi-dimensional.
-
-The response should be JSON-serializable and should report whether the setting
-operation succeeded. Include current values or relevant status fields when they
-help the agent decide the next action.
-
-### Logic-Driven Workflow Contracts
-
-Logic-driven workflows call tools explicitly from task-manager code. They can
-use the same visible tools as LLM-driven workflows, but they often need direct
-access to numerical arrays held in server-side buffers.
-
-Expose an adapter method for logic-driven attribute transfer:
-
-```python
-get_attribute_payload(name: str) -> object
-```
-
-`get_attribute_payload` must:
-
-- accept the native server-side attribute name to fetch;
-- fetch the value with attribute semantics equivalent to `getattr(tool, name)`;
-- return JSON literal values such as `str`, `int`, `float`, `bool`, `list`,
-  `dict`, or `None` as-is;
-- encode NumPy arrays as a JSON-serializable payload;
-- preserve the array dtype and shape when encoding arrays;
-- avoid requiring EAA as a dependency of the external MCP server.
-
-External servers should expose `get_attribute_payload` as a normal FastMCP
-tool. EAA filters this method out of the LLM-facing tool schema, so the model
-cannot see or call it. Analytical task-manager code can still call it over MCP
-through EAA's adapter layer. EAA's built-in tools inherit this method from
-`BaseTool`, but external MCP servers do not use `BaseTool`; server authors must
-implement this contract explicitly.
+Briefly document the EAA compatibility contracts: image-yielding tools return
+`img_path`, and the server exposes `get_attribute_payload`.
 
 ## Review Checklist
 
-- The MCP frontend and instrument worker are separate OS processes.
-- The launcher supervises both children and terminates them on shutdown.
-- The worker health check happens before the MCP server starts.
-- Tool and launcher settings can be loaded from a YAML configuration file.
-- The repository includes a useful example YAML file under `configs/`.
-- CLI flags override YAML configuration values.
-- ZMQ messages and results are JSON-serializable.
-- Getter tools return serializable Python objects, not NumPy arrays, NumPy
-  scalars, or control-library objects.
-- Blocking control-library calls happen in the worker process.
-- Large arrays are returned as artifacts, not embedded in JSON.
-- Artifact paths returned to EAA are readable from the EAA process.
-- Tool arguments use `Annotated[type, "description"]`, return types are
-  annotated, and docstrings clearly describe units, coordinate order, and safety
-  implications.
-- Logic-driven EAA task managers have the required tool names and return keys.
+- The user selected one of the supported execution patterns before
+  implementation.
+- For the Bluesky Queue Server pattern, the agent read the current Queue
+  Server documentation, proposed an implementation plan, discussed it with the
+  user, and waited for confirmation before implementing.
+- For the existing execution-server pattern, the agent collected concrete
+  connection and API details before planning or implementing.
+- The repository implements an MCP server, not changes to EAA.
+- The server has no EAA package dependency.
+- Gateway-only patterns send commands to the Queue Server or existing
+  execution server instead of executing instrument commands locally.
+- The local worker pattern separates MCP gateway and instrument execution into
+  different OS processes.
+- Blocking control-library calls happen only in the execution owner.
+- Tool and launcher settings can be loaded from YAML, with CLI overrides.
+- MCP tool returns are JSON-serializable.
+- Image-yielding tools save PNG files and return `img_path`.
+- Large arrays are returned as files or through `get_attribute_payload`, not as
+  ordinary model-visible JSON.
+- `get_attribute_payload` exists and handles arrays with an `encoded_data`
+  object containing `type`, `dtype`, `shape`, and `data`.
+- Artifact paths returned to clients are readable from the client process that
+  needs them.
+- Tool arguments, return types, docstrings, units, coordinate order, and safety
+  implications are clear.
+- Timeouts and execution-side exceptions produce clear tool failures.
+- The README documents setup, launch, configuration, endpoint, artifacts,
+  safety options, and the two EAA compatibility contracts.
