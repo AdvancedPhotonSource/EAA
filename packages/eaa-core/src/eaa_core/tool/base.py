@@ -135,14 +135,17 @@ class BaseTool:
         Returns
         -------
         dict[str, Any]
-            Payload containing base64-encoded contiguous array bytes.
+            Payload containing encoded array metadata and base64-encoded
+            contiguous array bytes.
         """
         contiguous = np.ascontiguousarray(array)
         return {
-            "encoding": "numpy_base64",
-            "dtype": str(contiguous.dtype),
-            "shape": list(contiguous.shape),
-            "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+            "encoded_data": {
+                "type": "array",
+                "dtype": str(contiguous.dtype),
+                "shape": list(contiguous.shape),
+                "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+            }
         }
 
     @staticmethod
@@ -159,13 +162,18 @@ class BaseTool:
         numpy.ndarray
             Decoded array.
         """
-        if payload.get("encoding") != "numpy_base64":
-            raise ValueError(f"Unsupported array encoding: {payload.get('encoding')!r}.")
-        data = payload.get("data")
+        encoded_data = payload.get("encoded_data")
+        if not isinstance(encoded_data, dict):
+            raise ValueError("Array payload must contain `encoded_data` object.")
+        if encoded_data.get("type") != "array":
+            raise ValueError(
+                f"Unsupported encoded data type: {encoded_data.get('type')!r}."
+            )
+        data = encoded_data.get("data")
         if not isinstance(data, str):
             raise ValueError("Array payload must contain base64 string field `data`.")
-        dtype = payload.get("dtype")
-        shape = payload.get("shape")
+        dtype = encoded_data.get("dtype")
+        shape = encoded_data.get("shape")
         if not isinstance(dtype, str) or not isinstance(shape, list):
             raise ValueError("Array payload must contain `dtype` and `shape` fields.")
         array_bytes = base64.b64decode(data.encode("ascii"))

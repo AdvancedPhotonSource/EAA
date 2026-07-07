@@ -165,7 +165,14 @@ def test_mcp_tool_hides_external_attribute_payload_from_model_schemas(tmp_path):
                 "",
                 "class ExternalAcquisitionTool(BaseTool):",
                 "    def build(self):",
-                "        self.image_k = {'encoding': 'numpy_base64', 'buffer_name': 'image_k'}",
+                "        self.image_k = {",
+                "            'encoded_data': {",
+                "                'type': 'array',",
+                "                'dtype': 'float32',",
+                "                'shape': [1],",
+                "                'data': 'AAAAAA==',",
+                "            }",
+                "        }",
                 "",
                 "    @tool(name='acquire_image')",
                 "    def acquire_image(self) -> dict:",
@@ -194,8 +201,12 @@ def test_mcp_tool_hides_external_attribute_payload_from_model_schemas(tmp_path):
         assert getattr(mcp_tool, "external_acquisition_tool.get_attribute_payload")(
             name="image_k"
         ) == {
-            "buffer_name": "image_k",
-            "encoding": "numpy_base64",
+            "encoded_data": {
+                "type": "array",
+                "dtype": "float32",
+                "shape": [1],
+                "data": "AAAAAA==",
+            },
         }
         assert [
             schema["function"]["name"]
@@ -252,7 +263,14 @@ def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():
 
         @tool(name="hidden_payload", model_visible=False)
         def hidden_payload(self) -> dict:
-            return {"encoding": "numpy_base64"}
+            return {
+                "encoded_data": {
+                    "type": "array",
+                    "dtype": "float32",
+                    "shape": [1],
+                    "data": "AAAAAA==",
+                }
+            }
 
     tool = HiddenPayloadTool()
     server = MCPToolServer(tools=tool)
@@ -269,7 +287,14 @@ def test_model_hidden_tools_are_mcp_callable_but_not_model_visible():
         "hidden_payload",
         "hidden_payload_tool.get_attribute_payload",
     ]
-    assert tool.hidden_payload() == {"encoding": "numpy_base64"}
+    assert tool.hidden_payload() == {
+        "encoded_data": {
+            "type": "array",
+            "dtype": "float32",
+            "shape": [1],
+            "data": "AAAAAA==",
+        }
+    }
     assert [
         schema["function"]["name"]
         for schema in server.get_tool_schemas()

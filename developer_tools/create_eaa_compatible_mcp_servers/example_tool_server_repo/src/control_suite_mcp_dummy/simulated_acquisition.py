@@ -7,11 +7,12 @@ that can own instrument-control state independently of the MCP server.
 
 from __future__ import annotations
 
+import base64
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import logging
 
 import matplotlib
 
@@ -303,15 +304,19 @@ class SimulatedInstrument:
     def encode_attribute_payload(self, value: Any) -> Any:
         """Encode an attribute value for JSON transfer over MCP.
 
-        NumPy arrays are represented with dtype, shape, and nested list data so
-        an adapter can reconstruct the original array without importing EAA.
+        NumPy arrays are represented with dtype, shape, and base64-encoded
+        contiguous array bytes so an adapter can reconstruct the original array
+        without importing EAA.
         """
         if isinstance(value, np.ndarray):
+            contiguous = np.ascontiguousarray(value)
             return {
-                "encoding": "numpy.ndarray",
-                "dtype": str(value.dtype),
-                "shape": list(value.shape),
-                "data": value.tolist(),
+                "encoded_data": {
+                    "type": "array",
+                    "dtype": str(contiguous.dtype),
+                    "shape": list(contiguous.shape),
+                    "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+                }
             }
         return self.json_safe(value)
 
@@ -328,7 +333,8 @@ class SimulatedInstrument:
         -------
         object
             Literal JSON value, or a NumPy-array payload containing
-            ``encoding``, ``dtype``, ``shape``, and ``data`` fields.
+            an ``encoded_data`` object with ``type``, ``dtype``, ``shape``, and
+            ``data`` fields.
         """
         if not hasattr(self, name):
             raise AttributeError(f"Unknown instrument attribute: {name}")

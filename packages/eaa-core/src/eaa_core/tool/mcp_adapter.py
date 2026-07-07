@@ -254,7 +254,8 @@ class MCPRPCWrapper:
     @staticmethod
     def decode_payload(payload: Any) -> Any:
         """Decode an EAA array payload or return a JSON-compatible value."""
-        if isinstance(payload, dict) and payload.get("encoding") == "numpy_base64":
+        encoded_data = payload.get("encoded_data") if isinstance(payload, dict) else None
+        if isinstance(encoded_data, dict) and encoded_data.get("type") == "array":
             return BaseTool.decode_array_payload(payload)
         return payload
 

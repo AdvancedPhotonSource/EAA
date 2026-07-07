@@ -176,9 +176,9 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
     ) -> Any:
         """Return a JSON payload for a worker attribute.
 
-        Literal values are returned directly. NumPy arrays are encoded with
-        ``encoding``, ``dtype``, ``shape``, and ``data`` fields for
-        logic-driven EAA adapters.
+        Literal values are returned directly. NumPy arrays are encoded in an
+        ``encoded_data`` object containing ``type``, ``dtype``, ``shape``, and
+        ``data`` fields for logic-driven EAA adapters.
         """
         return await call_worker("get_attribute_payload", {"name": name})
 
