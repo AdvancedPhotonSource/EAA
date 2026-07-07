@@ -334,7 +334,7 @@ the normal `BaseTool` interface.
 To create MCP tool servers that control instruments at experiment endstations,
 we strongly recommend following the async-safe server pattern to avoid issues
 related to thread-safety and async event loop conflicts. Find more details in
-[Creating Async-Safe MCP Servers](creating-async-safe-mcp-servers.md).
+[Creating Async-Safe MCP Servers](creating-mcp-servers.md).
 
 ```python
 from eaa_core.tool.mcp_client import MCPTool
@@ -461,7 +461,7 @@ server-side attribute names. After a successful call, the wrapper calls the
 remote `get_attribute_payload(name=...)` support tool and stores decoded values
 on the wrapper. Array payloads encoded with `BaseTool.encode_array_payload()` or
 the compatible format in
-[Creating Async-Safe MCP Servers](creating-async-safe-mcp-servers.md) are
+[Creating Async-Safe MCP Servers](creating-mcp-servers.md) are
 decoded back to NumPy arrays.
 
 For parameter-tuning style workflows, `MCPRPCWrapper` also has local helper

@@ -9,7 +9,7 @@ configuration surface, and extension points.
 - [LLM Config](llm-config.md)
 - [Task Manager](task-manager.md)
 - [Tools](tools.md)
-- [Creating Async-Safe MCP Servers](creating-async-safe-mcp-servers.md)
+- [Creating Async-Safe MCP Servers](creating-mcp-servers.md)
 - [Skills](skills.md)
 - [Memory](memory.md)
 - [WebUI](webui.md)
