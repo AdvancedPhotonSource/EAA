@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
 import queue
 import threading
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
@@ -529,23 +529,17 @@ class WebUIRuntimeController:
         if array is not None:
             return {
                 "type": "image",
-                "image_path": self.save_visualization_array(np.asarray(array)),
+                "image_url": self.encode_visualization_array(np.asarray(array)),
             }
         if not isinstance(figure, Figure):
             raise ValueError("`figure` must be a matplotlib.figure.Figure instance.")
         return {
             "type": "image",
-            "image_path": self.save_visualization_figure(figure, close=False),
+            "image_url": self.encode_visualization_figure(figure, close=False),
         }
 
-    def build_visualization_image_path(self) -> str:
-        """Return a unique path for a runtime-generated visualization image."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-        filename = f"visualization_{timestamp}_{uuid.uuid4().hex[:8]}.png"
-        return os.path.join(self.ensure_upload_dir(), filename)
-
-    def save_visualization_array(self, array: np.ndarray) -> str:
-        """Render a 1D or 2D NumPy array to a runtime PNG file."""
+    def encode_visualization_array(self, array: np.ndarray) -> str:
+        """Render a 1D or 2D NumPy array as a PNG data URL."""
         if array.ndim == 1:
             fig, ax = plt.subplots(1, 1)
             ax.plot(array)
@@ -557,15 +551,20 @@ class WebUIRuntimeController:
             ax.axis("off")
         else:
             raise ValueError("Visualization arrays must be 1D or 2D.")
-        return self.save_visualization_figure(fig, close=True)
+        return self.encode_visualization_figure(fig, close=True)
 
-    def save_visualization_figure(self, figure: Figure, *, close: bool) -> str:
-        """Save a Matplotlib figure to a runtime PNG file."""
-        path = self.build_visualization_image_path()
-        figure.savefig(path, bbox_inches="tight", pad_inches=0)
-        if close:
-            plt.close(figure)
-        return path
+    @staticmethod
+    def encode_visualization_figure(figure: Figure, *, close: bool) -> str:
+        """Render a Matplotlib figure as a PNG data URL."""
+        buffer = io.BytesIO()
+        try:
+            figure.savefig(buffer, format="png", bbox_inches="tight", pad_inches=0)
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        finally:
+            buffer.close()
+            if close:
+                plt.close(figure)
 
     @staticmethod
     def runtime_timestamp() -> str:

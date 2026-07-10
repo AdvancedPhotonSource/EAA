@@ -237,12 +237,11 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         assert tile["width"] == 640
         assert tile["height"] == 420
         assert tile["content"]["type"] == "image"
-        assert tile["content"]["image_path"].startswith(".tmp/optimization_status_")
-        assert os.path.exists(tile["content"]["image_path"])
+        assert tile["content"]["image_url"].startswith("data:image/png;base64,")
         assert conversation["messages"][0]["image"].startswith("data:image/png;base64,")
 
         first_tile_id = tile["id"]
-        first_image_path = tile["content"]["image_path"]
+        first_image_url = tile["content"]["image_url"]
         task_manager.param_setting_tool.set_parameters(np.array([2.0], dtype=float))
         task_manager.update_optimization_model(1.5)
 
@@ -255,7 +254,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
         assert len(conversation["visualization_tiles"]) == 1
         updated_tile = conversation["visualization_tiles"][0]
         assert updated_tile["id"] == first_tile_id
-        assert updated_tile["content"]["image_path"] != first_image_path
+        assert updated_tile["content"]["image_url"] != first_image_url
 
     def test_run_iteration_applies_registration_offset_and_updates_model(self, monkeypatch):
         task_manager, acquisition_tool = self._build_task_manager()

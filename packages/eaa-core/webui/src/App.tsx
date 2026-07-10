@@ -490,8 +490,8 @@ function ConversationTabs({
 }
 
 function VisualizationTileView({ tile, onImage }: { tile: RuntimeVisualizationTile; onImage: (src: string) => void }) {
-  const imagePath = tile.content?.type === "image" ? tile.content.image_path : undefined;
-  const source = imagePath ? imageSource(imagePath) : null;
+  const image = tile.content?.type === "image" ? tile.content.image_url || tile.content.image_path : undefined;
+  const source = image ? imageSource(image) : null;
   const width = Math.max(180, Math.round(Number(tile.width) || 0));
   const height = Math.max(140, Math.round(Number(tile.height) || 0));
   return (

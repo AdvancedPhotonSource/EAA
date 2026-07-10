@@ -788,7 +788,7 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                         )
                     runtime_controller.update_visualization_tile(
                         self.optimization_status_visualization_tile_id,
-                        image_path=fig_path,
+                        figure=fig,
                         conversation_id=conversation_id,
                     )
                 except Exception as exc:

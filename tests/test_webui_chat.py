@@ -1,3 +1,4 @@
+import base64
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -203,21 +204,29 @@ def test_runtime_visualization_tile_renders_supported_objects(tmp_path):
     tile_2d = controller.add_visualization_tile(300, 200)
     tile_figure = controller.add_visualization_tile(300, 200)
 
+    open_figures = set(plt.get_fignums())
     controller.update_visualization_tile(tile_1d, array=np.array([1, 3, 2]))
     controller.update_visualization_tile(tile_2d, array=np.arange(9).reshape(3, 3))
+    assert set(plt.get_fignums()) == open_figures
+
     fig, ax = plt.subplots(1, 1)
     ax.plot([0, 1], [1, 0])
     controller.update_visualization_tile(tile_figure, figure=fig)
+    assert plt.fignum_exists(fig.number)
     plt.close(fig)
 
     tiles = controller.snapshot()["conversations"][0]["visualization_tiles"]
-    image_paths = [
-        tile["content"]["image_path"]
+    image_urls = [
+        tile["content"]["image_url"]
         for tile in tiles
     ]
-    assert len(set(image_paths)) == 3
-    assert all(path.endswith(".png") for path in image_paths)
-    assert all((tmp_path / path.split("/")[-1]).exists() for path in image_paths)
+    assert len(set(image_urls)) == 3
+    assert all(url.startswith("data:image/png;base64,") for url in image_urls)
+    assert all(
+        base64.b64decode(url.split(",", 1)[1]).startswith(b"\x89PNG\r\n\x1a\n")
+        for url in image_urls
+    )
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_runtime_visualization_tile_rejects_invalid_content(tmp_path):

@@ -52,6 +52,7 @@ export type RuntimeVisualizationTile = {
   content?: {
     type?: string;
     image_path?: string;
+    image_url?: string;
   } | null;
   updated_at?: string | null;
 };
