@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   ChartNoAxesCombined,
@@ -47,6 +47,10 @@ type MCPReconnectStatus = {
   state: "success" | "error";
   message: string;
 };
+type PanelBox = {
+  start: number;
+  size: number;
+};
 
 const defaultConfig: WebUIConfig = {
   title: "EAA Control Center",
@@ -68,8 +72,38 @@ const defaultConfig: WebUIConfig = {
 };
 
 const config = window.EAA_WEBUI_CONFIG ?? defaultConfig;
+const DEFAULT_CHAT_PANEL_PERCENT = 57;
+const DEFAULT_IMAGE_PANEL_PERCENT = 41;
+const MAIN_RESIZER_SIZE_PX = 16;
+const SIDEBAR_RESIZER_SIZE_PX = 16;
+const MIN_CHAT_PANEL_PX = 360;
+const MIN_SIDEBAR_PANEL_PX = 300;
+const MIN_IMAGE_PANEL_PX = 140;
+const MIN_LOG_PANEL_PX = 180;
 
 const mathJaxScriptUrl = () => `${config.routes.mathjax.replace(/\/$/, "")}/es5/tex-svg-full.js`;
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const contentBox = (element: HTMLElement, axis: "horizontal" | "vertical"): PanelBox => {
+  const rect = element.getBoundingClientRect();
+  const styles = window.getComputedStyle(element);
+  if (axis === "horizontal") {
+    const paddingStart = Number.parseFloat(styles.paddingLeft) || 0;
+    const paddingEnd = Number.parseFloat(styles.paddingRight) || 0;
+    return { start: rect.left + paddingStart, size: rect.width - paddingStart - paddingEnd };
+  }
+  const paddingStart = Number.parseFloat(styles.paddingTop) || 0;
+  const paddingEnd = Number.parseFloat(styles.paddingBottom) || 0;
+  return { start: rect.top + paddingStart, size: rect.height - paddingStart - paddingEnd };
+};
+
+const clampPanelPercent = (percent: number, size: number, firstMin: number, secondMin: number, resizerSize: number) => {
+  if (size <= firstMin + secondMin + resizerSize) return clamp(percent, 0, 100);
+  const min = (firstMin / size) * 100;
+  const max = ((size - secondMin - resizerSize) / size) * 100;
+  return clamp(percent, min, max);
+};
 
 const configureMathJax = () => {
   const current = window.MathJax ?? {};
@@ -688,6 +722,10 @@ function App() {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [mathJaxReady, setMathJaxReady] = useState(Boolean(window.MathJax?.typesetPromise));
   const [uiTitle, setUiTitle] = useState(config.title);
+  const [chatPanelPercent, setChatPanelPercent] = useState(DEFAULT_CHAT_PANEL_PERCENT);
+  const [imagePanelPercent, setImagePanelPercent] = useState(DEFAULT_IMAGE_PANEL_PERCENT);
+  const mainRef = useRef<HTMLElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const imagesRef = useRef<HTMLDivElement>(null);
   const logsRef = useRef<HTMLDivElement>(null);
@@ -700,6 +738,14 @@ function App() {
   const processing = !inputRequested && status !== "idle";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const activeMessages = activeConversation?.messages ?? [];
+  const chatPanelStyle = useMemo(
+    () =>
+      ({
+        "--eaa-chat-panel-size": `${chatPanelPercent}%`,
+        "--eaa-image-panel-size": `${imagePanelPercent}%`,
+      }) as CSSProperties,
+    [chatPanelPercent, imagePanelPercent],
+  );
 
   const followScroll = useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
@@ -716,6 +762,114 @@ function App() {
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     el.dataset.eaaUserScrolled = distance > 100 ? "1" : "";
   };
+
+  const resizeChatPanel = useCallback((clientX: number) => {
+    if (!mainRef.current) return;
+    const box = contentBox(mainRef.current, "horizontal");
+    const percent = ((clientX - box.start) / box.size) * 100;
+    setChatPanelPercent(clampPanelPercent(percent, box.size, MIN_CHAT_PANEL_PX, MIN_SIDEBAR_PANEL_PX, MAIN_RESIZER_SIZE_PX));
+  }, []);
+
+  const resizeImagePanel = useCallback((clientY: number) => {
+    if (!sidebarRef.current) return;
+    const box = contentBox(sidebarRef.current, "vertical");
+    const percent = ((clientY - box.start) / box.size) * 100;
+    setImagePanelPercent(clampPanelPercent(percent, box.size, MIN_IMAGE_PANEL_PX, MIN_LOG_PANEL_PX, SIDEBAR_RESIZER_SIZE_PX));
+  }, []);
+
+  const startChatPanelResize = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      const target = event.currentTarget;
+      const pointerId = event.pointerId;
+      target.setPointerCapture(pointerId);
+      document.body.classList.add("eaa-resizing-columns");
+      resizeChatPanel(event.clientX);
+
+      const onPointerMove = (moveEvent: globalThis.PointerEvent) => resizeChatPanel(moveEvent.clientX);
+      const finishResize = () => {
+        if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+        document.body.classList.remove("eaa-resizing-columns");
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", finishResize);
+        window.removeEventListener("pointercancel", finishResize);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", finishResize);
+      window.addEventListener("pointercancel", finishResize);
+    },
+    [resizeChatPanel],
+  );
+
+  const startImagePanelResize = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      const target = event.currentTarget;
+      const pointerId = event.pointerId;
+      target.setPointerCapture(pointerId);
+      document.body.classList.add("eaa-resizing-rows");
+      resizeImagePanel(event.clientY);
+
+      const onPointerMove = (moveEvent: globalThis.PointerEvent) => resizeImagePanel(moveEvent.clientY);
+      const finishResize = () => {
+        if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+        document.body.classList.remove("eaa-resizing-rows");
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", finishResize);
+        window.removeEventListener("pointercancel", finishResize);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", finishResize);
+      window.addEventListener("pointercancel", finishResize);
+    },
+    [resizeImagePanel],
+  );
+
+  const adjustChatPanel = useCallback((delta: number) => {
+    setChatPanelPercent((previous) => {
+      if (!mainRef.current) return clamp(previous + delta, 0, 100);
+      const box = contentBox(mainRef.current, "horizontal");
+      return clampPanelPercent(previous + delta, box.size, MIN_CHAT_PANEL_PX, MIN_SIDEBAR_PANEL_PX, MAIN_RESIZER_SIZE_PX);
+    });
+  }, []);
+
+  const adjustImagePanel = useCallback((delta: number) => {
+    setImagePanelPercent((previous) => {
+      if (!sidebarRef.current) return clamp(previous + delta, 0, 100);
+      const box = contentBox(sidebarRef.current, "vertical");
+      return clampPanelPercent(previous + delta, box.size, MIN_IMAGE_PANEL_PX, MIN_LOG_PANEL_PX, SIDEBAR_RESIZER_SIZE_PX);
+    });
+  }, []);
+
+  const onChatPanelResizeKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 5 : 2;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        adjustChatPanel(-step);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        adjustChatPanel(step);
+      }
+    },
+    [adjustChatPanel],
+  );
+
+  const onImagePanelResizeKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 5 : 2;
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        adjustImagePanel(-step);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        adjustImagePanel(step);
+      }
+    },
+    [adjustImagePanel],
+  );
 
   useEffect(() => {
     document.title = uiTitle || config.title;
@@ -1360,7 +1514,7 @@ function App() {
           </div>
         </header>
         {activeView === "chat" ? (
-          <main className="eaa-main">
+          <main className="eaa-main" ref={mainRef} style={chatPanelStyle}>
             <section className="eaa-chat" aria-label="Chat transcript">
               <ConversationTabs
                 conversations={conversations}
@@ -1426,7 +1580,20 @@ function App() {
                 <div className="eaa-disclaimer">EAA can make mistakes. Verify critical results.</div>
               </form>
             </section>
-            <aside className="eaa-sidebar" aria-label="Images and logs">
+            <button
+              aria-label="Resize chat and sidebar panels"
+              aria-orientation="vertical"
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={Math.round(chatPanelPercent)}
+              className="eaa-panel-resizer eaa-panel-resizer-vertical"
+              onKeyDown={onChatPanelResizeKeyDown}
+              onPointerDown={startChatPanelResize}
+              role="separator"
+              title="Resize chat and sidebar panels"
+              type="button"
+            />
+            <aside className="eaa-sidebar" ref={sidebarRef} aria-label="Images and logs">
               <div className="eaa-side-panel eaa-image-panel">
                 <div className="eaa-panel-header">
                   <div>
@@ -1451,6 +1618,19 @@ function App() {
                   {!sidebarImages.length ? <div className="eaa-empty-inline">No images yet.</div> : null}
                 </div>
               </div>
+              <button
+                aria-label="Resize image and log panels"
+                aria-orientation="horizontal"
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={Math.round(imagePanelPercent)}
+                className="eaa-panel-resizer eaa-panel-resizer-horizontal"
+                onKeyDown={onImagePanelResizeKeyDown}
+                onPointerDown={startImagePanelResize}
+                role="separator"
+                title="Resize image and log panels"
+                type="button"
+              />
               <div className="eaa-side-panel eaa-log-panel">
                 <div className="eaa-panel-header">
                   <div>

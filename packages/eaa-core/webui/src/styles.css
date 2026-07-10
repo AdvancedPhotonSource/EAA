@@ -189,10 +189,11 @@ button {
 .eaa-main {
   display: grid;
   flex: 1;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+  column-gap: 0;
+  grid-template-columns: minmax(360px, var(--eaa-chat-panel-size, 57%)) 16px minmax(300px, 1fr);
   min-height: 0;
   padding: 16px;
+  row-gap: 16px;
 }
 
 .eaa-chat,
@@ -784,8 +785,8 @@ button {
 
 .eaa-sidebar {
   display: grid;
-  gap: 16px;
-  grid-template-rows: minmax(220px, 0.82fr) minmax(260px, 1.18fr);
+  gap: 0;
+  grid-template-rows: minmax(140px, var(--eaa-image-panel-size, 41%)) 16px minmax(180px, 1fr);
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -803,7 +804,75 @@ button {
 }
 
 .eaa-image-panel {
-  border-bottom: 1px solid #dce3ef;
+  border-bottom: 0;
+}
+
+.eaa-panel-resizer {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #64748b;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  position: relative;
+  touch-action: none;
+  z-index: 2;
+}
+
+.eaa-panel-resizer:hover,
+.eaa-panel-resizer:focus-visible {
+  color: #315cff;
+}
+
+.eaa-panel-resizer:focus-visible {
+  outline: 2px solid #315cff;
+  outline-offset: -2px;
+}
+
+.eaa-panel-resizer-vertical {
+  cursor: col-resize;
+}
+
+.eaa-panel-resizer-vertical::before {
+  border-left: 1px solid #dce3ef;
+  bottom: 0;
+  content: "";
+  left: 50%;
+  position: absolute;
+  top: 0;
+}
+
+.eaa-panel-resizer-horizontal {
+  cursor: row-resize;
+}
+
+.eaa-panel-resizer-horizontal::before {
+  border-top: 1px solid #dce3ef;
+  content: "";
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+}
+
+.eaa-panel-resizer:hover::before,
+.eaa-panel-resizer:focus-visible::before {
+  border-color: #315cff;
+}
+
+body.eaa-resizing-columns,
+body.eaa-resizing-columns * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+body.eaa-resizing-rows,
+body.eaa-resizing-rows * {
+  cursor: row-resize !important;
+  user-select: none;
 }
 
 .eaa-panel-header {
@@ -1286,7 +1355,12 @@ button {
   }
 
   .eaa-main {
+    gap: 16px;
     grid-template-columns: 1fr;
+  }
+
+  .eaa-panel-resizer-vertical {
+    display: none;
   }
 
   .eaa-sidebar {
