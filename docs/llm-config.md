@@ -10,12 +10,13 @@ config to `build_chat_model()`, which returns a LangChain chat model.
 
 - `LLMConfig`: empty base class used for typing and shared config helpers.
 - `OpenAIConfig`: configuration for OpenAI-compatible chat endpoints. Fields:
-  `model`, `base_url`, and `api_key`.
+  `model`, `base_url`, `api_key`, and `model_kwargs`. Entries in `model_kwargs`
+  are passed as additional `ChatOpenAI` constructor arguments.
 - `AskSageConfig`: configuration for AskSage endpoints. Fields: `model`,
   `server_base_url`, `user_base_url`, `api_key`, `email`, and `cacert_path`.
 - `ArgoConfig`: configuration for Argo endpoints. Fields: `model`,
-  `base_url`, `api_key`, and `user`, which is deprecated, accepted temporarily,
-  and ignored.
+  `base_url`, `api_key`, `model_kwargs`, and `user`, which is deprecated,
+  accepted temporarily, and ignored.
 
 ## How the config is used
 
@@ -37,6 +38,14 @@ llm_config = OpenAIConfig(
     api_key="YOUR_API_KEY",
 )
 ```
+
+Prompt caching is configured automatically from `model`. OpenAI model IDs
+receive a session-specific `prompt_cache_key`; model IDs containing `claude` or
+`anthropic` receive Anthropic's top-level ephemeral `cache_control`. Compatible
+gateways must forward these fields to the underlying provider. `model_kwargs`
+defaults to `None`, which enables this automatic configuration. Supplying a
+mapping replaces the automatic fields, so explicitly setting `model_kwargs={}`
+disables prompt caching.
 
 ## Relationship to memory
 

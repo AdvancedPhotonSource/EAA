@@ -725,7 +725,10 @@ class BaseTaskManager:
         if self.llm_config is None:
             logger.info("Skipping model build because `llm_config` is not provided.")
             return
-        self.model = build_chat_model(self.llm_config)
+        self.model = build_chat_model(
+            self.llm_config,
+            session_name=f"{self.name}:{self.session_id}",
+        )
 
     def build_tools(self, *args, **kwargs):
         """Register local tools and built-in helper tools."""

@@ -1,5 +1,6 @@
-from dataclasses import dataclass
 import warnings
+from dataclasses import dataclass
+from typing import Any
 
 from eaa_core.api.base import BaseConfig
 
@@ -16,6 +17,7 @@ class OpenAIConfig(LLMConfig):
     model: str = None
     base_url: str = "https://api.openai.com/v1"
     api_key: str = None
+    model_kwargs: dict[str, Any] | None = None
 
 
 @dataclass
