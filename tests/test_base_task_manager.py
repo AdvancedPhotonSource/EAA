@@ -159,7 +159,24 @@ def test_task_manager_owns_tool_manager_not_tools():
     task_manager = BaseTaskManager(build=False, checkpoint_db_path=None)
 
     assert isinstance(task_manager.tool_manager, ToolManager)
+    assert task_manager.runtime_controller.task_manager is task_manager
     assert task_manager.tool_executor.tools is task_manager.tool_manager
+    assert (
+        task_manager.tool_executor.release_handler
+        == task_manager.runtime_controller.add_tool_execution
+    )
+    assert (
+        task_manager.tool_executor.completion_handler
+        == task_manager.runtime_controller.complete_tool_execution
+    )
+    assert (
+        task_manager.tool_executor.dequeue_handler
+        == task_manager.runtime_controller.dequeue_tool_messages
+    )
+    assert (
+        task_manager.tool_executor.cleanup_handler
+        == task_manager.runtime_controller.cleanup_tool_jobs
+    )
     assert task_manager.agent.tool_manager is task_manager.tool_manager
     assert not hasattr(task_manager, "tools")
     assert not hasattr(task_manager, "coding_tool_sandbox_type")
@@ -409,6 +426,7 @@ def test_launch_subtask_manager_uses_registered_manager_runtime(tmp_path):
             transcript_db_path=str(tmp_path / "child_transcript.sqlite"),
             name="recording",
         )
+        original_runtime_controller = task_manager.runtime_controller
 
         SubagentTool.add_task_managers(task_manager)
         result = subagent_tool.launch_subtask_manager(
@@ -428,7 +446,7 @@ def test_launch_subtask_manager_uses_registered_manager_runtime(tmp_path):
         assert task_manager.recorded_use_webui is True
         assert task_manager.checkpoint_db_path == str(tmp_path / "child_checkpoint.sqlite")
         assert task_manager.transcript_db_path == str(tmp_path / "child_transcript.sqlite")
-        assert task_manager.runtime_controller is None
+        assert task_manager.runtime_controller is original_runtime_controller
 
         snapshot = parent.runtime_controller.snapshot()
         subtask_conversation = snapshot["conversations"][1]

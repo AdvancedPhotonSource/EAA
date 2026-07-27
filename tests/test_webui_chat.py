@@ -1,5 +1,6 @@
 import base64
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -18,8 +19,8 @@ from eaa_core.gui.html import (
     build_parser,
     launch_html_webui_subprocess,
 )
-from eaa_core.gui.runtime import WebUIRuntimeController
-from eaa_core.gui.runtime import WebUIRuntimeServer
+from eaa_core.gui.runtime import WebUIRuntimeController, WebUIRuntimeServer
+from eaa_core.signals import ControlSignal
 from eaa_core.tool.base import BaseTool, tool
 
 
@@ -315,6 +316,7 @@ def test_transcript_messages_are_agent_owned_without_webui(tmp_path):
     messages = SQLiteTranscriptStore(str(transcript_db)).load_messages()
     assert len(messages) == 1
     assert messages[0]["content"] == "agent side"
+    assert task_manager.runtime_controller.snapshot()["messages"] == []
 
 
 def test_query_messages_reads_explicit_transcript_messages(tmp_path):
@@ -712,6 +714,18 @@ def test_runtime_input_and_approval_restore_previous_status():
     controller.submit_approval(True)
     assert controller.request_approval("tool", {}) is True
     assert controller.snapshot()["status"] == "running"
+
+
+def test_runtime_input_wait_returns_explicit_wakeup_result():
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager)
+    wake_event = threading.Event()
+    wake_event.set()
+
+    result = controller.request_input("Prompt", wake_event=wake_event)
+
+    assert result is ControlSignal.BACKGROUND_TOOL_COMPLETION_WAKEUP
+    assert controller.snapshot()["status"] == "idle"
 
 
 def test_runtime_approval_times_out_and_rejects():

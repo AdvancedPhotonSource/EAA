@@ -220,6 +220,7 @@ class TestAnalyticalFocusing(tutils.BaseTester):
             task_manager,
             upload_dir=str(tmp_path),
         )
+        task_manager.use_webui = True
         task_manager.runtime_conversation_id = "subagent-1"
         task_manager.param_setting_tool.set_parameters(np.array([1.0], dtype=float))
 

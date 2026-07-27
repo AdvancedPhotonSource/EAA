@@ -1,9 +1,13 @@
 import copy
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 import json
 import logging
+import threading
+import uuid
 
 import numpy as np
 
@@ -24,10 +28,51 @@ class ToolExecutionResult:
     """Normalized tool execution result."""
 
     message: dict[str, Any]
+    released_job_id: str | None = None
+
+
+@dataclass
+class BackgroundToolCompletion:
+    """One completed released tool call ready for graph-thread delivery."""
+
+    job_id: str
+    tool_name: str
+    conversation_id: str
+    conversation_label: str
+    status: str
+    system_message: dict[str, Any]
+    tool_response: dict[str, Any]
+    queued_at: str
+
+
+@dataclass
+class _ToolJob:
+    """Internal state shared by a tool worker and its submitting graph thread."""
+
+    job_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    function: Callable[..., Any]
+    tool_call_id: str | None
+    graph_run_token: str
+    conversation_id: str
+    conversation_label: str
+    submitted_at: str
+    done_event: threading.Event = field(default_factory=threading.Event)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    released: bool = False
+    completion: BackgroundToolCompletion | None = None
+
+
+RELEASE_DESCRIPTION = (
+    "The tool call has been successfully submitted but execution is still in "
+    "progress. Now wait; when tool execution finishes, the result will be given "
+    "in a follow-up message."
+)
 
 
 class SerialToolExecutor:
-    """Serial, thread-free tool execution for task managers.
+    """Tool execution with opt-in background release.
 
     This executor is also the source of truth for WebUI tool schemas and
     tool-to-owner metadata.
@@ -44,6 +89,85 @@ class SerialToolExecutor:
         self.tool_specs: dict[str, ExposedToolSpec] = {}
         self.tool_spec_owners: dict[str, BaseTool] = {}
         self.tool_execution_history: list[dict[str, Any]] = []
+        self.release_handler: Callable[[dict[str, Any]], None] | None = None
+        self.completion_handler: Callable[[dict[str, Any]], None] | None = None
+        self.dequeue_handler: Callable[[list[str]], None] | None = None
+        self.cleanup_handler: Callable[[list[str]], None] | None = None
+        self.completion_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._history_lock = threading.Lock()
+        self._active_graph_runs: set[str] = set()
+        self._jobs_by_run: dict[str, dict[str, _ToolJob]] = {}
+        self._ready_by_run: dict[str, deque[BackgroundToolCompletion]] = {}
+
+    def set_queue_handlers(
+        self,
+        *,
+        release_handler: Callable[[dict[str, Any]], None] | None = None,
+        completion_handler: Callable[[dict[str, Any]], None] | None = None,
+        dequeue_handler: Callable[[list[str]], None] | None = None,
+        cleanup_handler: Callable[[list[str]], None] | None = None,
+    ) -> None:
+        """Configure display-queue callbacks owned by the task manager."""
+        self.release_handler = release_handler
+        self.completion_handler = completion_handler
+        self.dequeue_handler = dequeue_handler
+        self.cleanup_handler = cleanup_handler
+
+    def begin_graph_run(self) -> str:
+        """Create and register a token for one graph invocation."""
+        token = uuid.uuid4().hex
+        with self._state_lock:
+            self._active_graph_runs.add(token)
+            self._jobs_by_run[token] = {}
+            self._ready_by_run[token] = deque()
+        return token
+
+    def finish_graph_run(self, graph_run_token: str) -> None:
+        """Invalidate a graph run and remove all of its display-queue entries."""
+        with self._state_lock:
+            self._active_graph_runs.discard(graph_run_token)
+            jobs = self._jobs_by_run.pop(graph_run_token, {})
+            self._ready_by_run.pop(graph_run_token, None)
+            job_ids = list(jobs)
+            self._refresh_completion_event_locked()
+        if job_ids and self.cleanup_handler is not None:
+            self.cleanup_handler(job_ids)
+
+    def has_ready_completions(self, graph_run_token: str | None) -> bool:
+        """Return whether a graph run has completed messages waiting."""
+        if graph_run_token is None:
+            return False
+        with self._state_lock:
+            return bool(self._ready_by_run.get(graph_run_token))
+
+    def has_background_jobs(self, graph_run_token: str | None) -> bool:
+        """Return whether a graph run owns released or queued worker jobs."""
+        if graph_run_token is None:
+            return False
+        with self._state_lock:
+            return bool(self._jobs_by_run.get(graph_run_token))
+
+    def drain_ready_completions(
+        self,
+        graph_run_token: str | None,
+    ) -> list[BackgroundToolCompletion]:
+        """Drain ready completions for one active graph run in FIFO order."""
+        if graph_run_token is None:
+            return []
+        with self._state_lock:
+            ready = self._ready_by_run.get(graph_run_token)
+            if ready is None:
+                return []
+            completions = list(ready)
+            ready.clear()
+            jobs = self._jobs_by_run.get(graph_run_token, {})
+            for completion in completions:
+                jobs.pop(completion.job_id, None)
+            self._refresh_completion_event_locked()
+        if completions and self.dequeue_handler is not None:
+            self.dequeue_handler([completion.job_id for completion in completions])
+        return completions
 
     def register_tools(self, tools: BaseTool | list[BaseTool]) -> None:
         """Register one or more tool objects."""
@@ -65,6 +189,7 @@ class SerialToolExecutor:
                     ),
                     schema=exposed.schema,
                     model_visible=exposed.model_visible,
+                    release_timeout=exposed.release_timeout,
                 )
                 self.tool_specs[spec.name] = spec
                 self.tool_spec_owners[spec.name] = tool
@@ -108,13 +233,35 @@ class SerialToolExecutor:
             schemas.append(schema)
         return schemas
 
-    def execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[ToolExecutionResult]:
-        """Execute assistant-requested tool calls serially."""
-        return [self.execute_tool_call(tool_call) for tool_call in tool_calls]
+    def execute_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        *,
+        allow_release: bool = True,
+        graph_run_token: str | None = None,
+        conversation_id: str = "primary",
+        conversation_label: str = "Primary",
+    ) -> list[ToolExecutionResult]:
+        """Submit assistant-requested tool calls in message order."""
+        return [
+            self.execute_tool_call(
+                tool_call,
+                allow_release=allow_release,
+                graph_run_token=graph_run_token,
+                conversation_id=conversation_id,
+                conversation_label=conversation_label,
+            )
+            for tool_call in tool_calls
+        ]
 
     def execute_tool_calls_from_message(
         self,
         message: dict[str, Any],
+        *,
+        allow_release: bool = True,
+        graph_run_token: str | None = None,
+        conversation_id: str = "primary",
+        conversation_label: str = "Primary",
     ) -> list[dict[str, Any]]:
         """Execute tool calls found in an assistant message.
 
@@ -130,10 +277,24 @@ class SerialToolExecutor:
         tool_calls = message.get("tool_calls")
         if not isinstance(tool_calls, list) or len(tool_calls) == 0:
             return []
-        results = self.execute_tool_calls(tool_calls)
+        results = self.execute_tool_calls(
+            tool_calls,
+            allow_release=allow_release,
+            graph_run_token=graph_run_token,
+            conversation_id=conversation_id,
+            conversation_label=conversation_label,
+        )
         return [result.message for result in results]
 
-    def execute_tool_call(self, tool_call: dict[str, Any]) -> ToolExecutionResult:
+    def execute_tool_call(
+        self,
+        tool_call: dict[str, Any],
+        *,
+        allow_release: bool = True,
+        graph_run_token: str | None = None,
+        conversation_id: str = "primary",
+        conversation_label: str = "Primary",
+    ) -> ToolExecutionResult:
         """Execute one tool call and normalize its response."""
         function = tool_call.get("function", {})
         tool_name = function.get("name")
@@ -158,18 +319,253 @@ class SerialToolExecutor:
                         tool_call_id=tool_call.get("id"),
                     )
                     return ToolExecutionResult(message=message)
-            result = spec.function(**arguments)
-            content = self.serialize_result(result)
         except Exception as exc:
             logger.exception("Tool execution failed for %s", tool_name)
             content = self.serialize_result({"error": str(exc)})
-        message = generate_openai_message(
-            content=content,
-            role="tool",
-            tool_call_id=tool_call.get("id"),
+            return ToolExecutionResult(
+                message=generate_openai_message(
+                    content=content,
+                    role="tool",
+                    tool_call_id=tool_call.get("id"),
+                )
+            )
+
+        can_release = (
+            allow_release
+            and graph_run_token is not None
+            and spec.release_timeout is not None
         )
-        self.tool_execution_history.append({"tool_name": tool_name, "arguments": arguments})
-        return ToolExecutionResult(message=message)
+        if not can_release:
+            content, _failed = self._execute_tool_body(
+                tool_name,
+                arguments,
+                spec.function,
+            )
+            return ToolExecutionResult(
+                message=generate_openai_message(
+                    content=content,
+                    role="tool",
+                    tool_call_id=tool_call.get("id"),
+                )
+            )
+
+        job = self._create_job(
+            tool_name=tool_name,
+            arguments=arguments,
+            function=spec.function,
+            tool_call_id=tool_call.get("id"),
+            graph_run_token=graph_run_token,
+            conversation_id=conversation_id,
+            conversation_label=conversation_label,
+        )
+        worker = threading.Thread(
+            target=self._run_job,
+            args=(job,),
+            name=f"eaa-tool-{job.job_id}",
+            daemon=True,
+        )
+        worker.start()
+        if job.done_event.wait(spec.release_timeout):
+            return ToolExecutionResult(
+                message=self._immediate_message_from_job(job),
+            )
+        with job.lock:
+            if job.completion is not None:
+                completed_before_release = True
+            else:
+                completed_before_release = False
+                job.released = True
+                self._publish_released_job(job)
+        if completed_before_release:
+            return ToolExecutionResult(
+                message=self._immediate_message_from_job(job),
+            )
+        release_payload = {
+            "job_id": job.job_id,
+            "status": "executing",
+            "description": RELEASE_DESCRIPTION,
+        }
+        return ToolExecutionResult(
+            message=generate_openai_message(
+                content=json.dumps(release_payload),
+                role="tool",
+                tool_call_id=tool_call.get("id"),
+            ),
+            released_job_id=job.job_id,
+        )
+
+    def _create_job(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        function: Callable[..., Any],
+        tool_call_id: str | None,
+        graph_run_token: str,
+        conversation_id: str,
+        conversation_label: str,
+    ) -> _ToolJob:
+        """Create and register one releasable worker job."""
+        with self._state_lock:
+            if graph_run_token not in self._active_graph_runs:
+                raise RuntimeError("Cannot release a tool call for an inactive graph run.")
+            existing_ids = {
+                job_id
+                for jobs in self._jobs_by_run.values()
+                for job_id in jobs
+            }
+            job_id = uuid.uuid4().hex[:8]
+            while job_id in existing_ids:
+                job_id = uuid.uuid4().hex[:8]
+            job = _ToolJob(
+                job_id=job_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                function=function,
+                tool_call_id=tool_call_id,
+                graph_run_token=graph_run_token,
+                conversation_id=conversation_id,
+                conversation_label=conversation_label,
+                submitted_at=self._timestamp(),
+            )
+            self._jobs_by_run[graph_run_token][job_id] = job
+        return job
+
+    def _run_job(self, job: _ToolJob) -> None:
+        """Execute and normalize one tool call in a daemon worker."""
+        content, failed = self._execute_tool_body(
+            job.tool_name,
+            job.arguments,
+            job.function,
+        )
+        parsed = json.loads(content)
+        if failed:
+            completion_payload = {
+                "job_id": job.job_id,
+                "tool_name": job.tool_name,
+                "status": "failed",
+                "error": str(parsed["error"]),
+            }
+        else:
+            completion_payload = {
+                "job_id": job.job_id,
+                "tool_name": job.tool_name,
+                "status": "completed",
+                "result": parsed,
+            }
+        queued_at = self._timestamp()
+        completion = BackgroundToolCompletion(
+            job_id=job.job_id,
+            tool_name=job.tool_name,
+            conversation_id=job.conversation_id,
+            conversation_label=job.conversation_label,
+            status=completion_payload["status"],
+            system_message=generate_openai_message(
+                content=json.dumps(completion_payload),
+                role="system",
+            ),
+            tool_response=generate_openai_message(
+                content=content,
+                role="tool",
+                tool_call_id=job.tool_call_id,
+            ),
+            queued_at=queued_at,
+        )
+        with job.lock:
+            job.completion = completion
+            job.done_event.set()
+            if job.released:
+                self._queue_completed_job(job, completion)
+
+    def _execute_tool_body(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        function: Callable[..., Any],
+    ) -> tuple[str, bool]:
+        """Execute one tool body and normalize its result."""
+        try:
+            result = function(**arguments)
+            content = self.serialize_result(result)
+            failed = False
+        except Exception as exc:
+            logger.exception("Tool execution failed for %s", tool_name)
+            content = self.serialize_result({"error": str(exc)})
+            failed = True
+        with self._history_lock:
+            self.tool_execution_history.append(
+                {"tool_name": tool_name, "arguments": arguments}
+            )
+        return content, failed
+
+    def _immediate_message_from_job(self, job: _ToolJob) -> dict[str, Any]:
+        """Build the ordinary tool response for a worker that met its deadline."""
+        with job.lock:
+            completion = job.completion
+        if completion is None:
+            raise RuntimeError("Tool worker completed without a normalized result.")
+        with self._state_lock:
+            jobs = self._jobs_by_run.get(job.graph_run_token)
+            if jobs is not None:
+                jobs.pop(job.job_id, None)
+        return completion.tool_response
+
+    def _publish_released_job(self, job: _ToolJob) -> None:
+        """Publish one execution-queue entry while holding the job lock."""
+        entry = {
+            "job_id": job.job_id,
+            "tool_name": job.tool_name,
+            "conversation_id": job.conversation_id,
+            "conversation_label": job.conversation_label,
+            "status": "executing",
+            "timestamp": job.submitted_at,
+        }
+        with self._state_lock:
+            if job.graph_run_token not in self._active_graph_runs:
+                return
+            if self.release_handler is not None:
+                self.release_handler(entry)
+
+    def _queue_completed_job(
+        self,
+        job: _ToolJob,
+        completion: BackgroundToolCompletion,
+    ) -> None:
+        """Move one released execution into the graph and display message queues."""
+        entry = {
+            "job_id": completion.job_id,
+            "tool_name": completion.tool_name,
+            "conversation_id": completion.conversation_id,
+            "conversation_label": completion.conversation_label,
+            "status": completion.status,
+            "content": completion.system_message["content"],
+            "queued_at": completion.queued_at,
+        }
+        with self._state_lock:
+            if job.graph_run_token not in self._active_graph_runs:
+                return
+            ready = self._ready_by_run.get(job.graph_run_token)
+            if ready is None:
+                return
+            ready.append(completion)
+            self.completion_event.set()
+            if self.completion_handler is not None:
+                self.completion_handler(entry)
+
+    def _refresh_completion_event_locked(self) -> None:
+        """Synchronize the wake event with all run-scoped ready queues."""
+        if any(self._ready_by_run.values()):
+            self.completion_event.set()
+        else:
+            self.completion_event.clear()
+
+    @staticmethod
+    def _timestamp() -> str:
+        """Return an ISO UTC timestamp for queue records."""
+        return datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+            "+00:00",
+            "Z",
+        )
 
     @staticmethod
     def parse_arguments(arguments: Any) -> dict[str, Any]:

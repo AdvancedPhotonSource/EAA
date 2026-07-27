@@ -585,7 +585,10 @@ class MultiAgentROISearchTaskManager(ImagingBaseTaskManager):
             self.record_model_exchange_for_state(state, outgoing, response)
             try:
                 tool_calls = self.validate_position_proposer_response(response)
-                tool_messages = self.tool_executor.execute_tool_calls(tool_calls)
+                tool_messages = self.tool_executor.execute_tool_calls(
+                    tool_calls,
+                    allow_release=False,
+                )
                 if len(tool_messages) != 1:
                     raise RuntimeError(
                         "Image acquisition did not return exactly one tool message."

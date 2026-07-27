@@ -2,6 +2,7 @@ import base64
 import inspect
 import io
 import json
+import math
 import os
 import re
 import typing
@@ -39,6 +40,34 @@ class ExposedToolSpec:
     require_approval: Optional[bool | Callable[[Dict[str, Any]], bool]] = None
     schema: Optional[Dict[str, Any]] = None
     model_visible: bool = True
+    release_timeout: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate execution-release metadata."""
+        self.release_timeout = validate_release_timeout(self.release_timeout)
+
+
+def validate_release_timeout(value: Any) -> float | None:
+    """Return a validated background-release timeout.
+
+    Parameters
+    ----------
+    value : Any
+        Timeout value in seconds, or ``None`` to disable background release.
+
+    Returns
+    -------
+    float or None
+        Validated timeout.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError("`release_timeout` must be a finite, non-negative number or None.")
+    normalized = float(value)
+    if not math.isfinite(normalized) or normalized < 0:
+        raise ValueError("`release_timeout` must be a finite, non-negative number or None.")
+    return normalized
 
 
 def tool(
@@ -46,8 +75,10 @@ def tool(
     *,
     require_approval: Optional[bool | str | Callable[[Dict[str, Any]], bool]] = None,
     model_visible: bool = True,
+    release_timeout: float | None = None,
 ):
     """Mark a method as an exposed tool."""
+    validated_release_timeout = validate_release_timeout(release_timeout)
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         if not callable(func):
@@ -56,6 +87,7 @@ def tool(
         setattr(func, "tool_name", name)
         setattr(func, "tool_require_approval", require_approval)
         setattr(func, "tool_model_visible", model_visible)
+        setattr(func, "tool_release_timeout", validated_release_timeout)
         return func
 
     return decorator
@@ -71,6 +103,7 @@ class BaseTool:
         build: bool = True,
         *args,
         require_approval: bool = False,
+        release_timeout: float | None = None,
         name: Optional[str] = None,
         **kwargs,
     ):
@@ -84,6 +117,9 @@ class BaseTool:
             Positional arguments forwarded to :meth:`build`.
         require_approval : bool, optional
             Whether execution of the tool requires approval.
+        release_timeout : float, optional
+            Seconds to wait for model-issued calls before releasing them to
+            continue in the background.
         name : str, optional
             Instance-level tool name override.
         **kwargs
@@ -91,6 +127,7 @@ class BaseTool:
         """
         self.name = name if name is not None else self.get_default_name()
         self.require_approval = require_approval
+        self.release_timeout = validate_release_timeout(release_timeout)
         if build:
             self.build(*args, **kwargs)
         self.exposed_tools = self.discover_tools()
@@ -254,12 +291,18 @@ class BaseTool:
                 if isinstance(require_approval, str):
                     require_approval = getattr(self, require_approval)
                 model_visible = getattr(target, "tool_model_visible", True)
+                release_timeout = getattr(target, "tool_release_timeout", None)
                 discovered.append(
                     ExposedToolSpec(
                         name=name,
                         function=bound,
                         require_approval=require_approval,
                         model_visible=model_visible,
+                        release_timeout=(
+                            self.release_timeout
+                            if release_timeout is None
+                            else release_timeout
+                        ),
                     )
                 )
         return discovered

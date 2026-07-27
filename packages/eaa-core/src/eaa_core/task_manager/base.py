@@ -6,8 +6,10 @@ from typing import Any, Dict, Literal, Optional, Sequence
 import json
 import logging
 import re
+import select
 import shlex
 import sqlite3
+import sys
 
 from langgraph.graph import START, StateGraph
 
@@ -24,6 +26,7 @@ from eaa_core.message_proc import (
     get_message_preview,
     print_message,
 )
+from eaa_core.signals import ControlSignal
 from eaa_core.task_manager.commands import UserInputCommand, parse_user_input_command
 from eaa_core.task_manager.memory_manager import MemoryManager
 from eaa_core.task_manager.nodes import NodeFactory
@@ -104,7 +107,10 @@ class TaskManagerAgentAdapter:
 
     def handle_tool_call(self, message: dict[str, Any]):
         """Execute tool calls found in an assistant response."""
-        return self.task_manager.tool_executor.execute_tool_calls_from_message(message)
+        return self.task_manager.tool_executor.execute_tool_calls_from_message(
+            message,
+            allow_release=False,
+        )
 
 
 class BaseTaskManager:
@@ -203,13 +209,13 @@ class BaseTaskManager:
         self.webui_runtime_port = webui_runtime_port
         self.webui_upload_dir = webui_upload_dir
         self.runtime_conversation_id = runtime_conversation_id
-        self.runtime_controller: WebUIRuntimeController | None = runtime_controller
+        owns_runtime_controller = runtime_controller is None
+        self.runtime_controller = runtime_controller or WebUIRuntimeController(
+            self,
+            upload_dir=webui_upload_dir,
+        )
         self.runtime_server: WebUIRuntimeServer | None = None
-        if use_webui and runtime_controller is None:
-            self.runtime_controller = WebUIRuntimeController(
-                self,
-                upload_dir=webui_upload_dir,
-            )
+        if use_webui and owns_runtime_controller:
             self.runtime_server = WebUIRuntimeServer(
                 self.runtime_controller,
                 host=webui_runtime_host,
@@ -227,6 +233,13 @@ class BaseTaskManager:
             approval_handler=self._request_tool_approval_via_task_manager,
             tools=self.tool_manager,
         )
+        self.tool_executor.set_queue_handlers(
+            release_handler=self.runtime_controller.add_tool_execution,
+            completion_handler=self.runtime_controller.complete_tool_execution,
+            dequeue_handler=self.runtime_controller.dequeue_tool_messages,
+            cleanup_handler=self.runtime_controller.cleanup_tool_jobs,
+        )
+        self._active_graph_run_token: str | None = None
         self.tool_manager.bind_executor(self.tool_executor)
         self.model = None
         self.agent = TaskManagerAgentAdapter(self)
@@ -633,59 +646,66 @@ class BaseTaskManager:
         """
         active_input = graph_input
         active_kwargs = dict(graph_kwargs)
-        while True:
-            try:
-                if self.runtime_controller is not None:
-                    self.runtime_controller.check_interrupt()
-                    self.runtime_controller.set_status(
-                        "running",
-                        input_requested=False,
-                        conversation_id=self.runtime_conversation_id,
+        graph_run_token = self.tool_executor.begin_graph_run()
+        self._active_graph_run_token = graph_run_token
+        try:
+            while True:
+                try:
+                    if self.use_webui:
+                        self.runtime_controller.check_interrupt()
+                        self.runtime_controller.set_status(
+                            "running",
+                            input_requested=False,
+                            conversation_id=self.runtime_conversation_id,
+                        )
+                    result = graph.invoke(active_input, **active_kwargs)
+                    if self.use_webui:
+                        self.runtime_controller.set_status(
+                            "idle",
+                            input_requested=False,
+                            conversation_id=self.runtime_conversation_id,
+                        )
+                    return GraphInvokeResult(final_state=result, command="completed")
+                except KeyboardInterrupt:
+                    if self.use_webui:
+                        self.runtime_controller.set_status(
+                            "interrupted",
+                            input_requested=False,
+                            conversation_id=self.runtime_conversation_id,
+                        )
+                    checkpoint_config = active_kwargs.get("config")
+                    checkpoint_recovered = self.recover_active_state_from_checkpoint(
+                        graph=graph,
+                        checkpoint_config=checkpoint_config,
+                        graph_name=graph_name,
+                        state_model=state_model,
                     )
-                result = graph.invoke(active_input, **active_kwargs)
-                if self.runtime_controller is not None:
-                    self.runtime_controller.set_status(
-                        "idle",
-                        input_requested=False,
-                        conversation_id=self.runtime_conversation_id,
+                    resume_as_node = self.get_interrupted_checkpoint_resume_node(
+                        graph=graph,
+                        checkpoint_config=checkpoint_config,
                     )
-                return GraphInvokeResult(final_state=result, command="completed")
-            except KeyboardInterrupt:
-                if self.runtime_controller is not None:
-                    self.runtime_controller.set_status(
-                        "interrupted",
-                        input_requested=False,
-                        conversation_id=self.runtime_conversation_id,
+                    command = self.append_interruption_resume_input(
+                        interruption_message,
+                        checkpoint_recovered=checkpoint_recovered,
                     )
-                checkpoint_config = active_kwargs.get("config")
-                checkpoint_recovered = self.recover_active_state_from_checkpoint(
-                    graph=graph,
-                    checkpoint_config=checkpoint_config,
-                    graph_name=graph_name,
-                    state_model=state_model,
-                )
-                resume_as_node = self.get_interrupted_checkpoint_resume_node(
-                    graph=graph,
-                    checkpoint_config=checkpoint_config,
-                )
-                command = self.append_interruption_resume_input(
-                    interruption_message,
-                    checkpoint_recovered=checkpoint_recovered,
-                )
-                if command != "completed":
-                    return GraphInvokeResult(command=command)
-                if checkpoint_config is None:
-                    active_input = self.active_state
-                    continue
-                update_kwargs = {}
-                if resume_as_node is not None:
-                    update_kwargs["as_node"] = resume_as_node
-                graph.update_state(
-                    checkpoint_config,
-                    self.active_state.model_dump(),
-                    **update_kwargs,
-                )
-                active_input = None
+                    if command != "completed":
+                        return GraphInvokeResult(command=command)
+                    if checkpoint_config is None:
+                        active_input = self.active_state
+                        continue
+                    update_kwargs = {}
+                    if resume_as_node is not None:
+                        update_kwargs["as_node"] = resume_as_node
+                    graph.update_state(
+                        checkpoint_config,
+                        self.active_state.model_dump(),
+                        **update_kwargs,
+                    )
+                    active_input = None
+        finally:
+            self.tool_executor.finish_graph_run(graph_run_token)
+            if self._active_graph_run_token == graph_run_token:
+                self._active_graph_run_token = None
 
     def build(self, *args, **kwargs):
         """Build persistence, model, tools, and graphs."""
@@ -699,8 +719,7 @@ class BaseTaskManager:
     def build_db(self, *args, **kwargs):
         """Initialize message persistence and optionally hydrate prior messages."""
         self.transcript_store.connect()
-        if self.runtime_controller is not None:
-            self.runtime_controller.build()
+        self.runtime_controller.build()
 
     def start_webui_runtime(self) -> None:
         """Start the agent-side WebUI runtime server."""
@@ -1037,7 +1056,7 @@ class BaseTaskManager:
         message : Dict[str, Any]
             Message payload to expose through the WebUI.
         """
-        if self.runtime_controller is not None:
+        if self.use_webui:
             if isinstance(message.get("content"), list) or isinstance(message.get("tool_calls"), list):
                 display_message = get_message_elements_as_text(message)
                 display_message["content"] = display_message["content"].strip()
@@ -1065,15 +1084,28 @@ class BaseTaskManager:
         """Persist one transcript message."""
         self.transcript_store.append_message(message)
 
+    def get_runtime_conversation_label(self) -> str:
+        """Return the display label for the active runtime conversation."""
+        return self.runtime_controller.conversation_label(
+            self.runtime_conversation_id
+        )
+
     def get_user_input(
         self,
         prompt: str = "Enter a message: ",
         display_prompt_in_webui: bool = False,
         *args,
         **kwargs,
-    ) -> str:
+    ) -> str | ControlSignal:
         """Get user input from the terminal or the WebUI runtime."""
-        if self.runtime_controller is not None:
+        graph_run_token = self._active_graph_run_token
+        wake_event = None
+        if (
+            graph_run_token is not None
+            and self.tool_executor.has_background_jobs(graph_run_token)
+        ):
+            wake_event = self.tool_executor.completion_event
+        if self.use_webui:
             logger.info("Waiting for user input through the WebUI runtime.")
             if display_prompt_in_webui:
                 self.update_message_history(
@@ -1085,15 +1117,48 @@ class BaseTaskManager:
             return self.runtime_controller.request_input(
                 prompt,
                 conversation_id=self.runtime_conversation_id,
+                wake_event=wake_event,
             )
+        if wake_event is not None:
+            return self._get_terminal_input_or_tool_completion(prompt, wake_event)
         self.set_user_input_requested(True)
         message = input(prompt)
         self.set_user_input_requested(False)
         return message
 
+    def _get_terminal_input_or_tool_completion(
+        self,
+        prompt: str,
+        wake_event: Any,
+    ) -> str | ControlSignal:
+        """Wait for terminal input while allowing tool completions to wake the graph."""
+        try:
+            sys.stdin.fileno()
+        except (AttributeError, OSError, ValueError):
+            self.set_user_input_requested(True)
+            message = input(prompt)
+            self.set_user_input_requested(False)
+            return message
+        self.set_user_input_requested(True)
+        print(prompt, end="", flush=True)
+        try:
+            while True:
+                if wake_event.is_set():
+                    print()
+                    return ControlSignal.BACKGROUND_TOOL_COMPLETION_WAKEUP
+                readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if not readable:
+                    continue
+                line = sys.stdin.readline()
+                if line == "":
+                    raise EOFError()
+                return line.rstrip("\r\n")
+        finally:
+            self.set_user_input_requested(False)
+
     def set_user_input_requested(self, requested: bool) -> None:
         """Update the WebUI pending-input status flag."""
-        if self.runtime_controller is not None:
+        if self.use_webui:
             self.runtime_controller.set_status(
                 "waiting_for_input" if requested else "running",
                 input_requested=requested,
@@ -1107,7 +1172,7 @@ class BaseTaskManager:
             f"Arguments: {json.dumps(tool_kwargs, default=str)}\n"
             "Approve? [y/N]: "
         )
-        if self.runtime_controller is not None:
+        if self.use_webui:
             return self.runtime_controller.request_approval(
                 tool_name,
                 tool_kwargs,

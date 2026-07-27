@@ -5,6 +5,7 @@ import {
   CircleStop,
   HelpCircle,
   Image as ImageIcon,
+  ListTodo,
   Maximize2,
   MessageCircle,
   Paperclip,
@@ -21,7 +22,9 @@ import type {
   PendingApproval,
   RuntimeConversation,
   RuntimeLogEntry,
+  MessageQueueEntry,
   RuntimeSnapshot,
+  ToolExecutionQueueEntry,
   RuntimeVisualizationTile,
   Skill,
   ToolSchema,
@@ -74,12 +77,16 @@ const defaultConfig: WebUIConfig = {
 const config = window.EAA_WEBUI_CONFIG ?? defaultConfig;
 const DEFAULT_CHAT_PANEL_PERCENT = 57;
 const DEFAULT_IMAGE_PANEL_PERCENT = 41;
+const DEFAULT_QUEUE_PANEL_PERCENT = 40;
 const MAIN_RESIZER_SIZE_PX = 16;
 const SIDEBAR_RESIZER_SIZE_PX = 16;
+const LOWER_RESIZER_SIZE_PX = 16;
 const MIN_CHAT_PANEL_PX = 360;
 const MIN_SIDEBAR_PANEL_PX = 300;
 const MIN_IMAGE_PANEL_PX = 140;
-const MIN_LOG_PANEL_PX = 180;
+const MIN_LOWER_PANEL_PX = 260;
+const MIN_QUEUE_PANEL_PX = 120;
+const MIN_LOG_PANEL_PX = 100;
 
 const mathJaxScriptUrl = () => `${config.routes.mathjax.replace(/\/$/, "")}/es5/tex-svg-full.js`;
 
@@ -635,6 +642,76 @@ function SettingsView({ title, onTitleChange }: { title: string; onTitleChange: 
   );
 }
 
+function QueueRegion({
+  toolExecutions,
+  messages,
+}: {
+  toolExecutions: ToolExecutionQueueEntry[];
+  messages: MessageQueueEntry[];
+}) {
+  return (
+    <div className="eaa-side-panel eaa-queue-panel">
+      <div className="eaa-panel-header">
+        <div>
+          <ListTodo size={17} aria-hidden="true" />
+          <span>Queue ({toolExecutions.length + messages.length})</span>
+        </div>
+      </div>
+      <div className="eaa-queue-columns">
+        <section className="eaa-queue-column" aria-label="Tool execution queue">
+          <div className="eaa-queue-column-header">
+            <span>Tool execution queue</span>
+            <span className="eaa-queue-count">{toolExecutions.length}</span>
+          </div>
+          <div className="eaa-queue-list">
+            {toolExecutions.map((entry) => (
+              <article className="eaa-queue-card" key={entry.job_id}>
+                <div className="eaa-queue-card-topline">
+                  <span className="eaa-conversation-badge" title={entry.conversation_label}>
+                    {entry.conversation_label}
+                  </span>
+                  <span className="eaa-queue-status eaa-queue-status-executing">{entry.status}</span>
+                </div>
+                <strong title={entry.tool_name}>{entry.tool_name}</strong>
+                <div className="eaa-queue-card-meta">
+                  <code>{entry.job_id}</code>
+                  <time dateTime={entry.timestamp}>{formatLogTime(entry.timestamp)}</time>
+                </div>
+              </article>
+            ))}
+            {!toolExecutions.length ? <div className="eaa-queue-empty">No tools executing.</div> : null}
+          </div>
+        </section>
+        <section className="eaa-queue-column" aria-label="Message queue">
+          <div className="eaa-queue-column-header">
+            <span>Message queue</span>
+            <span className="eaa-queue-count">{messages.length}</span>
+          </div>
+          <div className="eaa-queue-list">
+            {messages.map((entry) => (
+              <article className="eaa-queue-card" key={entry.job_id}>
+                <div className="eaa-queue-card-topline">
+                  <span className="eaa-conversation-badge" title={entry.conversation_label}>
+                    {entry.conversation_label}
+                  </span>
+                  <span className={`eaa-queue-status eaa-queue-status-${entry.status}`}>{entry.status}</span>
+                </div>
+                <strong title={entry.tool_name}>{entry.tool_name}</strong>
+                <div className="eaa-queue-card-meta">
+                  <code>{entry.job_id}</code>
+                  <time dateTime={entry.queued_at}>{formatLogTime(entry.queued_at)}</time>
+                </div>
+                <pre className="eaa-queue-message">{entry.content}</pre>
+              </article>
+            ))}
+            {!messages.length ? <div className="eaa-queue-empty">No messages waiting.</div> : null}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function HelpDialog({ onClose }: { onClose: () => void }) {
   return (
     <div className="eaa-modal-backdrop" onClick={onClose}>
@@ -718,14 +795,18 @@ function App() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [sidebarImages, setSidebarImages] = useState<ImageItem[]>([]);
   const [logs, setLogs] = useState<RuntimeLogEntry[]>([]);
+  const [toolExecutionQueue, setToolExecutionQueue] = useState<ToolExecutionQueueEntry[]>([]);
+  const [messageQueue, setMessageQueue] = useState<MessageQueueEntry[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [mathJaxReady, setMathJaxReady] = useState(Boolean(window.MathJax?.typesetPromise));
   const [uiTitle, setUiTitle] = useState(config.title);
   const [chatPanelPercent, setChatPanelPercent] = useState(DEFAULT_CHAT_PANEL_PERCENT);
   const [imagePanelPercent, setImagePanelPercent] = useState(DEFAULT_IMAGE_PANEL_PERCENT);
+  const [queuePanelPercent, setQueuePanelPercent] = useState(DEFAULT_QUEUE_PANEL_PERCENT);
   const mainRef = useRef<HTMLElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
+  const lowerPanelRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const imagesRef = useRef<HTMLDivElement>(null);
   const logsRef = useRef<HTMLDivElement>(null);
@@ -743,8 +824,9 @@ function App() {
       ({
         "--eaa-chat-panel-size": `${chatPanelPercent}%`,
         "--eaa-image-panel-size": `${imagePanelPercent}%`,
+        "--eaa-queue-panel-size": `${queuePanelPercent}%`,
       }) as CSSProperties,
-    [chatPanelPercent, imagePanelPercent],
+    [chatPanelPercent, imagePanelPercent, queuePanelPercent],
   );
 
   const followScroll = useCallback((el: HTMLDivElement | null) => {
@@ -774,7 +856,14 @@ function App() {
     if (!sidebarRef.current) return;
     const box = contentBox(sidebarRef.current, "vertical");
     const percent = ((clientY - box.start) / box.size) * 100;
-    setImagePanelPercent(clampPanelPercent(percent, box.size, MIN_IMAGE_PANEL_PX, MIN_LOG_PANEL_PX, SIDEBAR_RESIZER_SIZE_PX));
+    setImagePanelPercent(clampPanelPercent(percent, box.size, MIN_IMAGE_PANEL_PX, MIN_LOWER_PANEL_PX, SIDEBAR_RESIZER_SIZE_PX));
+  }, []);
+
+  const resizeQueuePanel = useCallback((clientY: number) => {
+    if (!lowerPanelRef.current) return;
+    const box = contentBox(lowerPanelRef.current, "vertical");
+    const percent = ((clientY - box.start) / box.size) * 100;
+    setQueuePanelPercent(clampPanelPercent(percent, box.size, MIN_QUEUE_PANEL_PX, MIN_LOG_PANEL_PX, LOWER_RESIZER_SIZE_PX));
   }, []);
 
   const startChatPanelResize = useCallback(
@@ -827,6 +916,31 @@ function App() {
     [resizeImagePanel],
   );
 
+  const startQueuePanelResize = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      const target = event.currentTarget;
+      const pointerId = event.pointerId;
+      target.setPointerCapture(pointerId);
+      document.body.classList.add("eaa-resizing-rows");
+      resizeQueuePanel(event.clientY);
+
+      const onPointerMove = (moveEvent: globalThis.PointerEvent) => resizeQueuePanel(moveEvent.clientY);
+      const finishResize = () => {
+        if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+        document.body.classList.remove("eaa-resizing-rows");
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", finishResize);
+        window.removeEventListener("pointercancel", finishResize);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", finishResize);
+      window.addEventListener("pointercancel", finishResize);
+    },
+    [resizeQueuePanel],
+  );
+
   const adjustChatPanel = useCallback((delta: number) => {
     setChatPanelPercent((previous) => {
       if (!mainRef.current) return clamp(previous + delta, 0, 100);
@@ -839,7 +953,15 @@ function App() {
     setImagePanelPercent((previous) => {
       if (!sidebarRef.current) return clamp(previous + delta, 0, 100);
       const box = contentBox(sidebarRef.current, "vertical");
-      return clampPanelPercent(previous + delta, box.size, MIN_IMAGE_PANEL_PX, MIN_LOG_PANEL_PX, SIDEBAR_RESIZER_SIZE_PX);
+      return clampPanelPercent(previous + delta, box.size, MIN_IMAGE_PANEL_PX, MIN_LOWER_PANEL_PX, SIDEBAR_RESIZER_SIZE_PX);
+    });
+  }, []);
+
+  const adjustQueuePanel = useCallback((delta: number) => {
+    setQueuePanelPercent((previous) => {
+      if (!lowerPanelRef.current) return clamp(previous + delta, 0, 100);
+      const box = contentBox(lowerPanelRef.current, "vertical");
+      return clampPanelPercent(previous + delta, box.size, MIN_QUEUE_PANEL_PX, MIN_LOG_PANEL_PX, LOWER_RESIZER_SIZE_PX);
     });
   }, []);
 
@@ -869,6 +991,20 @@ function App() {
       }
     },
     [adjustImagePanel],
+  );
+
+  const onQueuePanelResizeKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 5 : 2;
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        adjustQueuePanel(-step);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        adjustQueuePanel(step);
+      }
+    },
+    [adjustQueuePanel],
   );
 
   useEffect(() => {
@@ -1186,6 +1322,8 @@ function App() {
       }
       applyStatus(payload);
       if (Array.isArray(payload.logs)) setLogs(payload.logs);
+      setToolExecutionQueue(Array.isArray(payload.tool_execution_queue) ? payload.tool_execution_queue : []);
+      setMessageQueue(Array.isArray(payload.message_queue) ? payload.message_queue : []);
       for (const conversation of payload.conversations ?? []) {
         if (conversation.pending_approval) renderApprovalRequest({ ...conversation.pending_approval, conversation_id: conversation.id });
       }
@@ -1240,6 +1378,11 @@ function App() {
     source.addEventListener("log.created", (event) => {
       const payload = JSON.parse(event.data || "{}") as { log?: RuntimeLogEntry };
       if (payload.log) setLogs((previous) => [...previous, payload.log as RuntimeLogEntry].slice(-500));
+    });
+    source.addEventListener("queue.changed", (event) => {
+      const payload = JSON.parse(event.data || "{}") as RuntimeSnapshot;
+      setToolExecutionQueue(Array.isArray(payload.tool_execution_queue) ? payload.tool_execution_queue : []);
+      setMessageQueue(Array.isArray(payload.message_queue) ? payload.message_queue : []);
     });
     return () => source.close();
   }, [applyStatus, mergeMessages, removeVisualizationTile, renderApprovalRequest, upsertConversation, upsertVisualizationTile]);
@@ -1593,7 +1736,7 @@ function App() {
               title="Resize chat and sidebar panels"
               type="button"
             />
-            <aside className="eaa-sidebar" ref={sidebarRef} aria-label="Images and logs">
+            <aside className="eaa-sidebar" ref={sidebarRef} aria-label="Images, queues, and logs">
               <div className="eaa-side-panel eaa-image-panel">
                 <div className="eaa-panel-header">
                   <div>
@@ -1631,23 +1774,39 @@ function App() {
                 title="Resize image and log panels"
                 type="button"
               />
-              <div className="eaa-side-panel eaa-log-panel">
-                <div className="eaa-panel-header">
-                  <div>
-                    <TerminalSquare size={17} aria-hidden="true" />
-                    <span>Live Log</span>
-                  </div>
-                </div>
-                <div className="eaa-logs" ref={logsRef} onScroll={registerScrollIntent}>
-                  {logs.map((log, index) => (
-                    <div className={`eaa-log-entry eaa-log-${String(log.level || "info").toLowerCase()}`} key={logKey(log, index)}>
-                      <span>{formatLogTime(log.timestamp)}</span>
-                      <span>[{String(log.level || "info").toUpperCase()}]</span>
-                      {log.tool_name ? <span>{log.tool_name}</span> : null}
-                      <span>{log.message}</span>
+              <div className="eaa-lower-panel" ref={lowerPanelRef}>
+                <QueueRegion toolExecutions={toolExecutionQueue} messages={messageQueue} />
+                <button
+                  aria-label="Resize queue and live log panels"
+                  aria-orientation="horizontal"
+                  aria-valuemax={100}
+                  aria-valuemin={0}
+                  aria-valuenow={Math.round(queuePanelPercent)}
+                  className="eaa-panel-resizer eaa-panel-resizer-horizontal"
+                  onKeyDown={onQueuePanelResizeKeyDown}
+                  onPointerDown={startQueuePanelResize}
+                  role="separator"
+                  title="Resize queue and live log panels"
+                  type="button"
+                />
+                <div className="eaa-side-panel eaa-log-panel">
+                  <div className="eaa-panel-header">
+                    <div>
+                      <TerminalSquare size={17} aria-hidden="true" />
+                      <span>Live Log</span>
                     </div>
-                  ))}
-                  {!logs.length ? <div className="eaa-empty-inline">No log entries yet.</div> : null}
+                  </div>
+                  <div className="eaa-logs" ref={logsRef} onScroll={registerScrollIntent}>
+                    {logs.map((log, index) => (
+                      <div className={`eaa-log-entry eaa-log-${String(log.level || "info").toLowerCase()}`} key={logKey(log, index)}>
+                        <span>{formatLogTime(log.timestamp)}</span>
+                        <span>[{String(log.level || "info").toUpperCase()}]</span>
+                        {log.tool_name ? <span>{log.tool_name}</span> : null}
+                        <span>{log.message}</span>
+                      </div>
+                    ))}
+                    {!logs.length ? <div className="eaa-empty-inline">No log entries yet.</div> : null}
+                  </div>
                 </div>
               </div>
             </aside>

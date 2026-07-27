@@ -15,6 +15,7 @@ from eaa_core.message_proc import (
     print_message,
     purge_context_images,
 )
+from eaa_core.signals import ControlSignal
 from eaa_core.task_manager.commands import parse_user_input_command
 from eaa_core.task_manager.state import (
     ChatGraphState,
@@ -194,7 +195,7 @@ class NodeFactory:
         dict[str, object]
             Dumped state payload after the exchange is recorded.
         """
-        if self.task_manager.runtime_controller is not None:
+        if self.task_manager.use_webui:
             self.task_manager.runtime_controller.check_interrupt()
         response, outgoing = self.task_manager.invoke_model_raw(
             message=message,
@@ -244,10 +245,15 @@ class NodeFactory:
             Dumped state payload after tool messages have been appended and
             the tool transcript has been refreshed.
         """
-        if self.task_manager.runtime_controller is not None:
+        if self.task_manager.use_webui:
             self.task_manager.runtime_controller.check_interrupt()
         response = state.latest_response
-        tool_messages = self.task_manager.tool_executor.execute_tool_calls_from_message(response)
+        tool_messages = self.task_manager.tool_executor.execute_tool_calls_from_message(
+            response,
+            graph_run_token=self.task_manager._active_graph_run_token,
+            conversation_id=self.task_manager.runtime_conversation_id,
+            conversation_label=self.task_manager.get_runtime_conversation_label(),
+        )
         for tool_message in tool_messages:
             if not self.task_manager.use_webui:
                 print_message(tool_message)
@@ -258,6 +264,44 @@ class NodeFactory:
                 update_full_history=True,
             )
         return state.model_dump()
+
+    def drain_background_tool_completions_for_state(
+        self,
+        state: TaskManagerState,
+        *,
+        runtime_context: ChatRuntimeContext | None = None,
+    ) -> int:
+        """Append all ready released-tool messages on the graph-owning thread."""
+        completions = self.task_manager.tool_executor.drain_ready_completions(
+            self.task_manager._active_graph_run_token
+        )
+        for completion in completions:
+            if not self.task_manager.use_webui:
+                print_message(completion.system_message)
+            self.update_message_history_for_state(
+                state,
+                completion.system_message,
+                update_context=True,
+                update_full_history=True,
+            )
+            if completion.status != "completed":
+                continue
+            followup_messages = (
+                self.task_manager.tool_executor.build_tool_followup_messages(
+                    completion.tool_response,
+                    message_with_yielded_image=state.message_with_yielded_image,
+                )
+            )
+            if isinstance(state, ChatGraphState):
+                followup_messages = self.add_auto_image_captions(
+                    followup_messages
+                )
+            self.apply_followup_messages_for_state(
+                state,
+                followup_messages,
+                runtime_context=runtime_context,
+            )
+        return len(completions)
 
     def await_or_ingest_user_input(self, state: ChatGraphState) -> dict[str, object]:
         """Ingest bootstrap input or wait for the next interactive chat turn.
@@ -298,6 +342,10 @@ class NodeFactory:
         ``state.await_user_input`` to ``False`` so the graph can continue to
         the model call.
         """
+        drained_count = self.drain_background_tool_completions_for_state(state)
+        if drained_count and state.bootstrap_message is None:
+            state.await_user_input = False
+            return state.model_dump()
         if state.bootstrap_message is not None:
             bootstrap = state.bootstrap_message
             if isinstance(bootstrap, str):
@@ -344,6 +392,11 @@ class NodeFactory:
                     "/skill: list skills): "
                 )
             )
+            if user_message is ControlSignal.BACKGROUND_TOOL_COMPLETION_WAKEUP:
+                if self.drain_background_tool_completions_for_state(state):
+                    state.await_user_input = False
+                    return state.model_dump()
+                continue
             command = parse_user_input_command(user_message)
             if self.task_manager.handle_runtime_command(command):
                 continue
@@ -455,6 +508,10 @@ class NodeFactory:
           ``chat_response_requires_user_input`` or
           ``feedback_response_requires_user_input`` depending on the state type.
         """
+        self.drain_background_tool_completions_for_state(
+            state,
+            runtime_context=None if runtime is None else runtime.context,
+        )
         is_task_state = not isinstance(state, ChatGraphState)
         has_initial_prompt = bool(state.initial_prompt or state.initial_image_path)
         uses_task_workflow_response_rules = is_task_state and has_initial_prompt
@@ -903,6 +960,18 @@ class NodeFactory:
             ),
             display_prompt_in_webui=self.task_manager.use_webui,
         )
+        if message is ControlSignal.BACKGROUND_TOOL_COMPLETION_WAKEUP:
+            if self.drain_background_tool_completions_for_state(state):
+                state.await_user_input = False
+                return self.invoke_model_for_state(
+                    state,
+                    context=list(state.messages),
+                    await_user_input_resolver=(
+                        self.feedback_response_requires_user_input
+                    ),
+                )
+            state.await_user_input = True
+            return state.model_dump()
         command = parse_user_input_command(message)
         if self.task_manager.handle_runtime_command(command):
             state.await_user_input = True

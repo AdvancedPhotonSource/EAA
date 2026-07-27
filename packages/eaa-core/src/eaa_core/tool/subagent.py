@@ -98,7 +98,11 @@ class SubagentTool(BaseTool):
         """
         from eaa_core.task_manager.base import BaseTaskManager
 
-        runtime_controller = getattr(self.task_manager, "runtime_controller", None)
+        runtime_controller = (
+            self.task_manager.runtime_controller
+            if self.task_manager.use_webui
+            else None
+        )
         conversation_id: str | None = None
         if runtime_controller is not None:
             conversation = runtime_controller.create_conversation(kind="subagent")
@@ -206,9 +210,13 @@ class SubagentTool(BaseTool):
         if "termination_behavior" in inspect.signature(run_method).parameters:
             task_manager_kwargs["termination_behavior"] = "return"
 
-        runtime_controller = getattr(self.task_manager, "runtime_controller", None)
+        runtime_controller = (
+            self.task_manager.runtime_controller
+            if self.task_manager.use_webui
+            else matched_task_manager.runtime_controller
+        )
         conversation_id = self._get_task_manager_name(matched_task_manager)
-        if runtime_controller is not None:
+        if self.task_manager.use_webui:
             conversation = runtime_controller.create_conversation(
                 label=conversation_id,
                 kind="subagent",
@@ -256,6 +264,12 @@ class SubagentTool(BaseTool):
         )
         matched_task_manager.use_webui = self.task_manager.use_webui
         matched_task_manager.runtime_controller = runtime_controller
+        matched_task_manager.tool_executor.set_queue_handlers(
+            release_handler=runtime_controller.add_tool_execution,
+            completion_handler=runtime_controller.complete_tool_execution,
+            dequeue_handler=runtime_controller.dequeue_tool_messages,
+            cleanup_handler=runtime_controller.cleanup_tool_jobs,
+        )
         matched_task_manager.runtime_conversation_id = conversation_id
 
         try:
@@ -264,7 +278,14 @@ class SubagentTool(BaseTool):
         finally:
             for attribute, value in saved_state.items():
                 setattr(matched_task_manager, attribute, value)
-            if runtime_controller is not None:
+            restored_runtime_controller = matched_task_manager.runtime_controller
+            matched_task_manager.tool_executor.set_queue_handlers(
+                release_handler=restored_runtime_controller.add_tool_execution,
+                completion_handler=restored_runtime_controller.complete_tool_execution,
+                dequeue_handler=restored_runtime_controller.dequeue_tool_messages,
+                cleanup_handler=restored_runtime_controller.cleanup_tool_jobs,
+            )
+            if self.task_manager.use_webui:
                 runtime_controller.terminate_conversation(
                     conversation_id,
                     message="Subtask manager terminated",

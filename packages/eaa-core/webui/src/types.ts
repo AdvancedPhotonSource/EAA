@@ -65,6 +65,27 @@ export type RuntimeSnapshot = {
   input_requested?: boolean;
   interrupt_requested?: boolean;
   pending_approval?: PendingApproval | null;
+  tool_execution_queue?: ToolExecutionQueueEntry[];
+  message_queue?: MessageQueueEntry[];
+};
+
+export type ToolExecutionQueueEntry = {
+  job_id: string;
+  tool_name: string;
+  conversation_id: string;
+  conversation_label: string;
+  status: "executing" | string;
+  timestamp: string;
+};
+
+export type MessageQueueEntry = {
+  job_id: string;
+  tool_name: string;
+  conversation_id: string;
+  conversation_label: string;
+  status: "completed" | "failed" | string;
+  content: string;
+  queued_at: string;
 };
 
 export type PendingApproval = {

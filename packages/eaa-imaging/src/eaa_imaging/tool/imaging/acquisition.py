@@ -1,6 +1,7 @@
 from typing import Annotated, Dict, List, Any, Literal
 import logging
 import os
+import time
 
 import eaa_core.matplotlib_setup  # noqa: F401
 import matplotlib.pyplot as plt
@@ -199,6 +200,7 @@ class SimulatedAcquireImage(AcquireImage):
         poisson_noise_scale: float = None,
         gaussian_psf_sigma: float = None,
         scan_jitter: float = None,
+        delay: float = 0.0,
         *args,
         require_approval: bool = False,
         **kwargs
@@ -244,7 +246,16 @@ class SimulatedAcquireImage(AcquireImage):
         scan_jitter : float, optional
             If given, scan positions are perturbed by a value drawn uniformly from
             (-scan_jitter, scan_jitter) in both x and y.
+        delay : float, optional
+            Artificial delay in seconds applied to each image or line-scan
+            acquisition.
         """
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+            raise TypeError("`delay` must be a finite, non-negative number.")
+        delay = float(delay)
+        if not np.isfinite(delay) or delay < 0:
+            raise ValueError("`delay` must be a finite, non-negative number.")
+
         self.whole_image = whole_image
         self.interpolator = None
         self.blur = None
@@ -252,6 +263,7 @@ class SimulatedAcquireImage(AcquireImage):
         self.poisson_noise_scale = poisson_noise_scale
         self.gaussian_psf_sigma = gaussian_psf_sigma
         self.scan_jitter = scan_jitter
+        self.delay = delay
         self.line_scan_gaussian_fit_y_threshold = line_scan_gaussian_fit_y_threshold
         
         self.return_message = return_message
@@ -485,6 +497,9 @@ class SimulatedAcquireImage(AcquireImage):
             Tool payload containing ``img_path`` and ``raw_data_path`` when
             ``return_message`` is enabled, otherwise the acquired image array.
         """
+        if self.delay:
+            time.sleep(self.delay)
+
         loc_y = y_center - size_y / 2
         loc_x = x_center - size_x / 2
         self.update_image_acquisition_call_history(x_center, y_center, size_x, size_y, psize_x=scan_step, psize_y=scan_step)
@@ -551,6 +566,9 @@ class SimulatedAcquireImage(AcquireImage):
             Tool payload containing ``img_path``, ``raw_data_path``, and
             optional fit metadata.
         """
+        if self.delay:
+            time.sleep(self.delay)
+
         angle_rad = np.radians(angle)
         half = length / 2
         start_x = x_center - half * np.cos(angle_rad)

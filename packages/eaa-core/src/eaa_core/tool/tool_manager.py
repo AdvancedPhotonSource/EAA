@@ -109,9 +109,8 @@ class ToolManager(list[BaseTool]):
             if self._tool_has_registered_name_conflict(tool):
                 continue
             self._set_known_tool_reference(tool)
-            runtime_controller = getattr(self.task_manager, "runtime_controller", None)
-            if runtime_controller is not None:
-                runtime_controller.register_tool(tool)
+            if self.task_manager.use_webui:
+                self.task_manager.runtime_controller.register_tool(tool)
             if self.executor is None:
                 if tool not in self:
                     self.append(tool)

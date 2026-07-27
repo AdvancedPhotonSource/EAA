@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from matplotlib.figure import Figure
 
+from eaa_core.signals import ControlSignal
 from eaa_core.task_manager.skills import skill_catalog_to_dicts
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,8 @@ class WebUIRuntimeController:
         self.subscribers: set[queue.Queue[RuntimeEvent]] = set()
         self.messages: list[dict[str, Any]] = []
         self.logs: list[RuntimeLogEntry] = []
+        self.tool_execution_queue: list[dict[str, Any]] = []
+        self.message_queue: list[dict[str, Any]] = []
         self.max_log_entries = 500
         self.mcp_reconnects: set[str] = set()
         self.message_event_counter = 0
@@ -226,6 +229,14 @@ class WebUIRuntimeController:
                 self.approval_queues.setdefault(conversation_id, queue.Queue())
             return conversation
 
+    def conversation_label(self, conversation_id: str) -> str:
+        """Return the current display label for a conversation."""
+        with self.lock:
+            conversation = self.conversations.get(conversation_id)
+            if conversation is not None:
+                return conversation.label
+        return conversation_id.replace("-", " ").title()
+
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         """Publish one event to connected browser streams.
 
@@ -246,6 +257,8 @@ class WebUIRuntimeController:
           Payload: ``{"prompt": str}``.
         - ``approval.requested``: a tool call is waiting for approval.
           Payload: ``{"tool_name": str, "arguments": dict}``.
+        - ``queue.changed``: full replacement snapshots for released tool
+          executions and completed messages waiting for model delivery.
         - ``interrupt.requested``: cooperative interruption was requested.
           Payload matches ``status.changed``.
         - ``interrupt.cleared``: the pending interrupt flag was cleared.
@@ -281,6 +294,10 @@ class WebUIRuntimeController:
             interrupt_requested = self.interrupt_event.is_set()
             pending_approval = self.pending_approval
             logs = [entry.snapshot() for entry in self.logs]
+            tool_execution_queue = [
+                dict(entry) for entry in self.tool_execution_queue
+            ]
+            message_queue = [dict(entry) for entry in self.message_queue]
             conversations = [
                 conversation.snapshot()
                 for conversation in self.conversations.values()
@@ -293,7 +310,83 @@ class WebUIRuntimeController:
             "interrupt_requested": interrupt_requested,
             "pending_approval": pending_approval,
             "logs": logs,
+            "tool_execution_queue": tool_execution_queue,
+            "message_queue": message_queue,
         }
+
+    def queue_snapshot(self) -> dict[str, list[dict[str, Any]]]:
+        """Return full replacement snapshots of both WebUI queues."""
+        with self.lock:
+            return self._queue_snapshot_locked()
+
+    def _queue_snapshot_locked(self) -> dict[str, list[dict[str, Any]]]:
+        """Return queue snapshots while the controller lock is held."""
+        return {
+            "tool_execution_queue": [
+                dict(entry) for entry in self.tool_execution_queue
+            ],
+            "message_queue": [dict(entry) for entry in self.message_queue],
+        }
+
+    def add_tool_execution(self, entry: dict[str, Any]) -> None:
+        """Add or replace one released execution and publish both queues."""
+        job_id = str(entry["job_id"])
+        with self.lock:
+            self.tool_execution_queue = [
+                item
+                for item in self.tool_execution_queue
+                if str(item.get("job_id")) != job_id
+            ]
+            self.tool_execution_queue.append(dict(entry))
+            payload = self._queue_snapshot_locked()
+        self.publish("queue.changed", payload)
+
+    def complete_tool_execution(self, entry: dict[str, Any]) -> None:
+        """Move a released execution to the completed-message queue."""
+        job_id = str(entry["job_id"])
+        with self.lock:
+            self.tool_execution_queue = [
+                item
+                for item in self.tool_execution_queue
+                if str(item.get("job_id")) != job_id
+            ]
+            self.message_queue = [
+                item
+                for item in self.message_queue
+                if str(item.get("job_id")) != job_id
+            ]
+            self.message_queue.append(dict(entry))
+            payload = self._queue_snapshot_locked()
+        self.publish("queue.changed", payload)
+
+    def dequeue_tool_messages(self, job_ids: list[str]) -> None:
+        """Remove graph-delivered messages from the display queue."""
+        normalized_ids = {str(job_id) for job_id in job_ids}
+        with self.lock:
+            self.message_queue = [
+                entry
+                for entry in self.message_queue
+                if str(entry.get("job_id")) not in normalized_ids
+            ]
+            payload = self._queue_snapshot_locked()
+        self.publish("queue.changed", payload)
+
+    def cleanup_tool_jobs(self, job_ids: list[str]) -> None:
+        """Remove all display state for invalidated graph-run jobs."""
+        normalized_ids = {str(job_id) for job_id in job_ids}
+        with self.lock:
+            self.tool_execution_queue = [
+                entry
+                for entry in self.tool_execution_queue
+                if str(entry.get("job_id")) not in normalized_ids
+            ]
+            self.message_queue = [
+                entry
+                for entry in self.message_queue
+                if str(entry.get("job_id")) not in normalized_ids
+            ]
+            payload = self._queue_snapshot_locked()
+        self.publish("queue.changed", payload)
 
     def tool_schema_snapshot(self) -> list[dict[str, Any]]:
         """Return tool schemas registered with the task manager."""
@@ -643,17 +736,32 @@ class WebUIRuntimeController:
             }
         self.publish("status.changed", payload)
 
-    def request_input(self, prompt: str | None = None, conversation_id: str = "primary") -> str:
-        """Block until the WebUI submits ordered user input."""
+    def request_input(
+        self,
+        prompt: str | None = None,
+        conversation_id: str = "primary",
+        *,
+        wake_event: threading.Event | None = None,
+    ) -> str | ControlSignal:
+        """Block until the WebUI submits input or the supplied event wakes the wait."""
         with self.lock:
             conversation = self.conversations.get(conversation_id)
             previous_status = conversation.status if conversation is not None else self.status
         self.set_status("waiting_for_input", input_requested=True, conversation_id=conversation_id)
         if prompt:
             self.publish("input.requested", {"conversation_id": conversation_id, "prompt": prompt})
-        value = self.input_queue.get()
-        with self.lock:
-            self.queued_input_count = max(0, self.queued_input_count - 1)
+        while True:
+            if wake_event is not None and wake_event.is_set():
+                value = ControlSignal.BACKGROUND_TOOL_COMPLETION_WAKEUP
+                break
+            try:
+                value = self.input_queue.get(timeout=0.1 if wake_event is not None else None)
+                break
+            except queue.Empty:
+                continue
+        if isinstance(value, str):
+            with self.lock:
+                self.queued_input_count = max(0, self.queued_input_count - 1)
         self.set_status(previous_status, input_requested=False, conversation_id=conversation_id)
         return value
 

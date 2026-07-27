@@ -767,11 +767,11 @@ class AnalyticalScanningMicroscopeFocusingTaskManager(BaseParameterTuningTaskMan
                 image_path=fig_path,
                 update_context=False,
             )
-            runtime_controller = getattr(self, "runtime_controller", None)
             if (
-                runtime_controller is not None
+                self.use_webui
                 and isinstance(self.optimization_tool, BayesianOptimizationTool)
             ):
+                runtime_controller = self.runtime_controller
                 try:
                     conversation_id = getattr(
                         self,

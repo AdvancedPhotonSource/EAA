@@ -483,6 +483,7 @@ class MCPTool(BaseTool):
                     require_approval=self.require_approval,
                     schema=self._build_openai_schema_from_mcp_tool(remote_tool),
                     model_visible=not is_model_hidden_remote_tool(remote_tool.name),
+                    release_timeout=self.release_timeout,
                 )
             )
         return exposed_tools

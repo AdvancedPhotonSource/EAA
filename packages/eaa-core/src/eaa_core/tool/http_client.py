@@ -582,6 +582,7 @@ class HTTPTransportedTool(BaseTool):
                 function=self.make_tool_callable(tool_definition),
                 require_approval=self.require_approval,
                 schema=self.build_openai_schema(tool_definition),
+                release_timeout=self.release_timeout,
             )
             for tool_definition in self.tool_definitions
         ]

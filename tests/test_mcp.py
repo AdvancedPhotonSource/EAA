@@ -78,6 +78,70 @@ def test_mcp_tool_registers_remote_tools_and_normalizes_json_results(tmp_path):
         mcp_tool._run_coroutine(mcp_tool.disconnect())
 
 
+def test_mcp_tool_calls_can_release_and_complete_in_background(tmp_path):
+    script_path = tmp_path / "slow_mcp_server.py"
+    repo_src = Path(__file__).resolve().parents[1] / "src"
+    script_path.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "import time",
+                f"sys.path.insert(0, {str(repo_src)!r})",
+                "from eaa_core.tool.base import BaseTool, tool",
+                "from eaa_core.tool.mcp_server import run_mcp_server_from_tools",
+                "",
+                "class SlowRemoteTool(BaseTool):",
+                "    @tool(name='slow_remote')",
+                "    def slow_remote(self) -> dict:",
+                "        time.sleep(0.05)",
+                "        return {'remote': 'done'}",
+                "",
+                "if __name__ == '__main__':",
+                "    run_mcp_server_from_tools(SlowRemoteTool(), server_name='SlowRemoteServer')",
+            ]
+        )
+    )
+    mcp_tool = MCPTool(
+        {
+            "mcpServers": {
+                "slow_remote": {
+                    "command": sys.executable,
+                    "args": [str(script_path)],
+                }
+            }
+        },
+        release_timeout=0,
+    )
+    executor = SerialToolExecutor()
+    executor.register_tools(mcp_tool)
+    run_token = executor.begin_graph_run()
+
+    try:
+        result = executor.execute_tool_call(
+            {
+                "id": "call-slow",
+                "function": {
+                    "name": "slow_remote",
+                    "arguments": "{}",
+                },
+            },
+            graph_run_token=run_token,
+        )
+
+        assert json.loads(result.message["content"])["status"] == "executing"
+        assert executor.completion_event.wait(2)
+        completion = executor.drain_ready_completions(run_token)[0]
+        assert json.loads(completion.system_message["content"]) == {
+            "job_id": result.released_job_id,
+            "tool_name": "slow_remote",
+            "status": "completed",
+            "result": {"remote": "done"},
+        }
+    finally:
+        executor.finish_graph_run(run_token)
+        mcp_tool._run_coroutine(mcp_tool.disconnect())
+
+
 def test_mcp_tool_preserves_remote_argument_signatures_and_schemas(tmp_path):
     script_path = tmp_path / "mcp_server.py"
     repo_src = Path(__file__).resolve().parents[1] / "src"

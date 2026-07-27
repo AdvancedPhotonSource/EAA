@@ -3,6 +3,7 @@ import argparse
 
 import tifffile
 import numpy as np
+import pytest
 
 from eaa_core.tool.base import BaseTool
 from eaa_imaging.tool.imaging.acquisition import SimulatedAcquireImage
@@ -11,6 +12,59 @@ import test_utils as tutils
 
 
 class TestSimulatedImageAcquisition(tutils.BaseTester):
+
+    def test_simulated_acquisition_delay(self, monkeypatch):
+        whole_image = np.ones((32, 32), dtype=float)
+        sleep_calls = []
+        monkeypatch.setattr(
+            "eaa_imaging.tool.imaging.acquisition.time.sleep",
+            sleep_calls.append,
+        )
+        tool = SimulatedAcquireImage(
+            whole_image,
+            return_message=False,
+            delay=0.25,
+        )
+
+        tool.acquire_image(
+            y_center=16,
+            x_center=16,
+            size_y=8,
+            size_x=8,
+        )
+        line_scan = tool.acquire_line_scan(
+            x_center=16,
+            y_center=16,
+            length=8,
+            scan_step=1,
+        )
+
+        try:
+            assert sleep_calls == [0.25, 0.25]
+        finally:
+            os.remove(line_scan["img_path"])
+            os.remove(line_scan["raw_data_path"])
+
+    @pytest.mark.parametrize(
+        ("delay", "error_type"),
+        [
+            (True, TypeError),
+            ("1", TypeError),
+            (-0.1, ValueError),
+            (np.inf, ValueError),
+        ],
+    )
+    def test_simulated_acquisition_rejects_invalid_delay(
+        self,
+        delay,
+        error_type,
+    ):
+        with pytest.raises(error_type, match="`delay`"):
+            SimulatedAcquireImage(
+                np.ones((2, 2)),
+                return_message=False,
+                delay=delay,
+            )
 
     @tutils.BaseTester.wrap_comparison_tester(name='test_simulated_image_acquisition')
     def test_simulated_image_acquisition(self):
