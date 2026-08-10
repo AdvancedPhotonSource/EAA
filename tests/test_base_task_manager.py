@@ -1542,6 +1542,7 @@ def test_chat_image_followup_adds_auto_caption_with_fresh_context(
     followup_message = state.messages[-1]
     assert followup_message["role"] == "user"
     assert followup_message["content"][0]["type"] == "text"
+    assert followup_message["content"][0]["text"].startswith("[automated message] ")
     assert "Here is the image the tool returned." in followup_message["content"][0]["text"]
     assert "Image caption:\nA tiny green square." in followup_message["content"][0]["text"]
     assert followup_message["content"][1]["type"] == "image_url"

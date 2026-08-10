@@ -677,7 +677,7 @@ class SerialToolExecutor:
         if len(image_paths) > 0:
             followup_messages.append(
                 generate_openai_message(
-                    content=message_with_yielded_image,
+                    content=f"[automated message] {message_with_yielded_image}",
                     image_path=image_paths,
                     role="user",
                 )
