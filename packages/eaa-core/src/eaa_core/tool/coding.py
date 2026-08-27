@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import ast
+import codecs
 import operator
 import os
+import queue
 import shutil
+import signal
 import site
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
-from typing import Annotated, Any, Dict, Literal, Optional, Sequence
+from typing import Annotated, Any, Callable, Dict, Literal, Optional, Sequence
 
 from eaa_core.tool.base import BaseTool, check, tool
 
@@ -593,6 +598,18 @@ class BashCodingTool(CodingTool):
 
     name: str = "bash_coding"
 
+    def set_terminal_handlers(
+        self,
+        *,
+        start_handler: Callable[[str], str] | None = None,
+        output_handler: Callable[[str, list[dict[str, str]]], None] | None = None,
+        finish_handler: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> None:
+        """Bind optional WebUI terminal lifecycle callbacks."""
+        self._terminal_start_handler = start_handler
+        self._terminal_output_handler = output_handler
+        self._terminal_finish_handler = finish_handler
+
     @check
     def __init__(
         self,
@@ -637,6 +654,10 @@ class BashCodingTool(CodingTool):
             Optional[str],
             "Text piped into the subprocess's stdin.",
         ] = None,
+        create_ui_tab: Annotated[
+            bool,
+            "When True under the WebUI, open a read-only Bash tab and stream output to it.",
+        ] = False,
     ) -> Dict[str, Any]:
         """Execute Bash code in a subprocess and capture the result."""
         if not isinstance(code, str):
@@ -644,6 +665,15 @@ class BashCodingTool(CodingTool):
         exec_timeout = float(timeout) if timeout is not None else self._default_timeout
         exec_cwd = cwd or self._working_directory
         env = self._build_execution_env()
+        if create_ui_tab and self._terminal_handlers_bound():
+            return self._execute_with_terminal(
+                code,
+                env=env,
+                timeout=exec_timeout,
+                input_text=input_text,
+                cwd=cwd,
+                exec_cwd=exec_cwd,
+            )
         tmp_file = None
         try:
             if self.sandbox_type == "container":
@@ -709,3 +739,250 @@ class BashCodingTool(CodingTool):
                     os.unlink(tmp_file.name)
                 except OSError:
                     pass
+
+    def _terminal_handlers_bound(self) -> bool:
+        """Return whether all callbacks needed by streamed execution are bound."""
+        return all(
+            callable(handler)
+            for handler in (
+                getattr(self, "_terminal_start_handler", None),
+                getattr(self, "_terminal_output_handler", None),
+                getattr(self, "_terminal_finish_handler", None),
+            )
+        )
+
+    def _execute_with_terminal(
+        self,
+        code: str,
+        *,
+        env: Dict[str, str],
+        timeout: Optional[float],
+        input_text: Optional[str],
+        cwd: Optional[str],
+        exec_cwd: str,
+    ) -> Dict[str, Any]:
+        """Execute Bash while streaming decoded output to the bound terminal."""
+        terminal_id = self._terminal_start_handler(code)
+        process: subprocess.Popen[bytes] | None = None
+        timed_out = False
+        error: str | None = None
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        output_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        readers: list[threading.Thread] = []
+        cleanup_paths: list[str] = []
+        try:
+            command, popen_kwargs, cleanup_paths = self._stream_process_spec(
+                code,
+                env=env,
+                cwd=cwd,
+                exec_cwd=exec_cwd,
+                has_input=input_text is not None,
+            )
+            process = subprocess.Popen(command, **popen_kwargs)
+            started = time.monotonic()
+            if input_text is not None and process.stdin is not None:
+                process.stdin.write(input_text.encode("utf-8"))
+                process.stdin.close()
+
+            readers = [
+                threading.Thread(
+                    target=self._read_terminal_stream,
+                    args=(stream, name, output_queue),
+                    daemon=True,
+                )
+                for name, stream in (
+                    ("stdout", process.stdout),
+                    ("stderr", process.stderr),
+                )
+                if stream is not None
+            ]
+            for reader in readers:
+                reader.start()
+
+            while process.poll() is None:
+                self._flush_terminal_output(
+                    terminal_id,
+                    output_queue,
+                    stdout_parts,
+                    stderr_parts,
+                )
+                if timeout is not None and time.monotonic() - started >= timeout:
+                    timed_out = True
+                    self._kill_stream_process(process)
+                    break
+                time.sleep(0.1)
+
+            process.wait()
+            for reader in readers:
+                reader.join()
+            self._flush_terminal_output(
+                terminal_id,
+                output_queue,
+                stdout_parts,
+                stderr_parts,
+            )
+        except Exception as exc:
+            error = str(exc)
+            if process is not None and process.poll() is None:
+                self._kill_stream_process(process)
+                process.wait()
+            for reader in readers:
+                reader.join()
+            self._flush_terminal_output(
+                terminal_id,
+                output_queue,
+                stdout_parts,
+                stderr_parts,
+            )
+        finally:
+            for path in cleanup_paths:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        returncode = None if timed_out or process is None else process.returncode
+        if timed_out:
+            error = f"Execution timed out after {timeout} seconds"
+        result: Dict[str, Any] = {
+            "stdout": "".join(stdout_parts),
+            "stderr": "".join(stderr_parts),
+            "returncode": returncode,
+            "timeout": timed_out,
+        }
+        if error is not None:
+            result["error"] = error
+        self._terminal_finish_handler(terminal_id, result)
+        return result
+
+    def _stream_process_spec(
+        self,
+        code: str,
+        *,
+        env: Dict[str, str],
+        cwd: Optional[str],
+        exec_cwd: str,
+        has_input: bool,
+    ) -> tuple[list[str], dict[str, Any], list[str]]:
+        """Build the binary-pipe ``Popen`` command for the configured sandbox."""
+        cleanup_paths: list[str] = []
+        popen_kwargs: dict[str, Any] = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "stdin": subprocess.PIPE if has_input else None,
+            "start_new_session": True,
+        }
+        if self.sandbox_type == "container":
+            runtime = self._select_container_runtime()
+            if runtime is None:
+                raise RuntimeError("No container runtime found (expected podman or docker).")
+            env_file_path = self._write_env_file(env)
+            cleanup_paths.append(env_file_path)
+            container_workdir = cwd or "/workspace"
+            command = [
+                runtime,
+                "run",
+                "--rm",
+                "-i",
+                "--workdir",
+                container_workdir,
+                "--tmpfs",
+                container_workdir,
+                "--env-file",
+                env_file_path,
+                self._container_image,
+                "bash",
+                "-c",
+                code,
+            ]
+        elif self.sandbox_type == "bubblewrap":
+            bwrap_path = shutil.which("bwrap", path=env.get("PATH"))
+            if bwrap_path is None:
+                raise RuntimeError("No bubblewrap runtime found (expected `bwrap`).")
+            command = [
+                bwrap_path,
+                "--die-with-parent",
+                "--unshare-all",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--bind",
+                "/tmp",
+                "/tmp",
+            ]
+            for path in self._bubblewrap_system_bind_paths():
+                command.extend(["--ro-bind", path, path])
+            for path in self._bubblewrap_visible_bind_paths(exec_cwd):
+                command.extend(["--bind", path, path])
+            command.extend(["--chdir", exec_cwd, self._shell_path, "-c", code])
+            popen_kwargs.update({"cwd": None, "env": env})
+        else:
+            tmp_file = tempfile.NamedTemporaryFile(
+                "w",
+                suffix=".sh",
+                delete=False,
+                dir=exec_cwd,
+            )
+            tmp_file.write(code)
+            tmp_file.flush()
+            tmp_file.close()
+            cleanup_paths.append(tmp_file.name)
+            command = [self._shell_path, tmp_file.name]
+            popen_kwargs.update({"cwd": exec_cwd, "env": env})
+        return command, popen_kwargs, cleanup_paths
+
+    @staticmethod
+    def _kill_stream_process(process: subprocess.Popen[bytes]) -> None:
+        """Kill a streamed command and descendants in its dedicated session."""
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            process.kill()
+
+    @staticmethod
+    def _read_terminal_stream(
+        stream: Any,
+        name: str,
+        output_queue: queue.Queue[tuple[str, str]],
+    ) -> None:
+        """Read fixed-size binary chunks and preserve split UTF-8 characters."""
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        read = getattr(stream, "read1", stream.read)
+        while True:
+            data = read(4096)
+            if not data:
+                break
+            text = decoder.decode(data)
+            if text:
+                output_queue.put((name, text))
+        trailing = decoder.decode(b"", final=True)
+        if trailing:
+            output_queue.put((name, trailing))
+        stream.close()
+
+    def _flush_terminal_output(
+        self,
+        terminal_id: str,
+        output_queue: queue.Queue[tuple[str, str]],
+        stdout_parts: list[str],
+        stderr_parts: list[str],
+    ) -> None:
+        """Drain one arrival-ordered batch into results and the WebUI."""
+        chunks: list[dict[str, str]] = []
+        while True:
+            try:
+                stream, text = output_queue.get_nowait()
+            except queue.Empty:
+                break
+            if stream == "stdout":
+                stdout_parts.append(text)
+            else:
+                stderr_parts.append(text)
+            if chunks and chunks[-1]["stream"] == stream:
+                chunks[-1]["text"] += text
+            else:
+                chunks.append({"stream": stream, "text": text})
+        if chunks:
+            self._terminal_output_handler(terminal_id, chunks)

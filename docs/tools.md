@@ -255,6 +255,20 @@ Use `none` in the chat command to execute directly on the host:
 /setcodingtoolsandboxtype none
 ```
 
+`bash_coding_tool.execute` accepts `create_ui_tab=True` to open an
+auto-selected, closable Bash tab when a WebUI controller is active. The tab is
+a read-only plain-text view: it preserves whitespace and interleaves stdout and
+stderr as they arrive, but it is not an interactive terminal and does not
+interpret ANSI control sequences. Use the existing `input_text` argument to
+provide stdin. Without the WebUI, or when `create_ui_tab` is omitted, Bash
+execution and its returned `stdout`, `stderr`, `returncode`, and `timeout`
+fields are unchanged.
+
+The Bash `timeout` argument limits the subprocess itself and marks its terminal
+as timed out. A tool's executor-level `release_timeout` only releases the agent
+loop while execution continues in the background; it does not stop the command
+or its terminal stream.
+
 ## Subagent tool
 
 The default subagent tool exposes two patterns.

@@ -78,9 +78,16 @@ class RuntimeConversation:
     messages: list[dict[str, Any]] = field(default_factory=list)
     visualization_tiles: list[RuntimeVisualizationTile] = field(default_factory=list)
     pending_approval: dict[str, Any] | None = None
+    terminal: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """Return a JSON-serializable conversation snapshot."""
+        terminal = None
+        if self.terminal is not None:
+            terminal = {
+                **self.terminal,
+                "chunks": [dict(chunk) for chunk in self.terminal["chunks"]],
+            }
         return {
             "id": self.id,
             "label": self.label,
@@ -93,6 +100,7 @@ class RuntimeConversation:
                 for tile in self.visualization_tiles
             ],
             "pending_approval": self.pending_approval,
+            "terminal": terminal,
         }
 
 
@@ -155,6 +163,7 @@ class WebUIRuntimeController:
         self.log_event_counter = 0
         self.approval_event_counter = 0
         self.subagent_counter = 0
+        self.bash_counter = 0
         self.status = "idle"
         self.input_requested = False
         self.queued_input_count = 0
@@ -189,6 +198,121 @@ class WebUIRuntimeController:
         )
         if callable(wrapped_set_runtime_log_handler):
             wrapped_set_runtime_log_handler(self.publish_log)
+        set_terminal_handlers = getattr(tool, "set_terminal_handlers", None)
+        if callable(set_terminal_handlers):
+            set_terminal_handlers(
+                start_handler=self.create_bash_terminal,
+                output_handler=self.append_terminal_output,
+                finish_handler=self.finish_terminal,
+            )
+
+    def create_bash_terminal(self, command: str) -> str:
+        """Create and publish one auto-selected Bash conversation tab."""
+        with self.lock:
+            self.bash_counter += 1
+            conversation_id = f"bash-{self.bash_counter}"
+            terminal = {
+                "command": command,
+                "status": "running",
+                "chunks": [],
+                "sequence": 0,
+                "returncode": None,
+                "timeout": False,
+                "error": None,
+                "started_at": self.runtime_timestamp(),
+                "finished_at": None,
+            }
+            conversation = RuntimeConversation(
+                id=conversation_id,
+                label=f"Bash {self.bash_counter}",
+                kind="bash",
+                status="running",
+                terminal=terminal,
+            )
+            self.conversations[conversation_id] = conversation
+            snapshot = conversation.snapshot()
+        self.publish("conversation.created", {"conversation": snapshot})
+        return conversation_id
+
+    def append_terminal_output(
+        self,
+        conversation_id: str,
+        chunks: list[dict[str, str]],
+    ) -> None:
+        """Append one arrival-ordered terminal batch and publish its delta."""
+        normalized: list[dict[str, str]] = []
+        for chunk in chunks:
+            stream = str(chunk.get("stream", "stdout"))
+            text = str(chunk.get("text", ""))
+            if not text:
+                continue
+            if normalized and normalized[-1]["stream"] == stream:
+                normalized[-1]["text"] += text
+            else:
+                normalized.append({"stream": stream, "text": text})
+        if not normalized:
+            return
+        with self.lock:
+            conversation = self.conversations[conversation_id]
+            terminal = conversation.terminal
+            if terminal is None:
+                raise ValueError(f"Conversation {conversation_id!r} is not a terminal.")
+            durable_chunks = terminal["chunks"]
+            for chunk in normalized:
+                if durable_chunks and durable_chunks[-1]["stream"] == chunk["stream"]:
+                    durable_chunks[-1]["text"] += chunk["text"]
+                else:
+                    durable_chunks.append(dict(chunk))
+            terminal["sequence"] += 1
+            sequence = terminal["sequence"]
+        self.publish(
+            "terminal.output.appended",
+            {
+                "conversation_id": conversation_id,
+                "sequence": sequence,
+                "chunks": normalized,
+            },
+        )
+
+    def finish_terminal(
+        self,
+        conversation_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Finalize terminal metadata and publish a complete snapshot."""
+        timed_out = bool(result.get("timeout"))
+        returncode = result.get("returncode")
+        error = result.get("error")
+        if timed_out:
+            status = "timed_out"
+        elif error is not None or returncode != 0:
+            status = "failed"
+        else:
+            status = "completed"
+        with self.lock:
+            conversation = self.conversations[conversation_id]
+            terminal = conversation.terminal
+            if terminal is None:
+                raise ValueError(f"Conversation {conversation_id!r} is not a terminal.")
+            terminal.update(
+                {
+                    "status": status,
+                    "returncode": returncode,
+                    "timeout": timed_out,
+                    "error": error,
+                    "finished_at": self.runtime_timestamp(),
+                }
+            )
+            terminal["sequence"] += 1
+            conversation.status = status
+            snapshot = {
+                **terminal,
+                "chunks": [dict(chunk) for chunk in terminal["chunks"]],
+            }
+        self.publish(
+            "terminal.finished",
+            {"conversation_id": conversation_id, "terminal": snapshot},
+        )
 
     def create_conversation(
         self,
@@ -259,6 +383,8 @@ class WebUIRuntimeController:
           Payload: ``{"tool_name": str, "arguments": dict}``.
         - ``queue.changed``: full replacement snapshots for released tool
           executions and completed messages waiting for model delivery.
+        - ``terminal.output.appended``: one sequence-numbered Bash output delta.
+        - ``terminal.finished``: the complete final Bash terminal snapshot.
         - ``interrupt.requested``: cooperative interruption was requested.
           Payload matches ``status.changed``.
         - ``interrupt.cleared``: the pending interrupt flag was cleared.

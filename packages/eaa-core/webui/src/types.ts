@@ -57,6 +57,23 @@ export type RuntimeVisualizationTile = {
   updated_at?: string | null;
 };
 
+export type TerminalChunk = {
+  stream: "stdout" | "stderr" | string;
+  text: string;
+};
+
+export type RuntimeTerminal = {
+  command: string;
+  status: "running" | "completed" | "failed" | "timed_out" | string;
+  chunks: TerminalChunk[];
+  sequence: number;
+  returncode?: number | null;
+  timeout?: boolean;
+  error?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
 export type RuntimeSnapshot = {
   conversations?: RuntimeConversation[];
   messages?: WebUIMessage[];
@@ -107,6 +124,7 @@ export type RuntimeConversation = {
   messages?: WebUIMessage[];
   visualization_tiles?: RuntimeVisualizationTile[];
   pending_approval?: PendingApproval | null;
+  terminal?: RuntimeTerminal | null;
 };
 
 export type Skill = {

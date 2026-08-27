@@ -16,6 +16,7 @@ from eaa_core.signals import ControlSignal
 from eaa_core.task_manager.base import BaseTaskManager
 from eaa_core.task_manager.tool_executor import RELEASE_DESCRIPTION, SerialToolExecutor
 from eaa_core.tool.base import BaseTool, ExposedToolSpec, tool
+from eaa_core.tool.coding import BashCodingTool
 
 
 def build_tool_call(name, arguments=None, call_id="call_1"):
@@ -158,6 +159,79 @@ def test_released_call_returns_exact_payload_and_queues_success():
     assert json.loads(completed[0]["content"])["result"] == {"value": 7}
     assert dequeued == [payload["job_id"]]
     assert not executor.completion_event.is_set()
+    executor.finish_graph_run(run_token)
+
+
+def test_released_bash_call_keeps_streaming_terminal_and_queues_full_result(
+    tmp_path,
+):
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager)
+    bash_tool = BashCodingTool(
+        working_directory=str(tmp_path),
+        release_timeout=0,
+    )
+    controller.register_tool(bash_tool)
+    executor = SerialToolExecutor()
+    executor.set_queue_handlers(
+        release_handler=controller.add_tool_execution,
+        completion_handler=controller.complete_tool_execution,
+        dequeue_handler=controller.dequeue_tool_messages,
+        cleanup_handler=controller.cleanup_tool_jobs,
+    )
+    executor.register_tools(bash_tool)
+    run_token = executor.begin_graph_run()
+
+    result = executor.execute_tool_call(
+        build_tool_call(
+            "bash_coding_tool.execute",
+            {
+                "code": "printf before; sleep 0.2; printf after",
+                "create_ui_tab": True,
+            },
+        ),
+        graph_run_token=run_token,
+    )
+
+    release_payload = json.loads(result.message["content"])
+    assert release_payload["status"] == "executing"
+    assert result.released_job_id == release_payload["job_id"]
+    wait_for(
+        lambda: any(
+            conversation["kind"] == "bash"
+            and conversation["terminal"]["chunks"]
+            for conversation in controller.snapshot()["conversations"]
+        )
+    )
+    terminal_while_released = next(
+        conversation["terminal"]
+        for conversation in controller.snapshot()["conversations"]
+        if conversation["kind"] == "bash"
+    )
+    assert terminal_while_released["status"] == "running"
+    assert terminal_while_released["chunks"] == [
+        {"stream": "stdout", "text": "before"}
+    ]
+
+    assert executor.completion_event.wait(2)
+    terminal = next(
+        conversation["terminal"]
+        for conversation in controller.snapshot()["conversations"]
+        if conversation["kind"] == "bash"
+    )
+    completions = executor.drain_ready_completions(run_token)
+    delivered = json.loads(completions[0].tool_response["content"])
+
+    assert terminal["status"] == "completed"
+    assert terminal["chunks"] == [{"stream": "stdout", "text": "beforeafter"}]
+    assert delivered == {
+        "stdout": "beforeafter",
+        "stderr": "",
+        "returncode": 0,
+        "timeout": False,
+    }
+    assert controller.snapshot()["tool_execution_queue"] == []
+    assert controller.snapshot()["message_queue"] == []
     executor.finish_graph_run(run_token)
 
 

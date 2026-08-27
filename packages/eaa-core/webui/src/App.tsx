@@ -22,6 +22,8 @@ import type {
   PendingApproval,
   RuntimeConversation,
   RuntimeLogEntry,
+  RuntimeTerminal,
+  TerminalChunk,
   MessageQueueEntry,
   RuntimeSnapshot,
   ToolExecutionQueueEntry,
@@ -192,6 +194,22 @@ const messageDomId = (conversationId: string, message: WebUIMessage, index: numb
   `message-${conversationId}-${String(message.id ?? index).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
 const messageContentKey = (message: WebUIMessage) => `${message.role ?? ""}:${String(message.content ?? "").trim()}`;
+
+const appendTerminalChunks = (current: TerminalChunk[], incoming: TerminalChunk[]) => {
+  const chunks = current.map((chunk) => ({ ...chunk }));
+  for (const chunk of incoming) {
+    if (!chunk.text) continue;
+    if (chunks.length && chunks[chunks.length - 1].stream === chunk.stream) chunks[chunks.length - 1].text += chunk.text;
+    else chunks.push({ ...chunk });
+  }
+  return chunks;
+};
+
+const newerTerminal = (current: RuntimeTerminal | null | undefined, incoming: RuntimeTerminal | null | undefined) => {
+  if (!incoming) return current ?? null;
+  if (!current || incoming.sequence >= current.sequence) return incoming;
+  return current;
+};
 
 const stringHash = (value: string) => {
   let hash = 0;
@@ -492,6 +510,37 @@ function ConversationTabs({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function TerminalView({
+  terminal,
+  scrollRef,
+  onScroll,
+}: {
+  terminal: RuntimeTerminal;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
+}) {
+  const statusLabel = terminal.status.replace(/_/g, " ");
+  return (
+    <div className="eaa-terminal" ref={scrollRef} onScroll={onScroll}>
+      <header className="eaa-terminal-header">
+        <div>
+          <span className={`eaa-terminal-status eaa-terminal-status-${terminal.status}`}>{statusLabel}</span>
+          {terminal.returncode !== null && terminal.returncode !== undefined ? <span>Exit code {terminal.returncode}</span> : null}
+        </div>
+        <pre className="eaa-terminal-command">{terminal.command}</pre>
+      </header>
+      <pre className="eaa-terminal-output" aria-label="Bash output">
+        {(terminal.chunks ?? []).map((chunk, index) => (
+          <span className={chunk.stream === "stderr" ? "eaa-terminal-stderr" : "eaa-terminal-stdout"} key={`${index}-${chunk.stream}`}>
+            {chunk.text}
+          </span>
+        ))}
+      </pre>
+      {terminal.error ? <div className="eaa-terminal-error">{terminal.error}</div> : null}
     </div>
   );
 }
@@ -814,11 +863,14 @@ function App() {
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const pendingMessagesRef = useRef<Map<string, string>>(new Map());
   const closedConversationIdsRef = useRef<Set<string>>(new Set());
+  const terminalSequencesRef = useRef<Map<string, number>>(new Map());
+  const loadStateRef = useRef<() => Promise<void>>(async () => undefined);
   const infoTimeoutRef = useRef<number | null>(null);
 
   const processing = !inputRequested && status !== "idle";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const activeMessages = activeConversation?.messages ?? [];
+  const activeTerminal = activeConversation?.kind === "bash" ? activeConversation.terminal : null;
   const chatPanelStyle = useMemo(
     () =>
       ({
@@ -1013,7 +1065,7 @@ function App() {
 
   useEffect(() => {
     followScroll(messagesRef.current);
-  }, [activeMessages, activeConversationId, followScroll]);
+  }, [activeMessages, activeConversationId, activeTerminal?.sequence, followScroll]);
 
   useEffect(() => {
     followScroll(logsRef.current);
@@ -1068,6 +1120,7 @@ function App() {
     setConversations((previous) => {
       const index = previous.findIndex((item) => item.id === conversation.id);
       if (index === -1) {
+        if (conversation.terminal) terminalSequencesRef.current.set(conversation.id, conversation.terminal.sequence);
         return [
           ...previous,
           {
@@ -1078,6 +1131,7 @@ function App() {
         ];
       }
       const next = [...previous];
+      const terminal = newerTerminal(next[index].terminal, conversation.terminal);
       const existingMessages = next[index].messages ?? [];
       const mergedMessages = [...existingMessages];
       const seenMessages = new Set(
@@ -1102,9 +1156,12 @@ function App() {
       next[index] = {
         ...next[index],
         ...conversation,
+        status: terminal?.status ?? conversation.status,
         messages: mergedMessages,
         visualization_tiles: conversation.visualization_tiles ?? next[index].visualization_tiles ?? [],
+        terminal,
       };
+      if (next[index].terminal) terminalSequencesRef.current.set(conversation.id, next[index].terminal.sequence);
       return next;
     });
     if (select) setActiveConversationId(conversation.id);
@@ -1307,14 +1364,32 @@ function App() {
         const visibleConversations = payload.conversations.filter(
           (conversation) => conversation.id === "primary" || !closedConversationIdsRef.current.has(conversation.id),
         );
-        setConversations(
-          visibleConversations.map((conversation) => ({
-            ...conversation,
-            messages: conversation.messages ?? [],
-            visualization_tiles: conversation.visualization_tiles ?? [],
-          })),
-        );
-        if (!visibleConversations.some((conversation) => conversation.id === activeConversationId)) {
+        setConversations((previous) => {
+          const incomingIds = new Set(visibleConversations.map((conversation) => conversation.id));
+          const merged = visibleConversations.map((conversation) => {
+            const existing = previous.find((item) => item.id === conversation.id);
+            const terminal = newerTerminal(existing?.terminal, conversation.terminal);
+            if (terminal) terminalSequencesRef.current.set(conversation.id, terminal.sequence);
+            return {
+              ...conversation,
+              status: terminal?.status ?? conversation.status,
+              messages: conversation.messages ?? [],
+              visualization_tiles: conversation.visualization_tiles ?? [],
+              terminal,
+            };
+          });
+          const terminalsMissingFromSnapshot = previous.filter(
+            (conversation) =>
+              conversation.kind === "bash" &&
+              !incomingIds.has(conversation.id) &&
+              !closedConversationIdsRef.current.has(conversation.id),
+          );
+          return [...merged, ...terminalsMissingFromSnapshot];
+        });
+        if (
+          !visibleConversations.some((conversation) => conversation.id === activeConversationId) &&
+          !terminalSequencesRef.current.has(activeConversationId)
+        ) {
           setActiveConversationId(visibleConversations[0]?.id ?? "primary");
         }
       } else {
@@ -1333,6 +1408,7 @@ function App() {
       setConnection("Reconnecting...");
     }
   }, [activeConversationId, applyStatus, mergeMessages, renderApprovalRequest]);
+  loadStateRef.current = loadState;
 
   useEffect(() => {
     loadState();
@@ -1354,6 +1430,57 @@ function App() {
     source.addEventListener("conversation.terminated", (event) => {
       const payload = JSON.parse(event.data || "{}") as { conversation?: RuntimeConversation };
       if (payload.conversation) upsertConversation(payload.conversation);
+    });
+    source.addEventListener("terminal.output.appended", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; sequence?: number; chunks?: TerminalChunk[] };
+      const conversationId = payload.conversation_id;
+      const sequence = Number(payload.sequence);
+      if (!conversationId || !Number.isFinite(sequence) || !Array.isArray(payload.chunks)) return;
+      if (!terminalSequencesRef.current.has(conversationId)) {
+        void loadStateRef.current();
+        return;
+      }
+      const currentSequence = terminalSequencesRef.current.get(conversationId) ?? 0;
+      if (sequence <= currentSequence) return;
+      if (sequence !== currentSequence + 1) {
+        void loadStateRef.current();
+        return;
+      }
+      terminalSequencesRef.current.set(conversationId, sequence);
+      setConversations((previous) =>
+        previous.map((conversation) =>
+          conversation.id === conversationId && conversation.terminal
+            ? {
+                ...conversation,
+                terminal: {
+                  ...conversation.terminal,
+                  chunks: appendTerminalChunks(conversation.terminal.chunks ?? [], payload.chunks as TerminalChunk[]),
+                  sequence,
+                },
+              }
+            : conversation,
+        ),
+      );
+    });
+    source.addEventListener("terminal.finished", (event) => {
+      const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; terminal?: RuntimeTerminal };
+      if (!payload.conversation_id || !payload.terminal) return;
+      const conversationId = payload.conversation_id;
+      const terminal = payload.terminal;
+      if (!terminalSequencesRef.current.has(conversationId)) {
+        void loadStateRef.current();
+        return;
+      }
+      const currentSequence = terminalSequencesRef.current.get(conversationId) ?? 0;
+      if (terminal.sequence < currentSequence) return;
+      terminalSequencesRef.current.set(conversationId, terminal.sequence);
+      setConversations((previous) =>
+        previous.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, status: terminal.status, terminal }
+            : conversation,
+        ),
+      );
     });
     source.addEventListener("visualization.tile.created", (event) => {
       const payload = JSON.parse(event.data || "{}") as { conversation_id?: string; tile?: RuntimeVisualizationTile };
@@ -1665,63 +1792,69 @@ function App() {
                 onSelect={setActiveConversationId}
                 onClose={closeConversation}
               />
-              <div className="eaa-messages" ref={messagesRef} onScroll={registerScrollIntent}>
-                {activeMessages.map((message, index) => (
-                  <MessageView
-                    conversationId={activeConversationId}
-                    index={index}
-                    key={messageKey(message, index)}
-                    message={message}
-                    onImage={setPreviewImage}
-                    onApproval={(approved, approvalId) => submitApproval(approved, activeConversationId, approvalId)}
-                  />
-                ))}
-                {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}
-              </div>
-              <form className="eaa-input-panel" onSubmit={onSubmit}>
-                {processing ? (
-                  <div className="eaa-processing" aria-label="Agent is processing" role="status">
-                    <span className="eaa-processing-dot" />
-                    <span className="eaa-processing-dot" />
-                    <span className="eaa-processing-dot" />
+              {activeTerminal ? (
+                <TerminalView terminal={activeTerminal} scrollRef={messagesRef} onScroll={registerScrollIntent} />
+              ) : (
+                <>
+                  <div className="eaa-messages" ref={messagesRef} onScroll={registerScrollIntent}>
+                    {activeMessages.map((message, index) => (
+                      <MessageView
+                        conversationId={activeConversationId}
+                        index={index}
+                        key={messageKey(message, index)}
+                        message={message}
+                        onImage={setPreviewImage}
+                        onApproval={(approved, approvalId) => submitApproval(approved, activeConversationId, approvalId)}
+                      />
+                    ))}
+                    {activeConversation?.terminated ? <div className="eaa-termination-marker">Subagent terminated</div> : null}
                   </div>
-                ) : null}
-                <div className="eaa-input-row">
-                  <textarea
-                    ref={inputRef}
-                    className="eaa-input"
-                    rows={3}
-                    placeholder="Message EAA..."
-                    value={content}
-                    onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 150)}
-                    onChange={(event) => void onInputChange(event.target.value)}
-                    onKeyDown={onKeyDown}
-                    onPaste={onPaste}
-                  />
-                  {suggestionsOpen && slashSuggestions.length ? (
-                    <div className="eaa-slash-suggestions">
-                      {slashSuggestions.map((suggestion) => (
-                        <button
-                          className="eaa-slash-suggestion"
-                          key={suggestion.key}
-                          type="button"
-                          onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
-                        >
-                          <span className="eaa-slash-name">{suggestion.name}</span>
-                          <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
-                        </button>
-                      ))}
+                  <form className="eaa-input-panel" onSubmit={onSubmit}>
+                    {processing ? (
+                      <div className="eaa-processing" aria-label="Agent is processing" role="status">
+                        <span className="eaa-processing-dot" />
+                        <span className="eaa-processing-dot" />
+                        <span className="eaa-processing-dot" />
+                      </div>
+                    ) : null}
+                    <div className="eaa-input-row">
+                      <textarea
+                        ref={inputRef}
+                        className="eaa-input"
+                        rows={3}
+                        placeholder="Message EAA..."
+                        value={content}
+                        onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 150)}
+                        onChange={(event) => void onInputChange(event.target.value)}
+                        onKeyDown={onKeyDown}
+                        onPaste={onPaste}
+                      />
+                      {suggestionsOpen && slashSuggestions.length ? (
+                        <div className="eaa-slash-suggestions">
+                          {slashSuggestions.map((suggestion) => (
+                            <button
+                              className="eaa-slash-suggestion"
+                              key={suggestion.key}
+                              type="button"
+                              onMouseDown={(event) => chooseSlashSuggestion(event, suggestion)}
+                            >
+                              <span className="eaa-slash-name">{suggestion.name}</span>
+                              <span className="eaa-slash-description" dangerouslySetInnerHTML={{ __html: escapeHtml(suggestion.detail) }} />
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <button className="eaa-attach" type="button" aria-label="Paste or attach image">
+                        <Paperclip size={18} aria-hidden="true" />
+                      </button>
+                      <button className="eaa-send" type="submit" disabled={processing} aria-label="Send message">
+                        <Send size={18} aria-hidden="true" />
+                      </button>
                     </div>
-                  ) : null}
-                  <button className="eaa-attach" type="button" aria-label="Paste or attach image">
-                    <Paperclip size={18} aria-hidden="true" />
-                  </button>
-                  <button className="eaa-send" type="submit" disabled={processing} aria-label="Send message">
-                    <Send size={18} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="eaa-disclaimer">EAA can make mistakes. Verify critical results.</div>
-              </form>
+                    <div className="eaa-disclaimer">EAA can make mistakes. Verify critical results.</div>
+                  </form>
+                </>
+              )}
             </section>
             <button
               aria-label="Resize chat and sidebar panels"

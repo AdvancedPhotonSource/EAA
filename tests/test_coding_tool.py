@@ -3,11 +3,13 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import numpy as np
 
 from eaa_core.tool.coding import BashCodingTool, SimplePythonEvalTool, PythonCodingTool
+from eaa_core.tool.base import generate_openai_tool_schema
 
 import test_utils as tutils
 
@@ -81,6 +83,201 @@ class TestCodingTool(tutils.BaseTester):
     def test_coding_tool_names_use_execute_action(self):
         assert PythonCodingTool().exposed_tools[0].name == "python_coding_tool.execute"
         assert BashCodingTool().exposed_tools[0].name == "bash_coding_tool.execute"
+
+    def test_bash_schema_exposes_optional_ui_tab_flag(self):
+        exposed = BashCodingTool().exposed_tools[0]
+        schema = exposed.schema or generate_openai_tool_schema(
+            tool_name=exposed.name,
+            func=exposed.function,
+        )
+        parameters = schema["function"]["parameters"]
+
+        assert "create_ui_tab" in parameters["properties"]
+        assert "read-only Bash tab" in parameters["properties"]["create_ui_tab"]["description"]
+        assert "create_ui_tab" not in parameters["required"]
+
+    def test_bash_defaults_to_no_terminal_and_preserves_result(self, tmp_path):
+        tool = BashCodingTool(working_directory=str(tmp_path))
+        starts = []
+        tool.set_terminal_handlers(
+            start_handler=lambda command: starts.append(command) or "bash-1",
+            output_handler=lambda *_args: None,
+            finish_handler=lambda *_args: None,
+        )
+
+        result = tool.execute_code("printf output; printf error >&2")
+
+        assert starts == []
+        assert result == {
+            "stdout": "output",
+            "stderr": "error",
+            "returncode": 0,
+            "timeout": False,
+        }
+
+    def test_bash_terminal_streams_input_unicode_and_both_streams(self, tmp_path):
+        tool = BashCodingTool(working_directory=str(tmp_path))
+        events = []
+        tool.set_terminal_handlers(
+            start_handler=lambda command: events.append(("start", command)) or "bash-1",
+            output_handler=lambda terminal_id, chunks: events.append(
+                ("output", terminal_id, chunks)
+            ),
+            finish_handler=lambda terminal_id, result: events.append(
+                ("finish", terminal_id, dict(result))
+            ),
+        )
+
+        result = tool.execute_code(
+            "IFS= read -r value; printf '\\342'; sleep 0.12; "
+            "printf '\\202\\254:%s' \"$value\"; sleep 0.12; printf err >&2",
+            input_text="hello\n",
+            create_ui_tab=True,
+        )
+
+        chunks = [chunk for event in events if event[0] == "output" for chunk in event[2]]
+        assert events[0][0] == "start"
+        assert events[-1][0] == "finish"
+        assert result == {
+            "stdout": "€:hello",
+            "stderr": "err",
+            "returncode": 0,
+            "timeout": False,
+        }
+        assert "".join(chunk["text"] for chunk in chunks if chunk["stream"] == "stdout") == "€:hello"
+        assert "".join(chunk["text"] for chunk in chunks if chunk["stream"] == "stderr") == "err"
+
+    def test_bash_terminal_timeout_keeps_partial_output(self, tmp_path):
+        tool = BashCodingTool(working_directory=str(tmp_path))
+        finished = []
+        tool.set_terminal_handlers(
+            start_handler=lambda _command: "bash-1",
+            output_handler=lambda *_args: None,
+            finish_handler=lambda _terminal_id, result: finished.append(dict(result)),
+        )
+
+        started = time.monotonic()
+        result = tool.execute_code(
+            "printf before; sleep 5; printf after",
+            timeout=0.2,
+            create_ui_tab=True,
+        )
+
+        assert time.monotonic() - started < 2
+        assert result["stdout"] == "before"
+        assert result["stderr"] == ""
+        assert result["returncode"] is None
+        assert result["timeout"] is True
+        assert "timed out" in result["error"]
+        assert finished == [result]
+
+    def test_bash_terminal_reports_launch_failure(self, monkeypatch, tmp_path):
+        tool = BashCodingTool(working_directory=str(tmp_path))
+        events = []
+        tool.set_terminal_handlers(
+            start_handler=lambda _command: events.append("start") or "bash-1",
+            output_handler=lambda *_args: None,
+            finish_handler=lambda _terminal_id, result: events.append(dict(result)),
+        )
+        monkeypatch.setattr(
+            "eaa_core.tool.coding.subprocess.Popen",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("launch failed")),
+        )
+
+        result = tool.execute_code("true", create_ui_tab=True)
+
+        assert events[0] == "start"
+        assert result == {
+            "stdout": "",
+            "stderr": "",
+            "returncode": None,
+            "timeout": False,
+            "error": "launch failed",
+        }
+        assert events[-1] == result
+
+    def test_bash_terminal_builds_bubblewrap_process(self, monkeypatch, tmp_path):
+        tool = BashCodingTool(sandbox_type="bubblewrap")
+        monkeypatch.setattr(
+            "eaa_core.tool.coding.shutil.which",
+            lambda name, path=None: "/usr/bin/bwrap" if name == "bwrap" else None,
+        )
+        monkeypatch.setattr(tool, "_bubblewrap_system_bind_paths", lambda: ["/usr"])
+        monkeypatch.setattr(
+            tool,
+            "_bubblewrap_visible_bind_paths",
+            lambda _workdir: [str(tmp_path)],
+        )
+
+        command, kwargs, cleanup = tool._stream_process_spec(
+            "printf ok",
+            env={"PATH": "/usr/bin"},
+            cwd=str(tmp_path),
+            exec_cwd=str(tmp_path),
+            has_input=False,
+        )
+
+        assert command == [
+            "/usr/bin/bwrap",
+            "--die-with-parent",
+            "--unshare-all",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--bind",
+            "/tmp",
+            "/tmp",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--bind",
+            str(tmp_path),
+            str(tmp_path),
+            "--chdir",
+            str(tmp_path),
+            "/bin/bash",
+            "-c",
+            "printf ok",
+        ]
+        assert kwargs["env"] == {"PATH": "/usr/bin"}
+        assert kwargs["start_new_session"] is True
+        assert cleanup == []
+
+    def test_bash_terminal_builds_container_process(self, monkeypatch, tmp_path):
+        tool = BashCodingTool(sandbox_type="container", container_image="bash:test")
+        monkeypatch.setattr(tool, "_select_container_runtime", lambda: "podman")
+
+        command, kwargs, cleanup = tool._stream_process_spec(
+            "printf ok",
+            env={"VALUE": "one"},
+            cwd=str(tmp_path),
+            exec_cwd=str(tmp_path),
+            has_input=True,
+        )
+
+        try:
+            assert command == [
+                "podman",
+                "run",
+                "--rm",
+                "-i",
+                "--workdir",
+                str(tmp_path),
+                "--tmpfs",
+                str(tmp_path),
+                "--env-file",
+                cleanup[0],
+                "bash:test",
+                "bash",
+                "-c",
+                "printf ok",
+            ]
+            assert kwargs["stdin"] is subprocess.PIPE
+            assert kwargs["start_new_session"] is True
+            assert Path(cleanup[0]).read_text() == "VALUE=one\n"
+        finally:
+            Path(cleanup[0]).unlink()
 
     def test_execution_env_supplies_path_when_parent_path_is_missing(self, monkeypatch):
         monkeypatch.delenv("PATH", raising=False)

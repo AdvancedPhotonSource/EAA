@@ -22,6 +22,7 @@ from eaa_core.gui.html import (
 from eaa_core.gui.runtime import WebUIRuntimeController, WebUIRuntimeServer
 from eaa_core.signals import ControlSignal
 from eaa_core.tool.base import BaseTool, tool
+from eaa_core.tool.coding import BashCodingTool
 
 
 def assert_runtime_timestamp(timestamp):
@@ -124,6 +125,90 @@ def test_runtime_controller_publishes_display_logs(tmp_path):
     assert first_event.payload["log"]["message"] == "first"
     assert second_event.payload["log"]["message"] == "second"
     assert snapshot["logs"] == [second_event.payload["log"]]
+
+
+def test_runtime_controller_tracks_streamed_bash_terminal(tmp_path):
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager)
+    tool = BashCodingTool(working_directory=str(tmp_path))
+    controller.register_tool(tool)
+    subscriber = controller.subscribe()
+
+    result = tool.execute_code(
+        "printf out; sleep 0.12; printf err >&2; exit 3",
+        create_ui_tab=True,
+    )
+
+    events = []
+    while not subscriber.empty():
+        events.append(subscriber.get_nowait())
+    created = events[0]
+    output_events = [event for event in events if event.type == "terminal.output.appended"]
+    finished = events[-1]
+    terminal = finished.payload["terminal"]
+    conversation = next(
+        item for item in controller.snapshot()["conversations"] if item["kind"] == "bash"
+    )
+
+    assert result["returncode"] == 3
+    assert created.type == "conversation.created"
+    assert created.payload["conversation"]["id"] == "bash-1"
+    assert created.payload["conversation"]["terminal"]["command"].startswith("printf out")
+    assert output_events
+    assert [event.payload["sequence"] for event in output_events] == list(
+        range(1, len(output_events) + 1)
+    )
+    assert finished.type == "terminal.finished"
+    assert terminal["sequence"] == len(output_events) + 1
+    assert terminal["status"] == "failed"
+    assert terminal["returncode"] == 3
+    assert terminal["timeout"] is False
+    assert terminal["started_at"]
+    assert terminal["finished_at"]
+    assert conversation["status"] == "failed"
+    assert conversation["terminal"] == terminal
+    assert "".join(chunk["text"] for chunk in terminal["chunks"] if chunk["stream"] == "stdout") == "out"
+    assert "".join(chunk["text"] for chunk in terminal["chunks"] if chunk["stream"] == "stderr") == "err"
+
+
+def test_runtime_controller_coalesces_terminal_state_but_keeps_delta_order():
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager)
+    subscriber = controller.subscribe()
+    terminal_id = controller.create_bash_terminal("echo test")
+    subscriber.get_nowait()
+
+    controller.append_terminal_output(
+        terminal_id,
+        [
+            {"stream": "stdout", "text": "a"},
+            {"stream": "stdout", "text": "b"},
+            {"stream": "stderr", "text": "c"},
+        ],
+    )
+    controller.append_terminal_output(
+        terminal_id,
+        [{"stream": "stderr", "text": "d"}],
+    )
+
+    first = subscriber.get_nowait()
+    second = subscriber.get_nowait()
+    terminal = next(
+        item for item in controller.snapshot()["conversations"] if item["id"] == terminal_id
+    )["terminal"]
+    assert first.payload == {
+        "conversation_id": terminal_id,
+        "sequence": 1,
+        "chunks": [
+            {"stream": "stdout", "text": "ab"},
+            {"stream": "stderr", "text": "c"},
+        ],
+    }
+    assert second.payload["sequence"] == 2
+    assert terminal["chunks"] == [
+        {"stream": "stdout", "text": "ab"},
+        {"stream": "stderr", "text": "cd"},
+    ]
 
 
 def test_runtime_controller_stores_message_timestamp(tmp_path):

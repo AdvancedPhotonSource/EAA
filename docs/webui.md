@@ -103,6 +103,13 @@ The browser calls these routes on the WebUI origin. The WebUI server forwards
 them to the configured runtime URL, so the runtime can remain bound to
 `127.0.0.1` while the WebUI binds to a remote-accessible interface.
 
+Opt-in Bash tool calls (`create_ui_tab=True`) add closable, read-only terminal
+tabs. Their complete command, output, stream ordering, and final status remain
+available from `GET /api/state` for refresh and reconnect recovery. Live output
+uses the `terminal.output.appended` SSE event, and `terminal.finished` carries a
+complete final snapshot. Closing a tab only hides it in that browser and does
+not terminate the Bash process.
+
 ## Persistence
 
 `checkpoint_db_path` stores LangGraph checkpoints only. `transcript_db_path`
