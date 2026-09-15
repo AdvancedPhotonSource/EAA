@@ -123,6 +123,30 @@ class NodeFactory:
             state.full_history.append(message)
             self.task_manager.record_transcript_message(message)
 
+    def apply_plan_mode_transition(
+        self,
+        state: ChatGraphState,
+        requested_plan_mode: bool | None,
+    ) -> None:
+        """Apply and record a requested plan-mode transition."""
+        if requested_plan_mode is None or requested_plan_mode == state.plan_mode:
+            return
+        state.plan_mode = requested_plan_mode
+        if self.task_manager.use_webui:
+            self.task_manager.runtime_controller.set_plan_mode(requested_plan_mode)
+        message = generate_openai_message(
+            content=self.task_manager.get_plan_mode_prompt(requested_plan_mode),
+            role="system",
+        )
+        if not self.task_manager.use_webui:
+            print_message(message)
+        self.update_message_history_for_state(
+            state,
+            message,
+            update_context=True,
+            update_full_history=True,
+        )
+
     def apply_followup_messages_for_state(
         self,
         state: TaskManagerState,
@@ -250,6 +274,11 @@ class NodeFactory:
         response = state.latest_response
         tool_messages = self.task_manager.tool_executor.execute_tool_calls_from_message(
             response,
+            allowed_tool_owners=(
+                self.task_manager.get_plan_mode_tool_allowlist()
+                if isinstance(state, ChatGraphState) and state.plan_mode
+                else None
+            ),
             graph_run_token=self.task_manager._active_graph_run_token,
             conversation_id=self.task_manager.runtime_conversation_id,
             conversation_label=self.task_manager.get_runtime_conversation_label(),
@@ -397,6 +426,13 @@ class NodeFactory:
                     state.await_user_input = False
                     return state.model_dump()
                 continue
+            requested_plan_mode = None
+            if self.task_manager.use_webui:
+                requested_plan_mode = (
+                    self.task_manager.runtime_controller.consume_input_plan_mode(
+                        self.task_manager.runtime_conversation_id
+                    )
+                )
             command = parse_user_input_command(user_message)
             if self.task_manager.handle_runtime_command(command):
                 continue
@@ -419,6 +455,7 @@ class NodeFactory:
                         write_to_webui=True,
                     )
                     continue
+                self.apply_plan_mode_transition(state, requested_plan_mode)
                 for message in messages:
                     if not self.task_manager.use_webui:
                         print_message(message)
@@ -440,6 +477,7 @@ class NodeFactory:
                     )
                 state.await_user_input = False
                 return state.model_dump()
+            self.apply_plan_mode_transition(state, requested_plan_mode)
             for message in self.task_manager.expand_skill_command_in_text(command.text):
                 if not self.task_manager.use_webui:
                     print_message(message)

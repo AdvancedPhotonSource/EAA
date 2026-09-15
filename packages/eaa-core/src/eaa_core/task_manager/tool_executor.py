@@ -238,6 +238,7 @@ class SerialToolExecutor:
         tool_calls: list[dict[str, Any]],
         *,
         allow_release: bool = True,
+        allowed_tool_owners: Optional[dict[str, BaseTool]] = None,
         graph_run_token: str | None = None,
         conversation_id: str = "primary",
         conversation_label: str = "Primary",
@@ -247,6 +248,7 @@ class SerialToolExecutor:
             self.execute_tool_call(
                 tool_call,
                 allow_release=allow_release,
+                allowed_tool_owners=allowed_tool_owners,
                 graph_run_token=graph_run_token,
                 conversation_id=conversation_id,
                 conversation_label=conversation_label,
@@ -259,6 +261,7 @@ class SerialToolExecutor:
         message: dict[str, Any],
         *,
         allow_release: bool = True,
+        allowed_tool_owners: Optional[dict[str, BaseTool]] = None,
         graph_run_token: str | None = None,
         conversation_id: str = "primary",
         conversation_label: str = "Primary",
@@ -280,6 +283,7 @@ class SerialToolExecutor:
         results = self.execute_tool_calls(
             tool_calls,
             allow_release=allow_release,
+            allowed_tool_owners=allowed_tool_owners,
             graph_run_token=graph_run_token,
             conversation_id=conversation_id,
             conversation_label=conversation_label,
@@ -291,6 +295,7 @@ class SerialToolExecutor:
         tool_call: dict[str, Any],
         *,
         allow_release: bool = True,
+        allowed_tool_owners: Optional[dict[str, BaseTool]] = None,
         graph_run_token: str | None = None,
         conversation_id: str = "primary",
         conversation_label: str = "Primary",
@@ -303,6 +308,30 @@ class SerialToolExecutor:
         spec = self.tool_specs[tool_name]
         if not spec.model_visible:
             raise ValueError(f"Tool {tool_name!r} is not available for model tool calls.")
+        if (
+            allowed_tool_owners is not None
+            and (
+                allowed_tool_owners.get(tool_name) is None
+                or self.tool_spec_owners.get(tool_name)
+                is not allowed_tool_owners[tool_name]
+            )
+        ):
+            allowed_names = ", ".join(f"`{name}`" for name in allowed_tool_owners)
+            content = self.serialize_result(
+                {
+                    "error": (
+                        f"Tool `{tool_name}` is not allowed in plan mode. "
+                        f"Only {allowed_names} may be called."
+                    )
+                }
+            )
+            return ToolExecutionResult(
+                message=generate_openai_message(
+                    content=content,
+                    role="tool",
+                    tool_call_id=tool_call.get("id"),
+                )
+            )
         arguments = self.parse_arguments(function.get("arguments"))
         try:
             approval_required = (

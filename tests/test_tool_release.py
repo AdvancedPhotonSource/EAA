@@ -14,6 +14,7 @@ from PIL import Image
 from eaa_core.gui.runtime import WebUIRuntimeController
 from eaa_core.signals import ControlSignal
 from eaa_core.task_manager.base import BaseTaskManager
+from eaa_core.task_manager.state import ChatGraphState, TaskManagerState
 from eaa_core.task_manager.tool_executor import RELEASE_DESCRIPTION, SerialToolExecutor
 from eaa_core.tool.base import BaseTool, ExposedToolSpec, tool
 from eaa_core.tool.coding import BashCodingTool
@@ -37,6 +38,87 @@ def wait_for(predicate, timeout=1.0):
             return
         time.sleep(0.005)
     raise AssertionError("condition was not met before timeout")
+
+
+def test_plan_mode_allowlist_blocks_execution_without_hiding_schemas(tmp_path):
+    class SideEffectTool(BaseTool):
+        def build(self) -> None:
+            self.calls = 0
+
+        @tool(name="side_effect", require_approval=True)
+        def run(self) -> str:
+            self.calls += 1
+            return "changed"
+
+    task_manager = BaseTaskManager(
+        build=False,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+    side_effect_tool = SideEffectTool()
+    task_manager.register_tools(side_effect_tool)
+    task_manager.tool_manager.file_system_tool.workspace_path = tmp_path
+    task_manager.build_tools()
+    approvals = []
+    task_manager.tool_executor.approval_handler = (
+        lambda name, arguments: approvals.append((name, arguments)) or True
+    )
+    schemas_before = task_manager.tool_executor.list_tool_schemas()
+    allowlist = task_manager.get_plan_mode_tool_allowlist()
+
+    blocked = task_manager.tool_executor.execute_tool_call(
+        build_tool_call("side_effect"),
+        allowed_tool_owners=allowlist,
+    )
+
+    assert "not allowed in plan mode" in json.loads(blocked.message["content"])["error"]
+    assert side_effect_tool.calls == 0
+    assert approvals == []
+    assert task_manager.tool_executor.tool_execution_history == []
+    assert task_manager.tool_executor.list_tool_schemas() == schemas_before
+
+    source = tmp_path / "notes.txt"
+    source.write_text("readable")
+    allowed = task_manager.tool_executor.execute_tool_call(
+        build_tool_call(
+            "file_system_tool.read_file",
+            {"file_path": str(source), "show_line_number": False},
+        ),
+        allowed_tool_owners=allowlist,
+    )
+
+    assert json.loads(allowed.message["content"])["result"] == "readable"
+    assert task_manager.tool_executor.tool_execution_history[-1]["tool_name"] == (
+        "file_system_tool.read_file"
+    )
+
+    plan_state = ChatGraphState(
+        messages=[
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [build_tool_call("side_effect")],
+            }
+        ],
+        plan_mode=True,
+    )
+    task_manager.node_factory.execute_tools_for_state(plan_state)
+    assert side_effect_tool.calls == 0
+    assert "not allowed in plan mode" in json.loads(
+        plan_state.messages[-1]["content"]
+    )["error"]
+
+    task_state = TaskManagerState(
+        messages=[
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [build_tool_call("side_effect")],
+            }
+        ]
+    )
+    task_manager.node_factory.execute_tools_for_state(task_state)
+    assert side_effect_tool.calls == 1
 
 
 @pytest.mark.parametrize("value", [True, False, "1", object()])

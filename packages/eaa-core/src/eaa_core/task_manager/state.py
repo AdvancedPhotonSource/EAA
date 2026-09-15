@@ -118,6 +118,7 @@ class ChatGraphState(TaskManagerState):
     termination_behavior: Literal["return", "user"] = "user"
     bootstrap_message: Optional[Any] = None
     max_agent_iterations: Optional[int] = None
+    plan_mode: bool = False
 
 
 CheckpointStateName = Literal["ChatGraphState", "TaskManagerState"]

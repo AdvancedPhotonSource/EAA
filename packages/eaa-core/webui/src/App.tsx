@@ -833,6 +833,8 @@ function App() {
   const [status, setStatus] = useState("idle");
   const [inputRequested, setInputRequested] = useState(false);
   const [interruptRequested, setInterruptRequested] = useState(false);
+  const [planMode, setPlanMode] = useState(false);
+  const [planModeAvailable, setPlanModeAvailable] = useState(false);
   const [infoMessage, setInfoMessage] = useState<{ id: number; text: string } | null>(null);
   const [content, setContent] = useState("");
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -871,6 +873,7 @@ function App() {
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
   const activeMessages = activeConversation?.messages ?? [];
   const activeTerminal = activeConversation?.kind === "bash" ? activeConversation.terminal : null;
+  const planModeControlEnabled = planModeAvailable && activeConversationId === "primary";
   const chatPanelStyle = useMemo(
     () =>
       ({
@@ -1231,6 +1234,8 @@ function App() {
       setStatus(payload.status ?? "idle");
       setInputRequested(Boolean(payload.input_requested));
       setInterruptRequested(Boolean(payload.interrupt_requested));
+      if (typeof payload.plan_mode === "boolean") setPlanMode(payload.plan_mode);
+      if (typeof payload.plan_mode_available === "boolean") setPlanModeAvailable(payload.plan_mode_available);
       if (payload.interrupt_requested) setConnection("Interrupt requested");
       const conversation = (payload as RuntimeSnapshot & { conversation?: RuntimeConversation }).conversation;
       if (conversation) upsertConversation(conversation);
@@ -1586,7 +1591,7 @@ function App() {
     const response = await fetch(config.routes.send, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: trimmed }),
+      body: JSON.stringify({ content: trimmed, plan_mode: planMode }),
     });
     const payload = (await response.json().catch(() => ({}))) as { handled_as?: string; message?: string };
     if (response.status === 409) {
@@ -1851,7 +1856,26 @@ function App() {
                         <Send size={18} aria-hidden="true" />
                       </button>
                     </div>
-                    <div className="eaa-disclaimer">EAA can make mistakes. Verify critical results.</div>
+                    <div className="eaa-input-footer">
+                      <label
+                        className={`eaa-plan-toggle${planModeControlEnabled ? "" : " eaa-plan-toggle-disabled"}`}
+                        title={planModeControlEnabled ? "Plan before executing" : "Plan mode is available only in the main generic chat loop"}
+                      >
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          checked={planMode}
+                          disabled={!planModeControlEnabled}
+                          onChange={(event) => setPlanMode(event.target.checked)}
+                        />
+                        <span className="eaa-plan-toggle-track" aria-hidden="true">
+                          <span className="eaa-plan-toggle-thumb" />
+                        </span>
+                        <span>Plan mode</span>
+                      </label>
+                      <div className="eaa-disclaimer">EAA can make mistakes. Verify critical results.</div>
+                      <span aria-hidden="true" />
+                    </div>
                   </form>
                 </>
               )}

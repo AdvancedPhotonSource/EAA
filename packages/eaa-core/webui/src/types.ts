@@ -84,6 +84,8 @@ export type RuntimeSnapshot = {
   pending_approval?: PendingApproval | null;
   tool_execution_queue?: ToolExecutionQueueEntry[];
   message_queue?: MessageQueueEntry[];
+  plan_mode?: boolean;
+  plan_mode_available?: boolean;
 };
 
 export type ToolExecutionQueueEntry = {

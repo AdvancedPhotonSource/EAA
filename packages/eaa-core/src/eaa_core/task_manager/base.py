@@ -110,6 +110,7 @@ class TaskManagerAgentAdapter:
         return self.task_manager.tool_executor.execute_tool_calls_from_message(
             message,
             allow_release=False,
+            allowed_tool_owners=self.task_manager.get_active_tool_allowlist(),
         )
 
 
@@ -304,6 +305,32 @@ class BaseTaskManager:
             "image_captioning.md",
             {},
         )
+
+    def get_plan_mode_prompt(self, enabled: bool) -> str:
+        """Return the system message for a plan-mode transition."""
+        template_name = "plan_mode_on.md" if enabled else "plan_mode_off.md"
+        return render_prompt_template(
+            "eaa_core.task_manager.prompts",
+            template_name,
+            {},
+        )
+
+    def get_active_tool_allowlist(self) -> Optional[dict[str, BaseTool]]:
+        """Return the active mode's tool-owner allowlist, if any."""
+        if not isinstance(self.active_state, ChatGraphState):
+            return None
+        if not self.active_state.plan_mode:
+            return None
+        return self.get_plan_mode_tool_allowlist()
+
+    def get_plan_mode_tool_allowlist(self) -> dict[str, BaseTool]:
+        """Return the exact built-in tools allowed during plan mode."""
+        return {
+            "file_system_tool.read_file": self.tool_manager.file_system_tool,
+            "image_rendering_tool.render_image_for_agent": (
+                self.tool_manager.image_rendering_tool
+            ),
+        }
 
     def format_available_skills_for_prompt(self) -> str:
         """Return the available-skill summary injected into the system prompt."""
@@ -648,6 +675,17 @@ class BaseTaskManager:
         active_kwargs = dict(graph_kwargs)
         graph_run_token = self.tool_executor.begin_graph_run()
         self._active_graph_run_token = graph_run_token
+        if self.use_webui and self.runtime_conversation_id == "primary":
+            plan_mode = None
+            if graph_name == "chat_graph" and isinstance(
+                self.active_state,
+                ChatGraphState,
+            ):
+                plan_mode = self.active_state.plan_mode
+            self.runtime_controller.set_active_graph(
+                graph_name,
+                plan_mode=plan_mode,
+            )
         try:
             while True:
                 try:
@@ -706,6 +744,8 @@ class BaseTaskManager:
             self.tool_executor.finish_graph_run(graph_run_token)
             if self._active_graph_run_token == graph_run_token:
                 self._active_graph_run_token = None
+            if self.use_webui and self.runtime_conversation_id == "primary":
+                self.runtime_controller.set_active_graph(None)
 
     def build(self, *args, **kwargs):
         """Build persistence, model, tools, and graphs."""
@@ -1582,9 +1622,13 @@ class BaseTaskManager:
             interruption_message="Keyboard interrupt detected. The current chat run was interrupted.",
         )
         if invoke_result.command != "completed":
+            if self.use_webui and self.runtime_conversation_id == "primary":
+                self.runtime_controller.set_plan_mode(self.chat_state.plan_mode)
             return
         final_state = invoke_result.final_state
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
+        if self.use_webui and self.runtime_conversation_id == "primary":
+            self.runtime_controller.set_plan_mode(self.chat_state.plan_mode)
 
     def run_conversation_from_checkpoint(
         self,
@@ -1650,6 +1694,10 @@ class BaseTaskManager:
             interruption_message="Keyboard interrupt detected. The current chat run was interrupted.",
         )
         if invoke_result.command != "completed":
+            if self.use_webui and self.runtime_conversation_id == "primary":
+                self.runtime_controller.set_plan_mode(self.chat_state.plan_mode)
             return
         final_state = invoke_result.final_state
         self.set_active_state(ChatGraphState.model_validate(final_state), "chat_graph")
+        if self.use_webui and self.runtime_conversation_id == "primary":
+            self.runtime_controller.set_plan_mode(self.chat_state.plan_mode)

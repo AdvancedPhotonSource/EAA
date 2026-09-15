@@ -1327,6 +1327,7 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
         termination_behavior="user",
         bootstrap_message="hello",
         await_user_input=False,
+        plan_mode=True,
     )
     task_manager.set_active_state(initial_state, "chat_graph")
     final_state = checkpointed_graph.invoke(
@@ -1362,6 +1363,7 @@ def test_shared_checkpoint_db_can_prune_history(tmp_path, monkeypatch):
     _, _, resumed_state = task_manager.get_checkpointed_graph("chat_graph")
     assert resumed_state is not None
     assert resumed_state.full_history == task_manager.full_history
+    assert resumed_state.plan_mode is True
 
 
 def test_checkpoint_thread_ids_are_scoped_by_session_id(tmp_path):

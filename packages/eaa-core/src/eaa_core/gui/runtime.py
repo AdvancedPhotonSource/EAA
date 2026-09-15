@@ -45,6 +45,14 @@ class RuntimeEvent:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RuntimeUserInput:
+    """One browser submission and its associated plan-mode selection."""
+
+    content: str
+    plan_mode: bool | None = None
+
+
 @dataclass
 class RuntimeVisualizationTile:
     """Server-owned visualization tile state."""
@@ -144,7 +152,7 @@ class WebUIRuntimeController:
         self.task_manager = task_manager
         self.upload_dir = upload_dir
         self.approval_timeout_seconds = approval_timeout_seconds
-        self.input_queue: queue.Queue[str] = queue.Queue()
+        self.input_queue: queue.Queue[str | RuntimeUserInput] = queue.Queue()
         self.approval_queue: queue.Queue[bool] = queue.Queue()
         self.approval_queues: dict[str, queue.Queue[bool]] = {
             "primary": self.approval_queue,
@@ -167,6 +175,9 @@ class WebUIRuntimeController:
         self.status = "idle"
         self.input_requested = False
         self.queued_input_count = 0
+        self.active_graph_name: str | None = None
+        self.plan_mode = False
+        self.dequeued_plan_modes: dict[str, bool | None] = {}
         self.pending_approval: dict[str, Any] | None = None
         self.conversations: dict[str, RuntimeConversation] = {
             "primary": RuntimeConversation(
@@ -374,9 +385,11 @@ class WebUIRuntimeController:
           Payload: ``{"conversation_id": str, "tile": <tile dict>}``.
         - ``visualization.tile.removed``: a visualization tile was removed.
           Payload: ``{"conversation_id": str, "tile_id": str}``.
-        - ``status.changed``: runtime status or input/interrupt flags changed.
+        - ``status.changed``: runtime status, input/interrupt flags, or plan-mode
+          state changed.
           Payload: ``{"status": str, "input_requested": bool,
-          "interrupt_requested": bool}``.
+          "interrupt_requested": bool, "plan_mode": bool,
+          "plan_mode_available": bool}``.
         - ``input.requested``: the agent is waiting for user input.
           Payload: ``{"prompt": str}``.
         - ``approval.requested``: a tool call is waiting for approval.
@@ -428,6 +441,8 @@ class WebUIRuntimeController:
                 conversation.snapshot()
                 for conversation in self.conversations.values()
             ]
+            plan_mode = self.plan_mode
+            plan_mode_available = self.active_graph_name == "chat_graph"
         return {
             "conversations": conversations,
             "messages": messages,
@@ -438,6 +453,8 @@ class WebUIRuntimeController:
             "logs": logs,
             "tool_execution_queue": tool_execution_queue,
             "message_queue": message_queue,
+            "plan_mode": plan_mode,
+            "plan_mode_available": plan_mode_available,
         }
 
     def queue_snapshot(self) -> dict[str, list[dict[str, Any]]]:
@@ -829,7 +846,44 @@ class WebUIRuntimeController:
                 "status": self.status,
                 "input_requested": self.input_requested,
                 "interrupt_requested": self.interrupt_event.is_set(),
+                "plan_mode": self.plan_mode,
+                "plan_mode_available": self.active_graph_name == "chat_graph",
             }
+
+    def set_active_graph(
+        self,
+        graph_name: str | None,
+        *,
+        plan_mode: bool | None = None,
+    ) -> None:
+        """Set the primary graph and publish its plan-mode capability."""
+        with self.lock:
+            self.active_graph_name = graph_name
+            if graph_name == "chat_graph" and plan_mode is not None:
+                self.plan_mode = plan_mode
+            payload = {
+                "status": self.status,
+                "input_requested": self.input_requested,
+                "interrupt_requested": self.interrupt_event.is_set(),
+                "plan_mode": self.plan_mode,
+                "plan_mode_available": self.active_graph_name == "chat_graph",
+            }
+        self.publish("status.changed", payload)
+
+    def set_plan_mode(self, enabled: bool) -> None:
+        """Set the cached chat plan mode and notify WebUI clients."""
+        with self.lock:
+            if self.plan_mode == enabled:
+                return
+            self.plan_mode = enabled
+            payload = {
+                "status": self.status,
+                "input_requested": self.input_requested,
+                "interrupt_requested": self.interrupt_event.is_set(),
+                "plan_mode": self.plan_mode,
+                "plan_mode_available": self.active_graph_name == "chat_graph",
+            }
+        self.publish("status.changed", payload)
 
     def set_status(
         self,
@@ -857,6 +911,8 @@ class WebUIRuntimeController:
                 "status": self.status,
                 "input_requested": self.input_requested,
                 "interrupt_requested": self.interrupt_event.is_set(),
+                "plan_mode": self.plan_mode,
+                "plan_mode_available": self.active_graph_name == "chat_graph",
                 "conversation_id": conversation_id,
                 "conversation": conversation.snapshot(),
             }
@@ -885,19 +941,53 @@ class WebUIRuntimeController:
                 break
             except queue.Empty:
                 continue
+        plan_mode = None
+        if isinstance(value, RuntimeUserInput):
+            plan_mode = value.plan_mode
+            value = value.content
         if isinstance(value, str):
             with self.lock:
                 self.queued_input_count = max(0, self.queued_input_count - 1)
+                self.dequeued_plan_modes[conversation_id] = plan_mode
         self.set_status(previous_status, input_requested=False, conversation_id=conversation_id)
         return value
 
-    def submit_input(self, content: str) -> bool:
+    def consume_input_plan_mode(
+        self,
+        conversation_id: str = "primary",
+    ) -> bool | None:
+        """Return and clear the plan-mode value associated with the last input."""
+        with self.lock:
+            return self.dequeued_plan_modes.pop(conversation_id, None)
+
+    def submit_input(self, content: str, plan_mode: bool | None = None) -> bool:
         """Queue user input from the WebUI when no input is already queued."""
+        status_payload = None
         with self.lock:
             if self.queued_input_count:
                 return False
             self.queued_input_count += 1
-        self.input_queue.put(content)
+            submitted_plan_mode = None
+            if self.active_graph_name == "chat_graph":
+                submitted_plan_mode = self.plan_mode if plan_mode is None else plan_mode
+                if submitted_plan_mode != self.plan_mode:
+                    self.plan_mode = submitted_plan_mode
+                    status_payload = {
+                        "status": self.status,
+                        "input_requested": self.input_requested,
+                        "interrupt_requested": self.interrupt_event.is_set(),
+                        "plan_mode": self.plan_mode,
+                        "plan_mode_available": True,
+                    }
+        queued_input: str | RuntimeUserInput = content
+        if submitted_plan_mode is not None:
+            queued_input = RuntimeUserInput(
+                content=content,
+                plan_mode=submitted_plan_mode,
+            )
+        self.input_queue.put(queued_input)
+        if status_payload is not None:
+            self.publish("status.changed", status_payload)
         return True
 
     def request_interrupt(self) -> None:
@@ -1132,6 +1222,12 @@ class WebUIRuntimeServer:
             content = str(payload.get("content") or "").strip()
             if not content:
                 return JSONResponse({"error": "No content provided"}, status_code=400)
+            plan_mode = payload.get("plan_mode")
+            if plan_mode is not None and not isinstance(plan_mode, bool):
+                return JSONResponse(
+                    {"error": "plan_mode must be a boolean"},
+                    status_code=400,
+                )
             if self.controller.has_pending_approval_for_conversation("primary"):
                 normalized = content.lower()
                 if normalized in {"y", "yes"}:
@@ -1147,7 +1243,7 @@ class WebUIRuntimeServer:
                     },
                     status_code=409,
                 )
-            if not self.controller.submit_input(content):
+            if not self.controller.submit_input(content, plan_mode=plan_mode):
                 return JSONResponse({"error": "User input is already queued"}, status_code=409)
             return JSONResponse({"ok": True}, status_code=201)
 

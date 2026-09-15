@@ -108,6 +108,88 @@ def test_runtime_controller_queues_user_input(tmp_path):
     assert controller.input_queue.get_nowait() == "submitted from browser"
 
 
+def test_runtime_controller_tracks_plan_mode_with_chat_input():
+    task_manager = BaseTaskManager(build=False)
+    controller = WebUIRuntimeController(task_manager)
+
+    assert controller.snapshot()["plan_mode"] is False
+    assert controller.snapshot()["plan_mode_available"] is False
+
+    controller.set_active_graph("chat_graph", plan_mode=False)
+    assert controller.snapshot()["plan_mode_available"] is True
+    assert controller.submit_input("plan this", plan_mode=True) is True
+    assert controller.request_input() == "plan this"
+    assert controller.consume_input_plan_mode() is True
+    assert controller.snapshot()["plan_mode"] is True
+
+    controller.set_active_graph("task_graph")
+    assert controller.snapshot()["plan_mode_available"] is False
+    assert controller.submit_input("run task", plan_mode=False) is True
+    assert controller.request_input() == "run task"
+    assert controller.consume_input_plan_mode() is None
+    assert controller.snapshot()["plan_mode"] is True
+
+
+def test_chat_input_injects_plan_mode_transitions(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_webui=True,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+    controller = task_manager.runtime_controller
+    controller.set_active_graph("chat_graph", plan_mode=False)
+    state = ChatGraphState(await_user_input=True)
+
+    controller.submit_input("make a plan", plan_mode=True)
+    task_manager.node_factory.await_or_ingest_user_input(state)
+    state.await_user_input = True
+    controller.submit_input("revise it", plan_mode=True)
+    task_manager.node_factory.await_or_ingest_user_input(state)
+    state.await_user_input = True
+    controller.submit_input("proceed", plan_mode=False)
+    task_manager.node_factory.await_or_ingest_user_input(state)
+
+    assert [message["role"] for message in state.messages] == [
+        "system",
+        "user",
+        "user",
+        "system",
+        "user",
+    ]
+    assert "Plan mode is now on" in state.messages[0]["content"]
+    assert "Plan mode is now off" in state.messages[3]["content"]
+    assert state.plan_mode is False
+    assert state.full_history == state.messages
+
+
+def test_plan_mode_transition_precedes_selected_skill_context(tmp_path):
+    task_manager = BaseTaskManager(
+        build=False,
+        use_webui=True,
+        transcript_db_path=str(tmp_path / "transcript.sqlite"),
+    )
+    task_manager.build_db()
+    controller = task_manager.runtime_controller
+    controller.set_active_graph("chat_graph", plan_mode=False)
+    state = ChatGraphState(await_user_input=True)
+
+    controller.submit_input(
+        "/skill monitor-status inspect the workflow",
+        plan_mode=True,
+    )
+    task_manager.node_factory.await_or_ingest_user_input(state)
+
+    assert [message["role"] for message in state.messages] == [
+        "system",
+        "user",
+        "user",
+    ]
+    assert "Plan mode is now on" in state.messages[0]["content"]
+    assert "monitor-status" in state.messages[1]["content"]
+    assert state.messages[2]["content"] == "inspect the workflow"
+
+
 def test_runtime_controller_publishes_display_logs(tmp_path):
     task_manager = BaseTaskManager(build=False)
     controller = WebUIRuntimeController(task_manager)
@@ -575,10 +657,18 @@ def test_runtime_fastapi_routes_handle_core_commands(tmp_path):
     assert state.json()["messages"] == []
     assert state.json()["conversations"][0]["id"] == "primary"
     assert state.json()["status"] == "idle"
+    assert state.json()["plan_mode"] is False
+    assert state.json()["plan_mode_available"] is False
 
     input_response = client.post("/api/input", json={"content": "hello"})
     assert input_response.status_code == 201
     assert controller.input_queue.get_nowait() == "hello"
+
+    invalid_plan_mode = client.post(
+        "/api/input",
+        json={"content": "hello", "plan_mode": "true"},
+    )
+    assert invalid_plan_mode.status_code == 400
 
     interrupt_response = client.post("/api/interrupt")
     assert interrupt_response.status_code == 200
