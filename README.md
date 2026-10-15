@@ -1,3 +1,5 @@
+> We are migrating to [EAA-Pi](https://github.com/AdvancedPhotonSource/EAA-Pi), an application built on [pi-experiment-ops](https://github.com/AdvancedPhotonSource/pi-experiment-ops), which in turn is based on the [Pi harness](https://pi.dev/) and the community plugins for Pi. 
+
 # Experiment Automation Agents (EAA)
 
 ![logo](docs/assets/eaa_logo.png)
